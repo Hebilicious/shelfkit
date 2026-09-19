@@ -34,19 +34,20 @@ The Rust crates are the product. Everything else is a client of them, and they c
 
 ## Development
 
-Toolchains are pinned in `.prototools` and installed by [proto](https://moonrepo.dev/proto). Rust is the exception: it comes from rustup, because proto records the version without materializing a cargo binary. Tasks are orchestrated by [moon](https://moonrepo.dev).
+Node, pnpm, moon, and uv are pinned in `.prototools` and installed by [proto](https://moonrepo.dev/proto). Rust is pinned in `rust-toolchain.toml` and installed by rustup, which is rustup's own file and the only place the version appears. Tasks are orchestrated by [moon](https://moonrepo.dev); there are no npm scripts, so `moon query tasks` is the list of things you can run.
 
 ```bash
-proto install          # install the pinned toolchains
+proto install          # install node, pnpm, moon, and uv
 pnpm install           # install workspace dependencies
 moon run :build        # build every project
 moon run :check        # lint and typecheck every project
 moon run :test         # test every project
 moon run web:dev       # run the SPA
 moon run worker:dev    # run the Worker locally
+moon run worker:setup  # provision a Cloudflare account and deploy
 ```
 
-`moon run :build` and friends run a task in every project that defines it. `moon query tasks` lists what exists.
+`moon run :build` and friends run a task in every project that defines it. `moon query tasks` lists every task.
 
 ## Self-hosting
 

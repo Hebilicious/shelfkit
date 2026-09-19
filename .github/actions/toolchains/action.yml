@@ -1,5 +1,5 @@
 name: Toolchains
-description: Install and activate every toolchain pinned in .prototools.
+description: Install and activate the pinned toolchains, from proto and rustup.
 
 runs:
   using: composite
@@ -8,9 +8,7 @@ runs:
       with:
         auto-install: true
 
-    # proto installs every pin in .prototools. Rust is delegated to rustup,
-    # which proto installs itself, and rust-toolchain.toml makes rustup demand
-    # that exact toolchain, so this runs before anything invokes cargo.
+    # proto owns node, pnpm, moon, and uv, all pinned in .prototools.
     - name: Install pinned toolchains
       shell: bash
       run: proto install
@@ -23,6 +21,13 @@ runs:
         proto activate bash --export \
           | sed -n 's/^export PATH="\(.*\)";$/\1/p' \
           >> "$GITHUB_PATH"
+
+    # Rust comes from rustup rather than proto: proto delegates rust to rustup
+    # anyway, and reading the channel from rust-toolchain.toml keeps the pin in
+    # exactly one place. `components: ""` means the file's own list is honoured.
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: ""
 
     - name: Show resolved tool versions
       shell: bash
