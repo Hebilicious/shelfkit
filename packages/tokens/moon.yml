@@ -1,0 +1,14 @@
+language: typescript
+layer: library
+tags: ["tokens", "design-system"]
+
+tasks:
+  build:
+    command: "pnpm run build"
+    inputs:
+      - "cssforge.config.ts"
+      - "run-cssforge.ts"
+    outputs:
+      - ".cssforge/**/*"
+  check:
+    command: "pnpm run build"

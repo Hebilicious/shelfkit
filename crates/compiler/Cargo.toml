@@ -1,0 +1,21 @@
+[package]
+name = "shelfkit-compiler"
+description = "Compiles a shelf profile into a valid apm.yml plus vendored content."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "shelfkit"
+path = "src/main.rs"
+
+[dependencies]
+shelfkit-core.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

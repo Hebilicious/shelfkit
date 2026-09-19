@@ -1,0 +1,13 @@
+{
+  "id": "typescript-strict",
+  "kind": "library",
+  "title": "TypeScript strictness",
+  "description": "The compiler settings this repository relies on.",
+  "detect": { "files": ["tsconfig.json"] },
+  "notes": [
+    "strict, noUncheckedIndexedAccess, noImplicitOverride, and verbatimModuleSyntax are on. Do not relax them to make code compile.",
+    "Type-only imports must be marked with `import type`.",
+    "No enums and no parameter properties: erasableSyntaxOnly is enabled."
+  ],
+  "tags": ["typescript"]
+}

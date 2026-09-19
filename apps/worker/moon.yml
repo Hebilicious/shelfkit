@@ -1,0 +1,27 @@
+language: typescript
+layer: application
+tags: ["worker", "cloudflare"]
+
+dependsOn:
+  - "schema"
+
+tasks:
+  build:
+    command: "pnpm run build"
+    inputs:
+      - "src/**/*"
+      - "wrangler.jsonc"
+    outputs:
+      - "dist-worker/**/*"
+  check:
+    command: "pnpm run check"
+    inputs:
+      - "src/**/*"
+  dev:
+    command: "pnpm run dev"
+    options:
+      persistent: true
+  deploy:
+    command: "pnpm run deploy"
+    options:
+      runInCI: false

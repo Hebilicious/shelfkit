@@ -1,0 +1,13 @@
+# The workspace is polyglot: Rust crates, TypeScript packages, two apps.
+# Project globs are explicit so a new directory never joins the graph by accident.
+projects:
+  - "apps/*"
+  - "packages/*"
+  - "crates/*"
+
+vcs:
+  defaultBranch: "main"
+  provider: "github"
+
+pipeline:
+  installDependencies: false

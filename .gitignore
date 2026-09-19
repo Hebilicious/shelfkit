@@ -1,0 +1,39 @@
+# Node
+node_modules/
+*.log
+.pnpm-store/
+
+# Rust
+target/
+
+# Build output
+dist/
+build/
+*.wasm
+!crates/*/src/**/*.wasm
+
+# Cloudflare / Wrangler
+.wrangler/
+.dev.vars
+dist-worker/
+
+# CSSForge generated output is committed by design; nothing to ignore here.
+
+# moon
+.moon/cache
+.moon/docker
+
+# Vize typecheck cache
+.vize/
+
+# Editor and OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Local env
+.env
+.env.*
+!.env.example

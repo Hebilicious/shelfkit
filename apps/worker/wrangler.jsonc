@@ -1,0 +1,48 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "shelfkit",
+  "main": "src/index.ts",
+  // 2026-08-04 or later: nodejs_compat is on by default and the flag is ignored.
+  "compatibility_date": "2026-09-01",
+  "observability": {
+    "enabled": true
+  },
+  "limits": {
+    "cpu_ms": 30000
+  },
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // Everything that is not a static file goes to the Worker.
+    "run_worker_first": ["/graphql", "/mcp", "/apm/*"]
+  },
+  // One Durable Object per shelf, with its own SQLite database.
+  "durable_objects": {
+    "bindings": [{ "name": "SHELF", "class_name": "ShelfIndex" }]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ShelfIndex"]
+    }
+  ],
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "shelfkit-blobs" }],
+  "queues": {
+    "producers": [{ "binding": "JOBS", "queue": "shelfkit-jobs" }],
+    "consumers": [
+      {
+        "queue": "shelfkit-jobs",
+        "max_batch_size": 10,
+        "max_retries": 3,
+        "dead_letter_queue": "shelfkit-jobs-dlq"
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
+  "vars": {
+    "SHELFKIT_VERSION": "0.0.0"
+  }
+}

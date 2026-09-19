@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Build scripts are allowed explicitly rather than by prompt, so CI is deterministic.
+allowBuilds:
+  esbuild: true
+  workerd: true

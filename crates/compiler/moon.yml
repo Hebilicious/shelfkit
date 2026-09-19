@@ -1,0 +1,18 @@
+language: rust
+layer: application
+tags: ["crate", "compiler"]
+
+dependsOn:
+  - "core"
+
+tasks:
+  build:
+    command: "cargo build --package shelfkit-compiler"
+  check:
+    command: "cargo clippy --package shelfkit-compiler --all-targets -- -D warnings"
+  lint:
+    command: "cargo fmt --package shelfkit-compiler --check"
+  test:
+    command: "cargo test --package shelfkit-compiler"
+  fmt:
+    command: "cargo fmt --package shelfkit-compiler"

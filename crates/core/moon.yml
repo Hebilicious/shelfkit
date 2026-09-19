@@ -1,0 +1,15 @@
+language: rust
+layer: library
+tags: ["crate", "core"]
+
+tasks:
+  build:
+    command: "cargo build --package shelfkit-core"
+  check:
+    command: "cargo clippy --package shelfkit-core --all-targets -- -D warnings"
+  lint:
+    command: "cargo fmt --package shelfkit-core --check"
+  test:
+    command: "cargo test --package shelfkit-core"
+  fmt:
+    command: "cargo fmt --package shelfkit-core"

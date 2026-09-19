@@ -1,0 +1,29 @@
+language: typescript
+layer: application
+tags: ["web", "vue"]
+
+dependsOn:
+  - "tokens"
+  - "schema"
+
+tasks:
+  build:
+    command: "pnpm run build"
+    inputs:
+      - "src/**/*"
+      - "index.html"
+      - "vite.config.ts"
+    outputs:
+      - "dist/**/*"
+  check:
+    command: "pnpm run check"
+    inputs:
+      - "src/**/*"
+  lint:
+    command: "pnpm run lint"
+    inputs:
+      - "src/**/*"
+  dev:
+    command: "pnpm run dev"
+    options:
+      persistent: true

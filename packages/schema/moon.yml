@@ -1,0 +1,13 @@
+language: typescript
+layer: library
+tags: ["schema", "validation"]
+
+tasks:
+  build:
+    command: "tsc --noEmit"
+    inputs: ["src/**/*", "tsconfig.json", "/tsconfig.base.json"]
+  check:
+    command: "tsc --noEmit"
+    inputs: ["src/**/*", "tsconfig.json", "/tsconfig.base.json"]
+  lint:
+    command: "tsc --noEmit"

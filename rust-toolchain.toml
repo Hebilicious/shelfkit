@@ -1,0 +1,5 @@
+# A fallback for contributors using rustup directly instead of proto.
+# .prototools is the source of truth; keep the two in step.
+[toolchain]
+channel = "1.94.1"
+components = ["clippy", "rustfmt"]

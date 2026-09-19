@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # proto installs every toolchain pinned in .prototools, so CI and a
+      # laptop resolve the same node, pnpm, moon, and cargo.
+      - uses: moonrepo/setup-toolchain@v0
+        with:
+          auto-install: true
+
+      - run: pnpm install --frozen-lockfile
+
+      # `moon ci` runs only the tasks affected by the change.
+      - run: moon ci
+
+      - if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: moon-ci-report
+          path: .moon/cache/ciReport.json
+          if-no-files-found: ignore

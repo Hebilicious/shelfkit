@@ -1,0 +1,26 @@
+@import "@shelfkit/tokens/css" layer(cssforge);
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-size: var(--typography_fluid-sans-text-m);
+  line-height: 1.5;
+}
+
+#app {
+  min-height: 100dvh;
+}

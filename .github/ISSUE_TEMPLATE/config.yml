@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Specification
+    url: https://github.com/Hebilicious/shelfkit/blob/main/docs/PRD.md
+    about: docs/PRD.md is the source of truth for scope. Read it before opening a large issue.

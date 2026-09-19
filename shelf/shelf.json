@@ -1,0 +1,9 @@
+{
+  "$schema": "https://shelfkit.dev/schemas/shelf.json",
+  "name": "shelfkit",
+  "owner": "Hebilicious",
+  "description": "ShelfKit's own agent context: the conventions for building ShelfKit.",
+  "defaultProfile": "default",
+  "registry": { "namespace": "hebilicious", "public": true },
+  "sources": []
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://shelfkit.dev/schemas/profile.json",
+  "id": "default",
+  "title": "ShelfKit development",
+  "description": "The conventions this repository is built to.",
+  "items": ["shelfkit-stack", "typescript-strict", "commit-style"],
+  "bundles": [],
+  "extends": [],
+  "compile": {
+    "name": "shelfkit",
+    "targets": ["claude", "copilot", "cursor", "codex"],
+    "pin": "revision",
+    "onConflict": "fail",
+    "vendorAuthored": true
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "id": "commit-style",
+  "kind": "prompt",
+  "title": "Commit message",
+  "description": "Write a conventional commit for the staged changes.",
+  "asCommand": true,
+  "variables": [{ "name": "scope", "required": false }],
+  "tags": ["git"]
+}

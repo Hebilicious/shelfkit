@@ -1,0 +1,8 @@
+language: typescript
+layer: automation
+tags: ["scripts"]
+
+tasks:
+  check:
+    command: "tsc --noEmit"
+    inputs: ["**/*.ts", "tsconfig.json", "/tsconfig.base.json"]

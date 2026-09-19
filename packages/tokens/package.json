@@ -1,0 +1,19 @@
+{
+  "name": "@shelfkit/tokens",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./css": "./.cssforge/output.css",
+    "./generated": "./.cssforge/output.ts"
+  },
+  "scripts": {
+    "build": "tsx ./run-cssforge.ts",
+    "watch": "tsx ./run-cssforge.ts --watch"
+  },
+  "devDependencies": {
+    "@hebilicious/cssforge": "jsr:^0.4.1",
+    "tsx": "^4.20.0"
+  }
+}

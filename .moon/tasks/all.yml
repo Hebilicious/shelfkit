@@ -1,0 +1,8 @@
+# The workspace root defines no runnable tasks on purpose.
+#
+# A blanket `test` or `build` task here would be inherited by every project and
+# would shadow the real task a project defines, because inheritance merges by
+# task id. Each project declares the tasks it actually supports in its own
+# moon.yml instead, so `moon run :test` runs the real test suite everywhere and
+# projects without one are simply skipped.
+tasks: {}
