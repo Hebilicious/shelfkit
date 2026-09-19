@@ -1,0 +1,14 @@
+# Toolchain versions are pinned twice, deliberately, and the two must agree:
+# .prototools is what proto resolves and installs, and this file is what tells
+# moon to manage the toolchain at all. The filename is plural; moond ignores
+# toolchain.yml (singular) without warning.
+
+node:
+  packageManager: pnpm
+
+rust:
+  version: "1.98.1"
+
+typescript:
+  syncProjectReferences: false
+  routeOutDirToCache: false

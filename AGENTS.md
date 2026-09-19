@@ -7,7 +7,7 @@ A registry and curation layer for AI agent context, built on [APM](https://githu
 There are no npm scripts. Everything is a moon task.
 
 ```bash
-proto install              # node, pnpm, moon, uv
+moon setup                 # every pinned toolchain
 pnpm install               # workspace dependencies
 moon run :build            # build every project that has a build task
 moon run :check :lint      # typecheck and format check
@@ -53,7 +53,7 @@ moon run worker:setup      # provision a Cloudflare account and deploy
 
 ## Toolchains
 
-Node, pnpm, moon, and uv are pinned in `.prototools` and installed by proto. Rust is rustup's business: CI installs the pinned channel through `.github/actions/toolchains`, and a local `rustup` install is enough.
+Every toolchain is pinned in `.prototools`, and `.moon/toolchains.yml` tells moon to manage them. The two pins must agree: proto resolves `.prototools`, and moon only manages a toolchain this file declares. The filename is plural; moon ignores `toolchain.yml` without warning.
 
 ## Testing
 

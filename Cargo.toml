@@ -7,7 +7,7 @@ version = "0.0.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/Hebilicious/shelfkit"
-rust-version = "1.94"
+rust-version = "1.98"
 
 [workspace.dependencies]
 # Internal

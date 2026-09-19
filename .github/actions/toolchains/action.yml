@@ -1,11 +1,5 @@
 name: Toolchains
-description: Install and activate the pinned toolchains, from proto and rustup.
-
-inputs:
-  rust:
-    description: Rust toolchain to install. Keep in step with the README.
-    required: false
-    default: "1.94.1"
+description: Install the pinned toolchains through proto and moon.
 
 runs:
   using: composite
@@ -14,28 +8,12 @@ runs:
       with:
         auto-install: true
 
-    # proto owns node, pnpm, moon, and uv, all pinned in .prototools.
-    - name: Install pinned toolchains
+    # `moon setup` installs everything declared in .moon/toolchains.yml, and
+    # moon puts the resolved toolchain on PATH for every task it runs, so
+    # nothing after this needs PATH manipulation.
+    - name: Setup toolchains
       shell: bash
-      run: proto install
-
-    # `activate --export` emits `unset` and `export` statements that
-    # $GITHUB_ENV cannot consume, so only the PATH line is extracted.
-    - name: Put pinned toolchains on PATH
-      shell: bash
-      run: |
-        proto activate bash --export \
-          | sed -n 's/^export PATH="\(.*\)";$/\1/p' \
-          >> "$GITHUB_PATH"
-
-    # Rust is not a proto concern. proto delegates rust to rustup, and a
-    # rust-toolchain.toml plus proto's own install can leave rustup pointing at
-    # a toolchain with no cargo, so rustup owns rust outright: the channel is
-    # passed in and this action installs it.
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: ${{ inputs.rust }}
-        components: clippy, rustfmt
+      run: moon setup
 
     - name: Show resolved tool versions
       shell: bash
