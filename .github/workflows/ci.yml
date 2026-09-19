@@ -25,8 +25,23 @@ jobs:
         with:
           auto-install: true
 
-      - name: Install pinned toolchains
-        run: proto install
+      # proto owns every pin in .prototools, including rust, which it delegates
+      # to the runner's rustup. `activate --export` emits `unset` and `export`
+      # statements that $GITHUB_ENV cannot consume, so only the PATH line is
+      # extracted and written to $GITHUB_PATH.
+      - name: Put pinned toolchains on PATH
+        run: |
+          proto activate bash --export \
+            | sed -n 's/^export PATH="\(.*\)";$/\1/p' \
+            >> "$GITHUB_PATH"
+
+      - name: Show resolved tool versions
+        run: |
+          node --version
+          pnpm --version
+          moon --version
+          cargo --version
+          rustc --version
 
       - run: pnpm install --frozen-lockfile
 
@@ -51,19 +66,19 @@ jobs:
         with:
           auto-install: true
 
-      # proto installs every tool pinned in .prototools. Rust is delegated to
-      # rustup, which is why the pin exists: without it the cargo shim resolves
-      # no toolchain and reports cargo as missing.
-      - name: Install pinned toolchains
-        run: proto install
+      - name: Put pinned toolchains on PATH
+        run: |
+          proto activate bash --export \
+            | sed -n 's/^export PATH="\(.*\)";$/\1/p' \
+            >> "$GITHUB_PATH"
 
       - name: Show resolved tool versions
         run: |
-          cargo --version
-          rustc --version
           node --version
           pnpm --version
           moon --version
+          cargo --version
+          rustc --version
 
       - run: pnpm install --frozen-lockfile
 
