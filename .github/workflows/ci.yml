@@ -21,31 +21,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: moonrepo/setup-toolchain@v0
-        with:
-          auto-install: true
-
-      # proto installs every pin in .prototools. Rust is delegated to rustup, and
-      # rust-toolchain.toml makes rustup demand that exact toolchain, so this has
-      # to run before any cargo command.
-      - name: Install pinned toolchains
-        run: proto install
-
-      # `activate --export` emits `unset` and `export` statements that
-      # $GITHUB_ENV cannot consume, so only the PATH line is extracted.
-      - name: Put pinned toolchains on PATH
-        run: |
-          proto activate bash --export \
-            | sed -n 's/^export PATH="\(.*\)";$/\1/p' \
-            >> "$GITHUB_PATH"
-
-      - name: Show resolved tool versions
-        run: |
-          node --version
-          pnpm --version
-          moon --version
-          cargo --version
-          rustc --version
+      - uses: ./.github/actions/toolchains
 
       - run: pnpm install --frozen-lockfile
 
@@ -66,23 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: moonrepo/setup-toolchain@v0
-        with:
-          auto-install: true
-
-      - name: Put pinned toolchains on PATH
-        run: |
-          proto activate bash --export \
-            | sed -n 's/^export PATH="\(.*\)";$/\1/p' \
-            >> "$GITHUB_PATH"
-
-      - name: Show resolved tool versions
-        run: |
-          node --version
-          pnpm --version
-          moon --version
-          cargo --version
-          rustc --version
+      - uses: ./.github/actions/toolchains
 
       - run: pnpm install --frozen-lockfile
 
