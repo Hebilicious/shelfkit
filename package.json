@@ -7,19 +7,7 @@
   "engines": {
     "node": ">=22"
   },
-  "scripts": {
-    "build": "moon run :build",
-    "check": "moon run :check",
-    "lint": "moon run :lint",
-    "test": "moon run :test",
-    "tokens": "moon run tokens:build",
-    "deploy": "pnpm --filter @shelfkit/worker run deploy",
-    "dev": "moon run web:dev",
-    "setup": "tsx scripts/setup.ts"
-  },
   "devDependencies": {
-    "@types/node": "^26.6.1",
-    "tsx": "^4.20.0",
     "typescript": "^5.9.0"
   }
 }

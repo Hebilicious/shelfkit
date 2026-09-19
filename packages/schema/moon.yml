@@ -4,10 +4,11 @@ tags: ["schema", "validation"]
 
 tasks:
   build:
-    command: "tsc --noEmit"
+    command: "node_modules/.bin/tsc --noEmit"
     inputs: ["src/**/*", "tsconfig.json", "/tsconfig.base.json"]
   check:
-    command: "tsc --noEmit"
+    command: "node_modules/.bin/tsc --noEmit"
     inputs: ["src/**/*", "tsconfig.json", "/tsconfig.base.json"]
   lint:
-    command: "tsc --noEmit"
+    command: "node_modules/.bin/tsc --noEmit"
+    inputs: ["src/**/*", "tsconfig.json", "/tsconfig.base.json"]

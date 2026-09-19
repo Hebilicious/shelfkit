@@ -5,7 +5,7 @@ tags: ["worker", "cloudflare"]
 
 tasks:
   build:
-    command: "pnpm run build"
+    command: "node_modules/.bin/wrangler deploy --dry-run --outdir dist-worker"
     # The Worker serves the SPA through its assets binding, so the SPA has to be
     # built before wrangler validates the assets directory. A task-level dep
     # rather than dependsOn, because dependsOn orders projects, not tasks.
@@ -16,18 +16,41 @@ tasks:
       - "wrangler.jsonc"
     outputs:
       - "dist-worker/**/*"
+  typegen:
+    command: "node_modules/.bin/wrangler types"
+    inputs:
+      - "wrangler.jsonc"
+    outputs:
+      - "worker-configuration.d.ts"
   check:
-    command: "pnpm run check"
+    command: "node_modules/.bin/tsc --noEmit"
+    deps:
+      - "typegen"
     inputs:
       - "src/**/*"
+      - "wrangler.jsonc"
+  typediff:
+    command: "node_modules/.bin/wrangler types --check"
+    deps:
+      - "typegen"
+    inputs:
+      - "wrangler.jsonc"
   dev:
-    command: "pnpm run dev"
+    command: "node_modules/.bin/wrangler dev"
     options:
       persistent: true
       runInCI: false
   deploy:
-    command: "pnpm run deploy"
+    command: "node_modules/.bin/wrangler deploy"
     deps:
       - "web:build"
+    options:
+      runInCI: false
+  secret:
+    command: "node_modules/.bin/wrangler secret put"
+    options:
+      runInCI: false
+  setup:
+    command: "../../node_modules/.bin/tsx ../../scripts/setup.ts"
     options:
       runInCI: false

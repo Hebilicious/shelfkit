@@ -17,21 +17,26 @@ function sh(command: string, args: string[]): void {
   execFileSync(command, args, { stdio: "inherit" });
 }
 
+/** Run a binary from the Worker's node_modules, resolved through pnpm exec. */
+function wrangler(args: string[]): void {
+  sh("pnpm", ["--filter", "@shelfkit/worker", "exec", "wrangler", ...args]);
+}
+
 const steps: Step[] = [
   {
     title: "Create the R2 bucket",
-    run: () => sh("pnpm", ["exec", "wrangler", "r2", "bucket", "create", "shelfkit-blobs"]),
+    run: () => wrangler(["r2", "bucket", "create", "shelfkit-blobs"]),
   },
   {
     title: "Create the job queue and its dead-letter queue",
     run: () => {
-      sh("pnpm", ["exec", "wrangler", "queues", "create", "shelfkit-jobs"]);
-      sh("pnpm", ["exec", "wrangler", "queues", "create", "shelfkit-jobs-dlq"]);
+      wrangler(["queues", "create", "shelfkit-jobs"]);
+      wrangler(["queues", "create", "shelfkit-jobs-dlq"]);
     },
   },
   {
     title: "Deploy, which creates the Durable Object namespace and its migrations",
-    run: () => sh("pnpm", ["--filter", "@shelfkit/worker", "run", "deploy"]),
+    run: () => wrangler(["deploy"]),
   },
 ];
 
@@ -47,7 +52,7 @@ function main(): void {
     step.run();
   }
 
-  console.log("\nDone. Set secrets with `pnpm exec wrangler secret put <NAME>`.");
+  console.log("\nDone. Set secrets with `moon run worker:secret -- <NAME>`.");
 }
 
 main();

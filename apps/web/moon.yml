@@ -7,9 +7,14 @@ dependsOn:
   - "tokens"
   - "schema"
 
+# Binaries are invoked by their path in node_modules/.bin. moon puts toolchain
+# binaries on PATH but not a project's own, and going through a package manager
+# just to reach a binary is a layer this repo does not need.
 tasks:
   build:
-    command: "pnpm run build"
+    command: "node_modules/.bin/vite build"
+    deps:
+      - "tokens:build"
     inputs:
       - "src/**/*"
       - "index.html"
@@ -17,15 +22,34 @@ tasks:
     outputs:
       - "dist/**/*"
   check:
-    command: "pnpm run check"
+    command: "node_modules/.bin/vize check"
+    deps:
+      - "tokens:build"
+    inputs:
+      - "src/**/*"
+  types:
+    command: "node_modules/.bin/vue-tsc --noEmit"
+    deps:
+      - "tokens:build"
     inputs:
       - "src/**/*"
   lint:
-    command: "pnpm run lint"
+    command: "node_modules/.bin/vize fmt --check src"
     inputs:
       - "src/**/*"
+  fix:
+    command: "node_modules/.bin/vize fmt --write src"
+    options:
+      runInCI: false
   dev:
-    command: "pnpm run dev"
+    command: "node_modules/.bin/vite"
+    deps:
+      - "tokens:build"
+    options:
+      persistent: true
+      runInCI: false
+  preview:
+    command: "node_modules/.bin/vite preview"
     options:
       persistent: true
       runInCI: false

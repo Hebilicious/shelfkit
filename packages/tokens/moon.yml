@@ -4,11 +4,19 @@ tags: ["tokens", "design-system"]
 
 tasks:
   build:
-    command: "pnpm run build"
+    command: "node_modules/.bin/tsx ./run-cssforge.ts"
     inputs:
       - "cssforge.config.ts"
       - "run-cssforge.ts"
     outputs:
       - ".cssforge/**/*"
   check:
-    command: "pnpm run build"
+    command: "node_modules/.bin/tsx ./run-cssforge.ts"
+    inputs:
+      - "cssforge.config.ts"
+      - "run-cssforge.ts"
+  watch:
+    command: "node_modules/.bin/tsx ./run-cssforge.ts --watch"
+    options:
+      persistent: true
+      runInCI: false

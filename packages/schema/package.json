@@ -6,10 +6,6 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "scripts": {
-    "build": "tsc --noEmit",
-    "check": "tsc --noEmit"
-  },
   "dependencies": {
     "valibot": "^1.1.0"
   },

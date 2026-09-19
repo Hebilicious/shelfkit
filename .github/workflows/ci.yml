@@ -1,9 +1,5 @@
 name: CI
 
-env:
-  # Keep in step with .prototools, which is the source of truth.
-  RUST_VERSION: "1.94.1"
-
 on:
   push:
     branches: [main]
@@ -29,13 +25,8 @@ jobs:
         with:
           auto-install: true
 
-      # Rust is provided by rustup, not by proto: proto's rust registry records
-      # the version without materializing a cargo binary, which leaves rustup
-      # claiming a toolchain it cannot invoke.
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-          components: clippy, rustfmt
+      - name: Install pinned toolchains
+        run: proto install
 
       - run: pnpm install --frozen-lockfile
 
@@ -60,10 +51,19 @@ jobs:
         with:
           auto-install: true
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-          components: clippy, rustfmt
+      # proto installs every tool pinned in .prototools. Rust is delegated to
+      # rustup, which is why the pin exists: without it the cargo shim resolves
+      # no toolchain and reports cargo as missing.
+      - name: Install pinned toolchains
+        run: proto install
+
+      - name: Show resolved tool versions
+        run: |
+          cargo --version
+          rustc --version
+          node --version
+          pnpm --version
+          moon --version
 
       - run: pnpm install --frozen-lockfile
 
