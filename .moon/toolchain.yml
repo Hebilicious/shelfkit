@@ -5,8 +5,12 @@
 node:
   packageManager: pnpm
 
+# Rust is provided by rustup rather than proto: proto's rust registry records
+# the version without materializing a cargo binary. The pin lives in
+# .prototools for documentation and in CI's RUST_VERSION for enforcement.
 rust:
   bins:
+    - "cargo"
     - "clippy"
     - "rustfmt"
   targets:

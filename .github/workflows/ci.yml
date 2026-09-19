@@ -1,5 +1,9 @@
 name: CI
 
+env:
+  # Keep in step with .prototools, which is the source of truth.
+  RUST_VERSION: "1.94.1"
+
 on:
   push:
     branches: [main]
@@ -10,9 +14,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # `moon ci` runs only what a change affects, which is the right shape for a
-  # pull request and the wrong shape for `main`: on the first push there is no
-  # base revision, so it resolves zero targets and silently does nothing.
+  # `moon ci` runs only what a change affects. That is right for a pull request
+  # and wrong for `main`: on the first push there is no base revision to diff
+  # against, so it resolves zero targets and reports success having run nothing.
   verify:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -25,6 +29,14 @@ jobs:
         with:
           auto-install: true
 
+      # Rust is provided by rustup, not by proto: proto's rust registry records
+      # the version without materializing a cargo binary, which leaves rustup
+      # claiming a toolchain it cannot invoke.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: clippy, rustfmt
+
       - run: pnpm install --frozen-lockfile
 
       - run: moon ci --include-relations
@@ -36,8 +48,8 @@ jobs:
           path: .moon/cache/ciReport.json
           if-no-files-found: ignore
 
-  # On `main` everything runs, unconditionally. A green check here means the
-  # whole workspace is green, not that nothing was affected.
+  # On `main` everything runs unconditionally, so a green check means the whole
+  # workspace is green rather than that nothing was affected.
   full:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -47,6 +59,11 @@ jobs:
       - uses: moonrepo/setup-toolchain@v0
         with:
           auto-install: true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: clippy, rustfmt
 
       - run: pnpm install --frozen-lockfile
 
