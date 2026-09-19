@@ -21,9 +21,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The cache key includes the pins, so bumping a toolchain version cannot
+      # reuse a target/ directory built by a different rustc.
       - uses: moonrepo/setup-toolchain@v0
         with:
           auto-install: true
+          cache-key: ${{ hashFiles('.prototools', 'rust-toolchain.toml') }}
 
       # proto owns every pin in .prototools, including rust, which it delegates
       # to the runner's rustup. `activate --export` emits `unset` and `export`
@@ -62,9 +65,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The cache key includes the pins, so bumping a toolchain version cannot
+      # reuse a target/ directory built by a different rustc.
       - uses: moonrepo/setup-toolchain@v0
         with:
           auto-install: true
+          cache-key: ${{ hashFiles('.prototools', 'rust-toolchain.toml') }}
 
       - name: Put pinned toolchains on PATH
         run: |
