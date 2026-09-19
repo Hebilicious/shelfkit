@@ -27,3 +27,4 @@ tasks:
     command: "pnpm run dev"
     options:
       persistent: true
+      runInCI: false

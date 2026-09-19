@@ -10,23 +10,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
+  # `moon ci` runs only what a change affects, which is the right shape for a
+  # pull request and the wrong shape for `main`: on the first push there is no
+  # base revision, so it resolves zero targets and silently does nothing.
+  verify:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      # proto installs every toolchain pinned in .prototools, so CI and a
-      # laptop resolve the same node, pnpm, moon, and cargo.
       - uses: moonrepo/setup-toolchain@v0
         with:
           auto-install: true
 
       - run: pnpm install --frozen-lockfile
 
-      # `moon ci` runs only the tasks affected by the change.
-      - run: moon ci
+      - run: moon ci --include-relations
 
       - if: always()
         uses: actions/upload-artifact@v5
@@ -34,3 +35,19 @@ jobs:
           name: moon-ci-report
           path: .moon/cache/ciReport.json
           if-no-files-found: ignore
+
+  # On `main` everything runs, unconditionally. A green check here means the
+  # whole workspace is green, not that nothing was affected.
+  full:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: moonrepo/setup-toolchain@v0
+        with:
+          auto-install: true
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: moon run :build :check :lint :test
