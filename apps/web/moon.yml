@@ -1,5 +1,6 @@
 language: typescript
 layer: application
+stack: frontend
 tags: ["web", "vue"]
 
 dependsOn:

@@ -9,5 +9,13 @@ vcs:
   defaultBranch: "main"
   provider: "github"
 
-pipeline:
-  installDependencies: false
+# The Worker serves the SPA through its assets binding, so its build has to run
+# after the SPA's. Moon's default layer rules forbid an application depending on
+# another application, so this tag relationship expresses the one ordering we
+# need without relaxing layer rules in general.
+constraints:
+  enforceLayerRelationships: true
+  tagRelationships:
+    worker:
+      - "web"
+      - "schema"
