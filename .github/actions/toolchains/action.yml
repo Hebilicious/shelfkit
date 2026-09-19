@@ -1,6 +1,12 @@
 name: Toolchains
 description: Install and activate the pinned toolchains, from proto and rustup.
 
+inputs:
+  rust:
+    description: Rust toolchain to install. Keep in step with the README.
+    required: false
+    default: "1.94.1"
+
 runs:
   using: composite
   steps:
@@ -22,12 +28,14 @@ runs:
           | sed -n 's/^export PATH="\(.*\)";$/\1/p' \
           >> "$GITHUB_PATH"
 
-    # Rust comes from rustup rather than proto: proto delegates rust to rustup
-    # anyway, and reading the channel from rust-toolchain.toml keeps the pin in
-    # exactly one place. `components: ""` means the file's own list is honoured.
+    # Rust is not a proto concern. proto delegates rust to rustup, and a
+    # rust-toolchain.toml plus proto's own install can leave rustup pointing at
+    # a toolchain with no cargo, so rustup owns rust outright: the channel is
+    # passed in and this action installs it.
     - uses: dtolnay/rust-toolchain@stable
       with:
-        components: ""
+        toolchain: ${{ inputs.rust }}
+        components: clippy, rustfmt
 
     - name: Show resolved tool versions
       shell: bash

@@ -1,6 +1,0 @@
-# Binds cargo, rustc, and clippy to the version pinned in .prototools, so a
-# toolchain on PATH cannot silently override the pin. proto installs this
-# toolchain through rustup before anything runs.
-[toolchain]
-channel = "1.94.1"
-components = ["clippy", "rustfmt"]

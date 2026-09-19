@@ -34,7 +34,7 @@ The Rust crates are the product. Everything else is a client of them, and they c
 
 ## Development
 
-Node, pnpm, moon, and uv are pinned in `.prototools` and installed by [proto](https://moonrepo.dev/proto). Rust is pinned in `rust-toolchain.toml` and installed by rustup, which is rustup's own file and the only place the version appears. Tasks are orchestrated by [moon](https://moonrepo.dev); there are no npm scripts, so `moon query tasks` is the list of things you can run.
+Node, pnpm, moon, and uv are pinned in `.prototools` and installed by [proto](https://moonrepo.dev/proto). Rust is rustup's business rather than proto's: CI installs the pinned channel through `.github/actions/toolchains`, and a local `rustup` install is enough. Tasks are orchestrated by [moon](https://moonrepo.dev); there are no npm scripts, so `moon query tasks` is the list of things you can run.
 
 ```bash
 proto install          # install node, pnpm, moon, and uv
