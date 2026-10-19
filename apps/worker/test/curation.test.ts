@@ -1,6 +1,6 @@
 /**
  * Curation through the Worker's jobs (issue #8): the real Git adapter and scanners over responses GitHub and
- * skills.sh gave (`packages/importers/test/fixtures/http/`), a scanner that covers nothing, and drift for items
+ * nothing else gave (`packages/importers/test/fixtures/http/`), a scanner that covers nothing, and drift for items
  * imported from a pasted URL rather than a `shelf.json` source.
  */
 import {
@@ -16,7 +16,6 @@ import * as v from "valibot";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import github from "../../../packages/importers/test/fixtures/http/github.json";
-import skillsSh from "../../../packages/importers/test/fixtures/http/skills-sh.json";
 import { GitHubForge } from "../src/forge/github.ts";
 import { runJob } from "../src/jobs/consumer.ts";
 import type { JobDependencies } from "../src/jobs/consumer.ts";
@@ -35,10 +34,9 @@ const RecordingSchema = v.object({
   responses: v.record(v.string(), AnswerSchema),
 });
 
-const responses = new Map([
-  ...Object.entries(v.parse(RecordingSchema, github).responses),
-  ...Object.entries(v.parse(RecordingSchema, skillsSh).responses),
-]);
+const responses = new Map(
+  Object.entries(v.parse(RecordingSchema, github).responses)
+);
 
 /** The body a recorded answer had. */
 function bodyOf(answer: v.InferOutput<typeof AnswerSchema>): BodyInit {
@@ -54,7 +52,7 @@ function bodyOf(answer: v.InferOutput<typeof AnswerSchema>): BodyInit {
   return answer.text ?? "";
 }
 
-/** `fetch` over the importers' GitHub and skills.sh recordings; a request they do not hold fails the test. */
+/** `fetch` over the importers' GitHub recording; a request it does not hold fails the test. */
 const recordedFetch: typeof fetch = async (input) => {
   const url = input instanceof Request ? input.url : input.toString();
   const answer = responses.get(url);
@@ -206,6 +204,17 @@ async function editToSuspicious(
   );
 }
 
+/** A stand-in third-party scanner that calls everything clean. */
+const alwaysClean: Scanner = {
+  id: "stand-in",
+  scan: async () =>
+    await Promise.resolve({
+      scanner: "stand-in",
+      summary: "clean",
+      verdict: "clean",
+    }),
+};
+
 /** A stand-in adapter of `kind` that imports `document` and reports its upstream moved. */
 function standIn(kind: "catalog" | "shelfkit", document: Item): SourceAdapter {
   return {
@@ -259,27 +268,20 @@ describe("curated imports through the jobs", () => {
 
   it("stores every verdict against the revision ShelfKit computed", async () => {
     const first = await importedAndScanned(
-      dependencies(realAdapters, realScanners)
+      dependencies(realAdapters, [...realScanners, alwaysClean])
     );
     expect(first.scanStatus).toBe("clean");
-    // ClawHub never saw this skill, so its scanner records nothing; skills.sh's five partners and ShelfKit's own do.
+    // ClawHub never saw this skill, so its scanner records nothing; ShelfKit's own and the stand-in do.
     expect(
       first.scans.map((scan) => scan.scanner).toSorted(byCodePoint)
-    ).toStrictEqual([
-      "shelfkit-static",
-      "skills.sh/agent-trust-hub",
-      "skills.sh/runlayer",
-      "skills.sh/snyk",
-      "skills.sh/socket",
-      "skills.sh/zeroleaks",
-    ]);
+    ).toStrictEqual(["shelfkit-static", "stand-in"]);
     expect(
       first.scans.every((scan) => scan.revision === first.revision)
     ).toBeTruthy();
   });
 
   it("gives a new revision no verdict of the old one's, then keeps the scanners' disagreement about it", async () => {
-    const deps = dependencies(realAdapters, realScanners);
+    const deps = dependencies(realAdapters, [...realScanners, alwaysClean]);
     const first = await importedAndScanned(deps);
     await editToSuspicious(first.source);
     const edited = await item("brand-guidelines");
@@ -294,7 +296,7 @@ describe("curated imports through the jobs", () => {
       deps
     );
     const rescanned = await item("brand-guidelines");
-    // ShelfKit's scanner flags the edit while skills.sh's partners still say clean: both are kept, and shown.
+    // ShelfKit's scanner flags the edit while the stand-in still says clean: both are kept, and shown.
     expect(rescanned.scanStatus).toBe("disputed");
     const ours = rescanned.scans.find(
       (scan) =>
@@ -303,7 +305,7 @@ describe("curated imports through the jobs", () => {
     expect(ours?.verdict).toBe("suspicious");
     expect(
       rescanned.scans.filter((scan) => scan.revision === first.revision)
-    ).toHaveLength(6);
+    ).toHaveLength(2);
   });
 
   it("records no verdict from a scanner that does not cover the item, which stays unscanned", async () => {
@@ -318,6 +320,17 @@ describe("curated imports through the jobs", () => {
     expect(found.scanStatus).toBe("unscanned");
   });
 });
+
+const CLAWHUB_ITEM: Item = {
+  id: "github",
+  kind: "skill",
+  source: {
+    path: "steipete/github",
+    url: "https://clawhub.ai/steipete/skills/github",
+    version: "1.0.0",
+  },
+  title: "Github",
+};
 
 describe("drift for items imported from a pasted URL", () => {
   beforeEach(fresh);
@@ -356,5 +369,162 @@ describe("drift for items imported from a pasted URL", () => {
     expect([fromCatalog.drift.status, fromInstance.drift.status]).toStrictEqual(
       ["moved", "moved"]
     );
+  });
+});
+
+const GitItemSchema = v.object({
+  shelf: v.object({
+    item: v.object({
+      drift: v.object({ error: v.nullish(v.string()), status: v.string() }),
+    }),
+  }),
+});
+
+async function driftOf(
+  id: string
+): Promise<{ status: string; error?: string | null | undefined }> {
+  const found = await data(
+    GitItemSchema,
+    `{ shelf(id: "kit") { item(id: "${id}") { drift { status error } } } }`
+  );
+  return found.shelf.item.drift;
+}
+
+/** An anthropics/skills skill pinned to HEAD, naming the shelf.json source `sourceId` when given. */
+function skillFrom(
+  sourceId: string | undefined,
+  id: string,
+  path: string
+): string {
+  const source = {
+    id: sourceId,
+    path,
+    ref: "main",
+    repo: ANTHROPICS,
+    resolvedCommit: HEAD,
+  };
+  return `${JSON.stringify({ id, kind: "skill", source, title: id })}\n`;
+}
+
+/** A shelf whose `kit` source is a private GitHub repository read with the secret KIT_TOKEN, and two items from it. */
+function privateShelf(secretUrl: string) {
+  return {
+    "items/skills/brand-guidelines/item.json": skillFrom(
+      "kit",
+      "brand-guidelines",
+      "skills/brand-guidelines"
+    ),
+    "items/skills/doc-coauthoring/item.json": skillFrom(
+      "kit",
+      "doc-coauthoring",
+      "skills/doc-coauthoring"
+    ),
+    "shelf.json": `${JSON.stringify({
+      name: "kit",
+      registry: { namespace: "kit", public: false },
+      sources: [
+        {
+          id: "kit",
+          kind: "git",
+          repo: ANTHROPICS,
+          secret: "KIT_TOKEN",
+          url: secretUrl,
+        },
+      ],
+    })}\n`,
+  };
+}
+
+describe("hosted drift for Git", () => {
+  beforeEach(fresh);
+
+  it("records an error, never gone, when the source's secret cannot be released", async () => {
+    await push("kit", privateShelf("https://api.github.com"));
+    await runJob(
+      { shelf: "kit", type: "upstream.check" },
+      env,
+      dependencies(realAdapters, [])
+    );
+    const drift = await driftOf("brand-guidelines");
+    expect(drift.status).toBe("error");
+    expect(drift.error).toContain(
+      "KIT_TOKEN is not released for https://api.github.com"
+    );
+  });
+
+  it("refuses a secret the source would send anywhere but https://api.github.com", async () => {
+    await push("kit", privateShelf("https://github.com"));
+    await runJob(
+      { shelf: "kit", type: "upstream.check" },
+      env,
+      dependencies(realAdapters, [])
+    );
+    const drift = await driftOf("doc-coauthoring");
+    expect(drift.error).toContain("bind KIT_TOKEN to https://api.github.com");
+  });
+
+  it("keeps the last known status when a later check fails, and records the failure beside it", async () => {
+    const moved: SourceAdapter = {
+      ...standIn("catalog", CLAWHUB_ITEM),
+      kind: "catalog",
+    };
+    const failing: SourceAdapter = {
+      ...moved,
+      checkUpstream: async () =>
+        await Promise.reject(new Error("ClawHub answered 503")),
+    };
+    await importAll(
+      { kind: "catalog", url: "https://clawhub.ai" },
+      dependencies([moved], [])
+    );
+    await runJob(
+      { shelf: "kit", type: "upstream.check" },
+      env,
+      dependencies([moved], [])
+    );
+    await runJob(
+      { shelf: "kit", type: "upstream.check" },
+      env,
+      dependencies([failing], [])
+    );
+    const drift = await driftOf("github");
+    expect([drift.status, drift.error]).toStrictEqual([
+      "moved",
+      "Error: ClawHub answered 503",
+    ]);
+  });
+
+  it("reads each GitHub lookup once per job, however many items share the repository", async () => {
+    const requests: string[] = [];
+    const counting: typeof fetch = async (input, init) => {
+      requests.push(new Request(input, init).url);
+      return await recordedFetch(input, init);
+    };
+    await push(
+      "kit",
+      shelfOf("kit", false, {
+        "items/skills/brand-guidelines/item.json": skillFrom(
+          undefined,
+          "brand-guidelines",
+          "skills/brand-guidelines"
+        ),
+        "items/skills/doc-coauthoring/item.json": skillFrom(
+          undefined,
+          "doc-coauthoring",
+          "skills/doc-coauthoring"
+        ),
+      })
+    );
+    await runJob({ shelf: "kit", type: "upstream.check" }, env, {
+      ...dependencies(realAdapters, []),
+      fetch: counting,
+    });
+    expect(
+      requests.filter(
+        (url) => url === "https://api.github.com/repos/anthropics/skills"
+      )
+    ).toHaveLength(1);
+    const drift = await driftOf("doc-coauthoring");
+    expect(drift.status).toBe("current");
   });
 });
