@@ -1547,9 +1547,16 @@ export class ShelfIndex extends DurableObject<Env> {
     shelf: string,
     input: ReportInput
   ): Outcome<ReportOutput, ShelfNotFound | ProfileNotFound | Forbidden> {
-    const granted = this.reader(session, shelf);
-    if ("ok" in granted) {
-      return granted;
+    // A `publish:{shelf}/{profile}` key reports on its profile without reading the shelf.
+    const held = this.granted(session);
+    const granted =
+      held !== null &&
+      this.shelfId() === shelf &&
+      (held.read || mayEditProfile(held, input.profile))
+        ? held
+        : null;
+    if (granted === null) {
+      return shelfNotFound(shelf);
     }
     const row = this.db
       .select()

@@ -111,6 +111,23 @@ function reportInput(
   };
 }
 
+/** A valid input for each tool on `shelf`, reporting on the profile `minimal` with the plan's digests. */
+function usableInput(
+  name: string,
+  shelf: string,
+  plan: v.InferOutput<typeof PlanDigestsSchema>
+): JsonObject {
+  const inputs = new Map<string, JsonObject>([
+    ["shelf.compile.plan", { profile: "minimal", shelf }],
+    ["shelf.item.get", { item: "playwright", shelf }],
+    ["shelf.profile.get", { profile: "minimal", shelf }],
+    ["shelf.recommend", { markers: { files: ["package.json"] }, shelf }],
+    ["shelf.report", { ...reportInput(plan, "minimal"), shelf }],
+    ["shelf.search", { kinds: ["mcp"], shelf }],
+  ]);
+  return inputs.get(name) ?? { shelf };
+}
+
 describe("the AcidCat contract", () => {
   it("is the committed catalog: the served application renders packages/schema/acidcat.catalog.json", () => {
     const served: unknown = JSON.parse(
@@ -159,43 +176,69 @@ describe("/mcp", () => {
     });
   });
 
-  it("lists tools from the key: reads for readers, report for publishers, nothing of its own for a relay-only or registry-only key", async () => {
+  it("lists each key exactly the tools it can use: every listed tool answers, none with ShelfNotFound or Forbidden", async () => {
+    await push("open", fixtureShelf(inject("allKindsShelf"), "open", true));
+    const plan = await value(
+      PlanDigestsSchema,
+      "shelf.compile.plan",
+      { profile: "minimal", shelf: "kit" },
+      TEST_OWNER_KEY
+    );
     const keys = {
-      publisher: await createKey("kit", ["publish:kit/full"]),
+      publisher: await createKey("kit", ["publish:kit/minimal"]),
       reader: await createKey("kit", ["read"]),
-      registryOnly: await createKey("kit", ["read:kit/full"]),
+      registryOnly: await createKey("kit", ["read:kit/minimal"]),
       relayOnly: await createKey("kit", ["mcp:kit/linear"]),
       writer: await createKey("kit", ["publish:kit/*"]),
     };
-    const listed = {
-      anonymous: await toolNames(),
-      owner: await toolNames(TEST_OWNER_KEY),
-      publisher: await toolNames(keys.publisher.secret),
-      reader: await toolNames(keys.reader.secret),
-      registryOnly: await toolNames(keys.registryOnly.secret),
-      relayOnly: await toolNames(keys.relayOnly.secret),
-      writer: await toolNames(keys.writer.secret),
-    };
-    expect(listed).toStrictEqual({
-      anonymous: READING_TOOLS,
-      owner: SHELF_TOOLS,
-      publisher: SHELF_TOOLS,
-      reader: READING_TOOLS,
-      registryOnly: [],
-      relayOnly: [],
-      writer: SHELF_TOOLS,
+    const callers = [
+      ["anonymous", undefined, "open"],
+      ["owner", TEST_OWNER_KEY, "kit"],
+      ...Object.entries(keys).map(
+        ([name, key]) => [name, key.secret, "kit"] as const
+      ),
+    ] as const;
+    const answers = await Promise.all(
+      callers.map(async ([caller, key, shelf]) => {
+        const listed = await toolNames(key);
+        const outcomes = await Promise.all(
+          listed.map(async (name) => {
+            const { result } = await call(
+              name,
+              usableInput(name, shelf, plan),
+              key
+            );
+            return result?.isError === true && result !== undefined
+              ? `${name}: ${JSON.stringify(textOf(result))}`
+              : null;
+          })
+        );
+        return [
+          caller,
+          { failed: outcomes.filter((found) => found !== null), listed },
+        ] as const;
+      })
+    );
+    expect(Object.fromEntries(answers)).toStrictEqual({
+      anonymous: { failed: [], listed: READING_TOOLS },
+      owner: { failed: [], listed: SHELF_TOOLS },
+      publisher: { failed: [], listed: ["shelf.report"] },
+      reader: { failed: [], listed: READING_TOOLS },
+      registryOnly: { failed: [], listed: [] },
+      relayOnly: { failed: [], listed: [] },
+      writer: { failed: [], listed: SHELF_TOOLS },
     });
-    // A tool the key does not list is a tool that does not exist, not a refusal that confirms it.
+  });
+
+  it("answers a tool the key does not list as an unknown tool, not as a refusal that confirms it", async () => {
+    const relayOnly = await createKey("kit", ["mcp:kit/linear"]);
+    const reader = await createKey("kit", ["read"]);
     await expect(
-      errorCode(
-        "shelf.search",
-        { query: "x", shelf: "kit" },
-        keys.relayOnly.secret
-      )
+      errorCode("shelf.search", { query: "x", shelf: "kit" }, relayOnly.secret)
     ).resolves.toBe(-32_602);
-    await expect(
-      errorCode("shelf.report", {}, keys.reader.secret)
-    ).resolves.toBe(-32_602);
+    await expect(errorCode("shelf.report", {}, reader.secret)).resolves.toBe(
+      -32_602
+    );
   });
 
   it("gives each tool its schema and read-only hint from the catalog", async () => {

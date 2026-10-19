@@ -6,10 +6,11 @@
  * The context is made per request from the authenticated session, and the tools a session lists are computed from its
  * key (`docs/PRD.md` section 8.1, rule 2):
  *
- * - the five reading tools, for the owner, an anonymous caller (public shelves only), and a key that reads (`read`,
- *   `publish:{shelf}/{profile}`, or `publish:{shelf}/*`). A key holding only `mcp:` relay grants sees its relayed
- *   tools and nothing else (rule 4), and a `read:{shelf}/{profile}` key is registry-only;
- * - `shelf.report`, for the owner and a key that may publish a profile.
+ * - the five reading tools, for the owner, an anonymous caller (public shelves only), and a key that reads the shelf
+ *   (`read` or `publish:{shelf}/*`). A key holding only `mcp:` relay grants sees its relayed tools and nothing else
+ *   (rule 4), and a `read:{shelf}/{profile}` key is registry-only;
+ * - `shelf.report`, for the owner and a key that may publish a profile. A `publish:{shelf}/{profile}` key lists only
+ *   this tool: it reports on its profile and cannot read the shelf.
  *
  * Availability narrows the list; it is not what protects a shelf. The object decides every call.
  */
@@ -60,8 +61,11 @@ export function toolAccess(session: Session): ToolAccess {
   const kinds = new Set(
     parseScopes(session.shelf, session.scopes).map((scope) => scope.kind)
   );
-  const reports = kinds.has("publish") || kinds.has("publish-all");
-  return { reads: reports || kinds.has("read"), reports };
+  // `publish:{shelf}/{profile}` reports on its profile and reads nothing; `publish:{shelf}/*` writes the shelf.
+  return {
+    reads: kinds.has("read") || kinds.has("publish-all"),
+    reports: kinds.has("publish") || kinds.has("publish-all"),
+  };
 }
 
 function constant(availability: Availability): Observable<Availability> {
