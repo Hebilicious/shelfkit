@@ -98,6 +98,69 @@ export function isAddressInfo(value: unknown): value is AddressInfo {
   return typeof value === "object" && value !== null && "port" in value;
 }
 
+/** The URL GitHub sends a browser back to after signing in on a deployment at `origin`. */
+export function callbackUrl(origin: string): string {
+  return new URL("/auth/github/callback", origin).toString();
+}
+
+/**
+ * The addresses a deployment answers on, from Wrangler's output file (`WRANGLER_OUTPUT_FILE_PATH`). A deploy event's
+ * `targets` list every trigger Wrangler printed under "Deployed <name> triggers": the routes, but also the cron
+ * schedule (`schedule: 0 * * * *`) and the queues (`Producer for shelfkit-jobs`). Only `https:` URLs with a host are
+ * addresses; each is reduced to its origin, and duplicates go. Setup stops when none is left rather than register
+ * anything else with GitHub.
+ */
+export function deploymentOrigins(outputFile: string): string[] {
+  const origins = new Set<string>();
+  for (const line of outputFile.split("\n")) {
+    if (line.trim() === "") {
+      continue;
+    }
+    const event: unknown = JSON.parse(line);
+    if (!isDeployEvent(event)) {
+      continue;
+    }
+    for (const target of event.targets) {
+      const origin = httpsOrigin(target.replaceAll(ANSI, "").trim());
+      if (origin !== null) {
+        origins.add(origin);
+      }
+    }
+  }
+  if (origins.size === 0) {
+    throw new Error(
+      "Wrangler reported no https address for the Worker; check `workers_dev` or the routes in wrangler.jsonc"
+    );
+  }
+  return [...origins];
+}
+
+/** The origin of an `https:` URL with a host, or `null` for anything else. */
+function httpsOrigin(text: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return null;
+  }
+  return url.protocol === "https:" && url.hostname !== "" ? url.origin : null;
+}
+
+// BOUNDARY: a line of Wrangler's output file is unknown until this guard has found a deploy event with its targets.
+function isDeployEvent(
+  value: unknown
+): value is { readonly type: "deploy"; readonly targets: readonly string[] } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    value.type === "deploy" &&
+    "targets" in value &&
+    Array.isArray(value.targets) &&
+    value.targets.every((target: unknown) => typeof target === "string")
+  );
+}
+
 export function escapeHtml(text: string): string {
   return text
     .replaceAll("&", "&amp;")
@@ -115,9 +178,7 @@ export function appManifest(deployments: readonly string[], page: string) {
   const [home = ""] = deployments;
   const host = new URL(home).hostname.replace(/\.workers\.dev$/u, "");
   return {
-    callback_urls: deployments
-      .slice(0, 10)
-      .map((deployment) => `${deployment}/auth/github/callback`),
+    callback_urls: deployments.slice(0, 10).map(callbackUrl),
     default_events: [],
     default_permissions: {},
     description: `Sign-in for the ShelfKit deployment at ${home}. It asks for no permissions: it only tells ShelfKit who signed in.`,

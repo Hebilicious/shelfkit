@@ -82,7 +82,7 @@ It creates, in order: the R2 bucket `shelfkit-blobs`, with a bucket lock that re
 
 People sign in to the web UI with GitHub; nobody pastes a key into a browser. The last step of setup creates the deployment's GitHub App through GitHub's app-manifest flow:
 
-1. Setup prints a `http://127.0.0.1:<port>/` address and opens it. The page holds the app's manifest: no repository or organization permissions, no webhook, and a callback `https://<address>/auth/github/callback` for every address Wrangler reports for the deployment. The page answers only on that address, once.
+1. Setup prints a `http://127.0.0.1:<port>/` address and opens it. The page holds the app's manifest: no repository or organization permissions, no webhook, and a callback `https://<address>/auth/github/callback` for every `https:` address Wrangler reports for the deployment, which is its workers.dev address (Wrangler reports routes and custom domains without a scheme, and cron and queue triggers alongside them; none of those is registered). The page answers only on that address, once.
 2. "Continue to GitHub" posts the manifest to github.com (`--github-org <org>` creates the app under an organization). Click **Create GitHub App**. GitHub may ask you to change the name if it is taken.
 3. GitHub sends the browser back to the local page with a code. Setup converts it, sets the app's client id and secret as the Worker secrets `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, and keeps nothing else: the app's private key and webhook secret are never written anywhere.
 

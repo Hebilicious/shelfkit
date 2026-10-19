@@ -22,7 +22,7 @@
  *    `GITHUB_CLIENT_SECRET`. It is made with GitHub's app-manifest flow: a page served on this machine's loopback
  *    posts the manifest to github.com, you click "Create GitHub App", and GitHub sends the browser back to that page
  *    with a code that setup converts into the app's client id and secret, set as Worker secrets on standard input.
- *    The app asks for no permissions, and its callbacks are every address Wrangler reports for the deployment; its
+ *    The app asks for no permissions, and its callbacks are the deployment's `https:` origins among Wrangler's deploy targets (`deploymentOrigins`); its
  *    private key and webhook secret are never kept. It is public so that accounts the owner grants access can
  *    authorize it; installing it grants nothing.
  *
@@ -59,7 +59,9 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import {
+  callbackUrl,
   deployCommand,
+  deploymentOrigins,
   isAddressInfo,
   loopbackHandler,
   OWNER_LOOKUP,
@@ -234,7 +236,7 @@ function workerSecrets(): ReadonlySet<string> {
   return listing.kind === "listed" ? listing.names : new Set();
 }
 
-/** Deploy, and return the Worker's URLs from Wrangler's output file. No secret goes with it (`deployCommand`). */
+/** Deploy, and return the origins the Worker answers on (`deploymentOrigins`). No secret goes with it (`deployCommand`). */
 function deploy(directory: string): string[] {
   step(
     "Deploy the Worker, creating the Durable Object namespace and applying its migrations"
@@ -248,17 +250,7 @@ function deploy(directory: string): string[] {
     wrangler(deployCommand(), { env: { WRANGLER_OUTPUT_FILE_PATH: output } }),
     "deploying"
   );
-  const targets: string[] = [];
-  for (const line of readFileSync(output, "utf-8").split("\n")) {
-    if (line.trim() === "") {
-      continue;
-    }
-    const event: unknown = JSON.parse(line);
-    if (isDeployEvent(event)) {
-      targets.push(...event.targets);
-    }
-  }
-  return targets;
+  return deploymentOrigins(readFileSync(output, "utf-8"));
 }
 
 async function healthy(url: string): Promise<boolean> {
@@ -532,7 +524,7 @@ async function ensureGitHubApp(
   deployments: readonly string[]
 ): Promise<void> {
   step(
-    `GitHub App for "Sign in with GitHub" (callbacks ${deployments.map((deployment) => `${deployment}/auth/github/callback`).join(", ")})`
+    `GitHub App for "Sign in with GitHub" (callbacks ${deployments.length === 0 ? "for each address the deploy reports" : deployments.map(callbackUrl).join(", ")})`
   );
   if (existing.has(CLIENT_ID) && existing.has(CLIENT_SECRET) && !recreateApp) {
     console.log(
@@ -620,7 +612,7 @@ async function main(): Promise<void> {
 
     const targets = deploy(directory);
     if (dryRun) {
-      await ensureGitHubApp(existing, ["https://<deployment>"]);
+      await ensureGitHubApp(existing, []);
     }
     const [url] = targets;
     if (dryRun) {
@@ -652,21 +644,6 @@ async function main(): Promise<void> {
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
-}
-
-// BOUNDARY: a line of Wrangler's output file is unknown until this guard has found a deploy event with its URLs.
-function isDeployEvent(
-  value: unknown
-): value is { readonly type: "deploy"; readonly targets: readonly string[] } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value &&
-    value.type === "deploy" &&
-    "targets" in value &&
-    Array.isArray(value.targets) &&
-    value.targets.every((target: unknown) => typeof target === "string")
-  );
 }
 
 await main();

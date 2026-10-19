@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   appManifest,
   deployCommand,
+  deploymentOrigins,
   isAddressInfo,
   loopbackHandler,
   OWNER_LOOKUP,
@@ -89,6 +90,56 @@ describe("listing the Worker's secrets", () => {
         readSecretListing({ status: 1, stderr, stdout: "" }, "shelfkit")
       ).toThrow(/cannot tell which exist/u);
     }
+  });
+});
+
+/**
+ * The output file, in Wrangler's own key order. The deploy event Wrangler 4.134.0 writes to `WRANGLER_OUTPUT_FILE_PATH` for this Worker: a workers.dev route, the
+ * hourly cron, and the jobs queue's producer and consumer. `targets` holds exactly the lines it prints under
+ * "Deployed shelfkit triggers (… sec)", indented, in this order; only workers.dev targets get an `https://` prefix.
+ */
+const DEPLOYED = [
+  '{"version":1,"type":"wrangler-session","wrangler_version":"4.134.0","command_line_args":["deploy"],"log_file_path":"/home/heb/.config/.wrangler/logs/wrangler.log"}',
+  '{"version":1,"type":"deploy","worker_name":"shelfkit","worker_tag":"0f1e2d3c4b5a69788796a5b4c3d2e1f0","version_id":"5b0f3a8e-6c1d-4f2a-9b7e-1d2c3b4a5f60","targets":["https://shelfkit.hebilicious.workers.dev","schedule: 0 * * * *","Producer for shelfkit-jobs","Consumer for shelfkit-jobs"],"worker_name_overridden":false,"bundle_size":{"raw_bytes":4812345,"gzip_bytes":1402118}}',
+  "",
+].join("\n");
+
+describe("the deployment's addresses", () => {
+  it("are the https origins among Wrangler's deploy targets, not its cron or queue triggers", () => {
+    const origins = deploymentOrigins(DEPLOYED);
+    expect({
+      callbacks: appManifest(origins, "http://127.0.0.1:4000/").callback_urls,
+      origins,
+    }).toStrictEqual({
+      callbacks: [
+        "https://shelfkit.hebilicious.workers.dev/auth/github/callback",
+      ],
+      origins: ["https://shelfkit.hebilicious.workers.dev"],
+    });
+  });
+
+  it("are reduced to origins, deduplicated, and read through terminal colours", () => {
+    const event = JSON.stringify({
+      targets: [
+        "\u001B[36mhttps://shelfkit.example.workers.dev\u001B[0m",
+        "https://shelfkit.example.workers.dev/",
+        "https://shelfkit.example.workers.dev/some/path",
+        "http://shelfkit.example.workers.dev",
+        "shelf.example.com/*",
+      ],
+      type: "deploy",
+    });
+    expect(deploymentOrigins(event)).toStrictEqual([
+      "https://shelfkit.example.workers.dev",
+    ]);
+  });
+
+  it("stop setup when Wrangler reports none", () => {
+    const event = JSON.stringify({
+      targets: ["schedule: 0 * * * *", "Consumer for shelfkit-jobs"],
+      type: "deploy",
+    });
+    expect(() => deploymentOrigins(event)).toThrow(/no https address/u);
   });
 });
 
