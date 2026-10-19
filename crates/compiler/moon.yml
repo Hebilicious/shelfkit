@@ -24,9 +24,11 @@ tasks:
     command: "cargo fmt --package shelfkit-compiler --check"
   test:
     command: "cargo test --package shelfkit-compiler"
-    # The golden tests compile ShelfKit's own shelf and the core fixtures too.
+    # The golden tests compile ShelfKit's own shelf and the core fixtures too, and the curation tests the shelf the
+    # importers build and the responses they recorded.
     inputs:
       - "**/*"
+      - "/packages/importers/test/fixtures/**/*"
       - "/crates/core/src/**/*"
       - "/crates/core/tests/fixtures/**/*"
       - "/crates/registry/src/**/*"

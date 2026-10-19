@@ -357,7 +357,13 @@ fn install_prefers_apm_on_the_path_and_doctor_reports_the_choice() {
         "{}",
         doctor.stdout
     );
-    assert!(doctor.stdout.contains("issue #8"), "{}", doctor.stdout);
+    assert!(
+        doctor
+            .stdout
+            .contains("drift       not checked: no shelf loaded"),
+        "{}",
+        doctor.stdout
+    );
     let missing = shelfkit(&repo, &FakeMachine::with(&[]), &["doctor"]);
     assert!(
         missing
@@ -482,9 +488,10 @@ fn init_add_ls_show_and_rm_manage_a_shelf() {
 }
 
 #[test]
-fn add_refuses_every_source_kind_but_a_local_path_and_fetches_nothing() {
+fn add_hands_a_source_that_is_not_local_to_the_hosted_import_and_reads_nothing_itself() {
     let root = scratch("add-remote");
     assert_eq!(shelfkit(&root, &NoProcesses, &["init"]).code, 0);
+    // `NoProcesses` has no network: the command stops at the hosted shelf it imports into, having read nothing.
     for source in [
         "https://github.com/anthropics/skills",
         "anthropics/skills",
@@ -492,8 +499,19 @@ fn add_refuses_every_source_kind_but_a_local_path_and_fetches_nothing() {
     ] {
         let ran = shelfkit(&root, &NoProcesses, &["add", source]);
         assert_eq!(ran.code, 1, "{source}");
-        assert!(ran.stderr.contains("issue #8"), "{source}: {}", ran.stderr);
+        assert!(
+            ran.stderr.contains("registry.namespace"),
+            "{source}: {}",
+            ran.stderr
+        );
     }
+    let unknown = shelfkit(&root, &NoProcesses, &["add", "ssh://git@example.com/o/r"]);
+    assert_eq!(unknown.code, 1);
+    assert!(
+        unknown.stderr.contains("is not a directory or file here"),
+        "{}",
+        unknown.stderr
+    );
 }
 
 #[test]

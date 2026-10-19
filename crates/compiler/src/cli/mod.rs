@@ -9,7 +9,9 @@
 //! error. `install` exits with APM's own code.
 
 pub mod add;
+pub mod add_remote;
 pub mod apm;
+pub mod doctor;
 mod hosted;
 mod keychain;
 mod network;
@@ -66,12 +68,18 @@ struct Cli {
 enum Command {
     /// Scaffold a shelf: shelf.json, an empty default profile, and the items/ directory.
     Init(InitArgs),
-    /// Import items from a local directory or file (the `path` source kind).
+    /// Import items from a local directory or file, or from a source elsewhere through the hosted service.
     ///
-    /// Reads APM's package layouts: `.apm/` primitives, a root SKILL.md, a plugin, `skills/<name>/SKILL.md`, and
-    /// `hooks/*.json`, or one `.prompt.md`, `.agent.md`, or `.instructions.md` file. Items are copied into the shelf
-    /// with no upstream, their `source` naming a `path` source in shelf.json. Git repositories, registries, catalogs,
-    /// marketplaces, and other shelves arrive with their source adapters in issue #8; this build fetches nothing.
+    /// A local directory or file (the `path` source kind) is read here, by APM's package layouts: `.apm/` primitives,
+    /// a root SKILL.md, a plugin, `skills/<name>/SKILL.md`, and `hooks/*.json`, or one `.prompt.md`, `.agent.md`, or
+    /// `.instructions.md` file. Items are copied into the shelf with no upstream, their `source` naming a `path`
+    /// source in shelf.json.
+    ///
+    /// Anything else (a GitHub repository as a URL or `owner/repo`, a ClawHub listing, an MCP registry, another
+    /// ShelfKit instance) is imported by the hosted service's import job, which pins each item, records its licence
+    /// and attribution, and imports an unlicensed one as a link without content. Without `--pick` or `--all` the
+    /// candidates are listed; with them they are imported into the hosted shelf, and `shelfkit fetch` brings them
+    /// here. Needs `shelfkit login`.
     Add(AddArgs),
     /// Remove an item. Refused while a profile, a bundle, or another item references it.
     Rm(RmArgs),
@@ -96,9 +104,11 @@ enum Command {
     Compile(CompileArgs),
     /// Check that a repository's apm.yml and vendored packages still match the profile they came from.
     Verify(VerifyArgs),
-    /// Report the APM runner `install` would use, the harnesses a repository has, and the shelf's state.
+    /// Report the APM runner `install` would use, the harnesses a repository has, the shelf's state, and drift.
     ///
-    /// Source drift (an imported item whose upstream moved) is not checked yet: it arrives with issue #8.
+    /// Drift: each imported item's upstream is read (GitHub, ClawHub, an MCP registry, another ShelfKit instance, or
+    /// an APM registry) and compared with what the item is pinned to; moved and gone items are listed. Nothing is
+    /// written. `GITHUB_TOKEN`, when set, is sent to api.github.com only. `--offline` skips the check.
     Doctor(DoctorArgs),
     /// Run `apm install` in a repository, through `apm` on PATH or a pinned `uvx`. Prints the command first.
     ///
@@ -189,11 +199,28 @@ struct InitArgs {
 
 #[derive(Args)]
 struct AddArgs {
-    /// A local directory or file.
+    /// A local directory or file, or a source URL (`https://github.com/o/r`, `o/r`, a ClawHub listing, an MCP
+    /// registry, a ShelfKit instance).
     source: String,
-    /// The id of the `path` source to record in shelf.json. Defaults to the directory's name.
+    /// The id of the shelf.json source the items record. For a local directory, defaults to its name.
     #[arg(long, value_name = "ID")]
     source_id: Option<String>,
+    /// For a remote source: the path inside it (a directory or file of a repository, a ClawHub `owner/slug`, an
+    /// MCP registry server or search term, a ShelfKit shelf).
+    #[arg(long, value_name = "PATH")]
+    path: Option<String>,
+    /// For a Git source: the branch, tag, or commit to read.
+    #[arg(long = "ref", value_name = "REF")]
+    git_ref: Option<String>,
+    /// For a remote source: import this candidate (by the key the listing shows). Repeatable.
+    #[arg(long, value_name = "KEY")]
+    pick: Vec<String>,
+    /// For a remote source: import every candidate.
+    #[arg(long, conflicts_with = "pick")]
+    all: bool,
+    /// For a remote source: the deployment, when it is not the one `login` remembered.
+    #[arg(long, value_name = "URL")]
+    url: Option<String>,
 }
 
 #[derive(Args)]
@@ -278,6 +305,9 @@ struct DoctorArgs {
     /// The repository to inspect. Defaults to the current directory.
     #[arg(long, value_name = "DIR")]
     repo: Option<PathBuf>,
+    /// Do not read upstream: skip the drift check.
+    #[arg(long)]
+    offline: bool,
 }
 
 #[derive(Args)]
@@ -519,15 +549,7 @@ fn add(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &AddArgs) -> Outcome
     let root = shelf_root(ctx, shelf)?;
     let target = absolute(ctx, Some(Path::new(&args.source)));
     if !target.exists() {
-        let what = add::unsupported_kind(&args.source).unwrap_or(
-            "not a directory or file on this machine (a Git shorthand, a registry package, or a catalog record)",
-        );
-        return Err(format!(
-            "`{}` is {what}. This build imports only from a local directory (the `path` source kind); \
-             the other source adapters arrive with issue #8.",
-            args.source
-        )
-        .into());
+        return add_from_source(ctx, &root, args);
     }
     let import = add::import(&root, &target, args.source_id.as_deref())?;
     for (path, bytes) in &import.files {
@@ -542,6 +564,31 @@ fn add(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &AddArgs) -> Outcome
         let _ = writeln!(ctx.stdout, "added {kind} {id}");
     }
     let _ = writeln!(ctx.stdout, "Select them in a profile to compile them.");
+    Ok(())
+}
+
+/// `add` for a source that is not on this machine, through the hosted import job.
+fn add_from_source(ctx: &mut Context<'_>, root: &Path, args: &AddArgs) -> Outcome {
+    let source = add_remote::parse(
+        &args.source,
+        args.path.as_deref(),
+        args.git_ref.as_deref(),
+        args.source_id.as_deref(),
+    )?;
+    let shelf = add_remote::namespace(root)?;
+    let remote = hosted::Remote::connect(ctx.system, args.url.as_deref())?;
+    let outcome = add_remote::run(
+        &remote,
+        &shelf,
+        &source,
+        &args.pick,
+        args.all,
+        &std::thread::sleep,
+    )?;
+    let _ = write!(ctx.stdout, "{}", outcome.text);
+    if outcome.failed {
+        return Err("the import failed; see above".to_owned().into());
+    }
     Ok(())
 }
 
@@ -1147,6 +1194,7 @@ fn doctor(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &DoctorArgs) -> O
     let repo = absolute(ctx, args.repo.as_deref());
     let _ = writeln!(ctx.stdout, "repository  {}", repo.display());
 
+    let mut loaded = None;
     match shelf_root(ctx, shelf) {
         Ok(root) => match load(&DirSource::new(&root)) {
             Ok(shelf) => {
@@ -1157,6 +1205,7 @@ fn doctor(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &DoctorArgs) -> O
                     shelf.items.len(),
                     shelf.profiles.len()
                 );
+                loaded = Some(shelf);
             }
             Err(errors) => {
                 let _ = writeln!(
@@ -1222,10 +1271,18 @@ fn doctor(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &DoctorArgs) -> O
             harnesses.join("; ")
         }
     );
-    let _ = writeln!(
-        ctx.stdout,
-        "drift       not checked: source drift detection arrives with issue #8"
-    );
+    match (&loaded, args.offline) {
+        (Some(shelf), false) => {
+            let drifts = doctor::check(ctx.system, shelf);
+            let _ = write!(ctx.stdout, "{}", doctor::report(&drifts));
+        }
+        (Some(_), true) => {
+            let _ = writeln!(ctx.stdout, "drift       not checked (--offline)");
+        }
+        (None, _) => {
+            let _ = writeln!(ctx.stdout, "drift       not checked: no shelf loaded");
+        }
+    }
     Ok(())
 }
 

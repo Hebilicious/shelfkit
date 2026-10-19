@@ -1,0 +1,27 @@
+name: default
+version: "0.0.0"
+targets:
+  - claude
+  - copilot
+registries:
+  hebilicious:
+    url: "https://shelfkit.hebilicious.workers.dev/apm"
+  default: hebilicious
+dependencies:
+  apm:
+    - git: anthropics/skills/skills/brand-guidelines
+      ref: dbd4588f9e1033efb41dad4bef2f7947c8993d44
+    - git: github/awesome-copilot/agents/CSharpExpert.agent.md
+      ref: cb64ad12e32737ae764becd6885462e9b4c7cb00
+    - id: hebilicious/default
+      version: 0.0.0+sha256.5442bb8baa8df9529c0fb9ec3a2522aad89704c95f5455ac5b109386c7219de6
+    - git: github/awesome-copilot/instructions/rust.instructions.md
+      ref: cb64ad12e32737ae764becd6885462e9b4c7cb00
+    - ./vendor/default
+  mcp:
+    - name: io.github.github/github-mcp-server
+      registry: false
+      transport: streamable-http
+      url: "https://api.githubcopilot.com/mcp/"
+      headers:
+        Authorization: "${GITHUB_MCP_SERVER_AUTHORIZATION}"
