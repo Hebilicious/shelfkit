@@ -1,0 +1,16 @@
+{
+  "description": "The conventions this repository is built to.",
+  "id": "hebilicious-default",
+  "source": {
+    "digest": "sha256:e241aaca4bf74bee632aef3771900b12e66c383efeb912aa0976c5f4d6f07606",
+    "id": "hebilicious",
+    "license": "none stated; a reference to the instance's registry package, nothing is copied",
+    "linkTarget": "https://shelfkit.hebilicious.workers.dev",
+    "path": "hebilicious/default",
+    "recordUrl": "https://shelfkit.hebilicious.workers.dev/apm/v1/packages/hebilicious/default/versions",
+    "url": "https://shelfkit.hebilicious.workers.dev",
+    "version": "0.0.0+sha256.5442bb8baa8df9529c0fb9ec3a2522aad89704c95f5455ac5b109386c7219de6"
+  },
+  "title": "ShelfKit development (hebilicious/default)",
+  "kind": "instructions"
+}

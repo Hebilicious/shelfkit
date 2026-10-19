@@ -1,0 +1,16 @@
+{
+  "id": "doc-coauthoring",
+  "source": {
+    "creditText": "anthropics/skills: skills/doc-coauthoring",
+    "id": "anthropics",
+    "license": "none stated",
+    "linkTarget": "https://github.com/anthropics/skills",
+    "path": "skills/doc-coauthoring",
+    "recordUrl": "https://github.com/anthropics/skills/tree/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/doc-coauthoring",
+    "ref": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+    "repo": "https://github.com/anthropics/skills",
+    "resolvedCommit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44"
+  },
+  "title": "Doc coauthoring",
+  "kind": "skill"
+}

@@ -35,6 +35,10 @@ import type {
   UpstreamState,
 } from "../seam.ts";
 
+/** A profile reference copies nothing, and the instance states no licence for it. */
+const PROFILE_LICENCE =
+  "none stated; a reference to the instance's registry package, nothing is copied";
+
 const VersionsSchema = v.object({
   versions: v.array(
     v.object({
@@ -311,6 +315,7 @@ async function fetchItem(
         source: provenance({
           digest: published.digest,
           id: source.sourceId,
+          license: PROFILE_LICENCE,
           linkTarget: instance,
           path: `${shelf}/${profile}`,
           recordUrl: url,
@@ -356,6 +361,7 @@ async function fetchItem(
     ...kept,
     id,
     source: provenance({
+      license: licence.statement,
       ...(upstream as Record<string, string | boolean | undefined>),
       ...(typeof upstream.repo === "string" || typeof upstream.url === "string"
         ? {}

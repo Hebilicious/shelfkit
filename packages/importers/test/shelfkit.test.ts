@@ -66,6 +66,8 @@ describe("the shelfkit adapter", () => {
     expect(imported.item.source).toStrictEqual({
       digest: profile.upstream.digest,
       id: "hebilicious",
+      license:
+        "none stated; a reference to the instance's registry package, nothing is copied",
       linkTarget: INSTANCE,
       path: "hebilicious/default",
       recordUrl: `${INSTANCE}/apm/v1/packages/hebilicious/default/versions`,
@@ -90,6 +92,7 @@ describe("the shelfkit adapter", () => {
       source: {
         digest: prompt.upstream.digest,
         id: "hebilicious",
+        license: "none stated",
         linkTarget: INSTANCE,
         path: "hebilicious/commit-style",
         recordUrl: `${INSTANCE}/item?shelf=hebilicious&id=commit-style`,

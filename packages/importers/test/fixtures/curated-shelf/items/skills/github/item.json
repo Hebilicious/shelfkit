@@ -1,0 +1,19 @@
+{
+  "description": "Interact with GitHub using the `gh` CLI. Use `gh issue`, `gh pr`, `gh run`, and `gh api` for issues, PRs, CI runs, and advanced queries.",
+  "id": "github",
+  "source": {
+    "creditText": "Published on ClawHub by @steipete",
+    "digest": "sha256:d0bef7d74621458724b7de544cdcedd8aaee25f00bb43142a85bc9ce62b0c2d7",
+    "id": "clawhub",
+    "license": "MIT-0: every skill published on ClawHub (ClawHub skill format, License)",
+    "licenseId": "MIT-0",
+    "linkTarget": "https://clawhub.ai/steipete/skills/github",
+    "path": "steipete/github",
+    "recordUrl": "https://clawhub.ai/steipete/skills/github",
+    "shareAlike": false,
+    "url": "https://clawhub.ai/steipete/skills/github",
+    "version": "1.0.0"
+  },
+  "title": "Github",
+  "kind": "skill"
+}

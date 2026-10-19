@@ -1,0 +1,23 @@
+{
+  "$schema": "https://shelfkit.dev/schemas/profile.json",
+  "bundles": [],
+  "compile": {
+    "pin": "revision",
+    "targets": [
+      "claude",
+      "copilot"
+    ]
+  },
+  "description": "Every compilable import, pinned.",
+  "extends": [],
+  "id": "default",
+  "items": [
+    "brand-guidelines",
+    "csharp-expert",
+    "github",
+    "github-mcp-server",
+    "hebilicious-default",
+    "rust"
+  ],
+  "title": "Curated imports"
+}

@@ -1,0 +1,27 @@
+{
+  "description": "Connect AI assistants to GitHub - manage repos, issues, PRs, and workflows through natural language.",
+  "id": "github-mcp-server",
+  "source": {
+    "creditText": "This data comes from the Official MCP Registry",
+    "digest": "sha256:9b05b9e38f928760ea99e3b08cfedb0baaf4e6d0f2addc6d5b5935af18218ea8",
+    "id": "mcp-registry",
+    "license": "CC0-1.0: Registry Data is dedicated to the public domain (Official MCP Registry Terms of Service, section 10)",
+    "licenseId": "CC0-1.0",
+    "linkTarget": "https://registry.modelcontextprotocol.io",
+    "recordUrl": "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.github%2Fgithub-mcp-server/versions/2.0.2",
+    "shareAlike": false,
+    "url": "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.github%2Fgithub-mcp-server/versions/2.0.2",
+    "version": "2.0.2"
+  },
+  "title": "GitHub",
+  "flavour": "remote",
+  "headers": {
+    "Authorization": {
+      "secret": "GITHUB_MCP_SERVER_AUTHORIZATION"
+    }
+  },
+  "kind": "mcp",
+  "name": "io.github.github/github-mcp-server",
+  "transport": "streamable-http",
+  "url": "https://api.githubcopilot.com/mcp/"
+}
