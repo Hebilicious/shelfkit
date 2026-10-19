@@ -4,7 +4,7 @@ tags: ["importers"]
 
 project:
   title: "Importers"
-  description: "Source adapters and scanners: the interface the Worker's import and upstream-check jobs dispatch to (issue #8 fills it in)."
+  description: "Source adapters (GitHub, the MCP Registry, ClawHub, other ShelfKit instances) and scanners behind the interface the Worker's import, upstream-check, and scan jobs dispatch to."
 
 dependsOn:
   - "schema"
