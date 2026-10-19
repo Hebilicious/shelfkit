@@ -5,12 +5,14 @@
 import {
   CompilePlanSchema,
   ItemKindSchema,
+  ItemSummarySchema,
   ProfileSchema,
   ResolvedProfileSchema,
   SourceSchema,
 } from "@shelfkit/schema";
 import type {
   CompilePlan,
+  ItemSummary,
   Profile,
   ResolvedProfile,
   Source,
@@ -184,4 +186,24 @@ export function readStrings(value: unknown): string[] {
  */
 export function pretty(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+/**
+ * The items a shared profile resolves to, as summaries.
+ * BOUNDARY: a GraphQL `JSON` value is unparsed; `ItemSummarySchema` parses each entry here.
+ */
+export function readItemSummaries(value: unknown): ItemSummary[] {
+  const parsed = v.safeParse(v.array(ItemSummarySchema), value);
+  return parsed.success ? parsed.output : [];
+}
+
+const PlanFilesSchema = v.array(v.object({ path: v.string() }));
+
+/**
+ * The paths of a plan's vendored files.
+ * BOUNDARY: a GraphQL `JSON` value is unparsed; `PlanFilesSchema` parses it here.
+ */
+export function readPlanFilePaths(value: unknown): string[] {
+  const parsed = v.safeParse(PlanFilesSchema, value);
+  return parsed.success ? parsed.output.map((file) => file.path) : [];
 }

@@ -91,9 +91,13 @@ function open(id: string): void {
   void router.push({ name: "prompts", params: { id, shelf: shelf.value }, query: route.query });
 }
 
+/** Bumped when the list changes a prompt the detail pane shows, so the pane reloads it. */
+const detailChanges = ref(0);
+
 async function toggleFavourite(id: string, favourite: boolean): Promise<void> {
   try {
     await execute(SetFavouriteMutation, { favourite, item: id, shelf: shelf.value });
+    detailChanges.value += 1;
     await prompts.refresh();
   } catch (error) {
     notifyError(error);
@@ -216,6 +220,7 @@ async function created(id: string): Promise<void> {
       :id="selectedId"
       :key="`${shelf}/${selectedId}`"
       :shelf="shelf"
+      :changes="detailChanges"
       @favourite="toggleFavourite"
       @deleted="prompts.refresh()"
     />

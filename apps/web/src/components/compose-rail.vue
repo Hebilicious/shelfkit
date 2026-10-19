@@ -74,7 +74,7 @@ function coordinate(id: string): string {
               class="small"
             >
               <span class="mono" :class="`severity-${conflict.severity}`">{{ conflict.code }}</span>
-              <span class="mono muted"> {{ conflict.path }}</span>
+              <div class="mono muted">{{ conflict.path }}</div>
               <div>{{ conflict.message }}</div>
             </li>
           </ul>

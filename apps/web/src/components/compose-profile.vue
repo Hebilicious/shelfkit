@@ -180,7 +180,7 @@ function setTargets(slug: string): void {
           >
             <div class="list-row">
               <span class="ellipsis">{{ entry.item?.title ?? entry.id }}</span>
-              <span class="mono small muted">{{ entry.id }}</span>
+              <span class="mono small muted ellipsis">{{ entry.id }}</span>
               <span v-if="entry.item === undefined" class="badge danger">not in the shelf</span>
               <span class="spacer" />
               <button
@@ -351,7 +351,7 @@ function setTargets(slug: string): void {
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--layout-measure-rail), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--layout-measure-rail)), 1fr));
   gap: var(--spacing-size-3);
 }
 
@@ -360,6 +360,7 @@ function setTargets(slug: string): void {
 }
 
 .dropzone {
+  grid-template-columns: minmax(0, 1fr);
   min-height: var(--spacing-size-16);
   padding: var(--spacing-size-2);
   border: var(--layout-border-thick) dashed var(--border-subtle);

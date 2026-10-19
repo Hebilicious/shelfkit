@@ -1,3 +1,4 @@
 src/api/graphql-env.d.ts
 test-results/
 playwright-report/
+.e2e/

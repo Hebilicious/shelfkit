@@ -195,7 +195,10 @@ div.field {
 label.field > input,
 label.field > select,
 label.field > textarea,
+div.field > select,
 div.field > textarea {
+  width: 100%;
+  min-width: 0;
   color: var(--text-primary);
   font-size: var(--typography_fluid-sans-text-m);
 }
@@ -231,6 +234,7 @@ legend {
 
 .stack {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--spacing-size-2);
   align-content: start;
 }
@@ -253,6 +257,7 @@ legend {
   border-radius: var(--layout-radius-m);
   background: var(--surface-raised);
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--spacing-size-3);
   align-content: start;
   min-width: 0;
@@ -313,6 +318,7 @@ button.chip[aria-pressed="true"],
   margin: 0;
   padding: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .list > li {
@@ -340,6 +346,7 @@ button.chip[aria-pressed="true"],
 }
 
 .ellipsis {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

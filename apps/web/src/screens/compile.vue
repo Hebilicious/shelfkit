@@ -354,7 +354,7 @@ const cliCommand = computed(() => `shelfkit compile ${profileId.value} --repo .`
 <style scoped>
 .columns {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(var(--layout-measure-pane), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--layout-measure-pane)), 1fr));
   gap: var(--spacing-size-4);
   align-items: start;
 }

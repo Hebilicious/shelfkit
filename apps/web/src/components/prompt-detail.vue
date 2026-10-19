@@ -20,7 +20,7 @@ import DiffView from "./diff-view.vue";
 import MarkdownView from "./markdown-view.ts";
 import QueryState from "./query-state.vue";
 
-const { shelf, id } = defineProps<{ shelf: string; id: string }>();
+const { shelf, id, changes } = defineProps<{ shelf: string; id: string; changes: number }>();
 const emit = defineEmits<{ favourite: [id: string, favourite: boolean]; deleted: [] }>();
 
 type PromptItem = NonNullable<NonNullable<ResultOf<typeof PromptQuery>["shelf"]>["item"]>;
@@ -28,7 +28,7 @@ type PromptItem = NonNullable<NonNullable<ResultOf<typeof PromptQuery>["shelf"]>
 const query = useQuery(async () => {
   const data = await execute(PromptQuery, { id, shelf });
   return data.shelf;
-}, []);
+}, [() => changes]);
 const item = computed<PromptItem | null>(() => query.data.value?.item ?? null);
 const canWrite = computed(() => query.data.value?.viewerAccess.write === true);
 

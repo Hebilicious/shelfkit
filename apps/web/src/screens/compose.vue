@@ -68,6 +68,10 @@ watch(
     if (!loaded || (wasLoaded && id === previousId && draft.value !== null)) {
       return;
     }
+    // Saving a new profile moves the route to its id: the draft is already that profile.
+    if (draft.value !== null && draft.value.id === id) {
+      return;
+    }
     const existing = (query.data.value?.profiles ?? []).find((profile) => profile.id === id);
     const document = existing === undefined ? null : readProfile(existing.document);
     saved.value = document;
@@ -250,12 +254,22 @@ const idTaken = computed(
 .compose__header {
   gap: var(--spacing-size-3);
 }
-
+/* Three panes side by side when they fit; on a narrower screen the rail wraps below rather than covering the profile. */
 .compose__panes {
-  display: grid;
-  grid-template-columns: var(--layout-measure-pane) minmax(0, 1fr) var(--layout-measure-pane);
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--spacing-size-4);
-  align-items: start;
+  align-items: flex-start;
+}
+
+.compose__panes > :first-child, .compose__panes > :nth-child(3) {
+  flex: 1 0 var(--layout-measure-rail);
+  max-width: var(--layout-measure-pane);
+}
+
+.compose__panes > :nth-child(2) {
+  flex: 3 0 var(--layout-measure-pane);
+  min-width: 0;
 }
 
 .message {
