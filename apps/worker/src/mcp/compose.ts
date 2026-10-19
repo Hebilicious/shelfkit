@@ -103,11 +103,11 @@ export function serveMcp<Context>(
       return refused;
     }
     const id = message.id ?? null;
-    const relay = await endpoint.relay(request);
-    const result = await relay.call(
+    const result = await relayCall(
+      endpoint,
+      request,
       name,
-      message.params.arguments ?? {},
-      request.signal
+      message.params.arguments ?? {}
     );
     if (result === null) {
       return error(200, id, MCP_UNKNOWN_TOOL, `Tool '${name}' not found`);
@@ -176,6 +176,35 @@ export function serveMcp<Context>(
     }
     return await forward();
   };
+}
+
+/**
+ * A relayed call's result. A relay that throws still answers with a tool result, as AcidCat answers a defect: an
+ * internal call failure with no detail, never a 500.
+ */
+async function relayCall<Context>(
+  endpoint: McpEndpoint<Context>,
+  request: Request,
+  name: string,
+  input: JsonObject
+): Promise<RelayedResult | null> {
+  try {
+    const relay = await endpoint.relay(request);
+    return await relay.call(name, input, request.signal);
+  } catch {
+    return {
+      content: [
+        {
+          text: JSON.stringify({
+            kind: "internal",
+            message: "The relay failed.",
+          }),
+          type: "text",
+        },
+      ],
+      isError: true,
+    };
+  }
 }
 
 /** AcidCat's `tools/list` answer, with the relayed tools after its own. Anything else passes unchanged. */

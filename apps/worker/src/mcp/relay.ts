@@ -20,28 +20,49 @@ import { existingShelf } from "../auth/index.ts";
 import type { Relay, RelayedResult, RelayedTool } from "./compose.ts";
 import { NO_RELAY } from "./compose.ts";
 import { parseRelayedName, relayedName } from "./names.ts";
+import { redact, secretForms } from "./redact.ts";
 import { openUpstream, UpstreamError } from "./upstream.ts";
-import type { Fetcher, Upstream, UpstreamTarget } from "./upstream.ts";
+import type {
+  ByteBudget,
+  Fetcher,
+  Upstream,
+  UpstreamTarget,
+} from "./upstream.ts";
 import {
   ToolPageSchema,
   ToolResultSchema,
   UpstreamToolSchema,
 } from "./wire.ts";
-import type { JsonObject } from "./wire.ts";
+import type { Answer, JsonObject } from "./wire.ts";
 
 /** How many pages of an upstream `tools/list` the relay follows. */
 const MAXIMUM_PAGES = 10;
+
+/**
+ * How long the relayed part of one `tools/list` may take, all servers together. A server that has not listed its tools
+ * by then lists nothing this time, and ShelfKit's own tools are answered without it.
+ */
+const LIST_DEADLINE_MS = 5000;
+
+/** What one `/mcp` request may read from all of its relayed servers together, in bytes. */
+const REQUEST_BUDGET_BYTES = 4 * 1024 * 1024;
 
 /** A granted hosted item, as the relay needs it. */
 interface Granted {
   readonly title: string;
   /** The tools the item declares, or `null` to relay every tool its server lists. */
   readonly declared: readonly string[] | null;
+  /** The headers whose values are secrets, resolved inside the object. */
+  readonly secretHeaders: readonly string[];
 }
 
 /** Where the relay may send a call, or why it may not. */
 type Target =
-  | { readonly target: UpstreamTarget }
+  | {
+      readonly target: UpstreamTarget;
+      /** Every form of every credential sent to it, for `redact`. */
+      readonly forms: readonly string[];
+    }
   | { readonly refused: string };
 
 /** What a request relays with. */
@@ -73,30 +94,44 @@ export async function relayFor(relaying: RelayRequest): Promise<Relay> {
   }
   const object = stub;
   const shelfId = shelf;
+  const budget: ByteBudget = { remaining: REQUEST_BUDGET_BYTES };
 
   async function grantedItems(): Promise<Map<string, Granted>> {
     const relayable = await object.relayable(session, shelfId);
     return new Map(
       (relayable?.servers ?? []).map((server) => [
         server.id,
-        { declared: server.tools ?? null, title: server.title },
+        {
+          declared: server.tools ?? null,
+          secretHeaders: Object.entries(server.headers ?? {}).flatMap(
+            ([header, value]) => (v.is(v.string(), value) ? [] : [header])
+          ),
+          title: server.title,
+        },
       ])
     );
   }
 
   /** Where to call `item`, with its credentials resolved in the object, or why the relay may not. */
-  async function target(item: string): Promise<Target> {
+  async function target(item: string, granted: Granted): Promise<Target> {
     const answer = await object.relayHeaders(session, shelfId, item);
-    return answer.ok
-      ? { target: answer.value }
-      : { refused: answer.failure.message };
+    if (!answer.ok) {
+      return { refused: answer.failure.message };
+    }
+    const sent = answer.value.headers;
+    return {
+      forms: secretForms(
+        granted.secretHeaders.flatMap((header) => sent[header] ?? [])
+      ),
+      target: answer.value,
+    };
   }
 
   async function withUpstream<T>(
     found: UpstreamTarget,
     use: (upstream: Upstream) => Promise<T>
   ): Promise<T> {
-    const upstream = openUpstream(found, fetcher, version);
+    const upstream = openUpstream(found, fetcher, version, budget);
     try {
       return await use(upstream);
     } finally {
@@ -109,7 +144,7 @@ export async function relayFor(relaying: RelayRequest): Promise<Relay> {
     granted: Granted,
     signal: AbortSignal
   ): Promise<RelayedTool[]> {
-    const found = await target(item);
+    const found = await target(item, granted);
     if ("refused" in found) {
       return [];
     }
@@ -117,32 +152,44 @@ export async function relayFor(relaying: RelayRequest): Promise<Relay> {
       found.target,
       async (upstream) => await listPages(upstream, signal)
     );
-    return tools.flatMap((listed) => {
+    const relayed = new Map<string, RelayedTool>();
+    for (const listed of tools) {
       const tool = v.safeParse(UpstreamToolSchema, listed);
+      const named = tool.success
+        ? relayedTool(item, granted.title, tool.output)
+        : null;
+      // A tool the item does not declare is not relayed, and a server that lists a name twice gets it listed once.
       if (
-        !tool.success ||
-        (granted.declared !== null &&
-          !granted.declared.includes(tool.output.name))
+        tool.success &&
+        named !== null &&
+        !relayed.has(named.name) &&
+        (granted.declared === null ||
+          granted.declared.includes(tool.output.name))
       ) {
-        return [];
+        const clean = redact(UpstreamToolSchema, named, found.forms);
+        // A tool whose name held a credential is dropped rather than renamed.
+        if (clean?.name === named.name) {
+          relayed.set(named.name, clean);
+        }
       }
-      const relayed = relayedTool(item, granted.title, tool.output);
-      return relayed === null ? [] : [relayed];
-    });
+    }
+    return [...relayed.values()];
   }
 
   async function callItem(
     item: string,
+    granted: Granted,
     tool: string,
     input: JsonObject,
     signal: AbortSignal
   ): Promise<RelayedResult> {
-    const found = await target(item);
+    const found = await target(item, granted);
     if ("refused" in found) {
       return refusal(`the relay refused to call \`${item}\`: ${found.refused}`);
     }
+    let answer: Answer | null = null;
     try {
-      const answer = await withUpstream(
+      answer = await withUpstream(
         found.target,
         async (upstream) =>
           await upstream.request(
@@ -151,18 +198,24 @@ export async function relayFor(relaying: RelayRequest): Promise<Relay> {
             signal
           )
       );
-      if ("error" in answer) {
-        return refusal(
-          `\`${item}\` answered with an error (${answer.error.code}): ${answer.error.message}`
-        );
-      }
-      return v.parse(ToolResultSchema, answer.result);
     } catch (error) {
-      if (error instanceof UpstreamError) {
-        return refusal(`\`${item}\`: ${error.message}`);
-      }
-      throw error;
+      // Every failure is a refusal the agent can read, never a 500; only the relay's own messages say why.
+      return refusal(
+        error instanceof UpstreamError
+          ? `\`${item}\`: ${error.message}`
+          : `\`${item}\` could not be called`
+      );
     }
+    const result =
+      "error" in answer
+        ? refusal(
+            `\`${item}\` answered with an error (${answer.error.code}): ${answer.error.message}`
+          )
+        : answer.result;
+    return (
+      redact(ToolResultSchema, result, found.forms) ??
+      refusal(`\`${item}\` answered with something that is not a tool result`)
+    );
   }
 
   return {
@@ -179,20 +232,20 @@ export async function relayFor(relaying: RelayRequest): Promise<Relay> {
       ) {
         return null;
       }
-      return await callItem(parsed.item, parsed.tool, input, signal);
+      return await callItem(parsed.item, granted, parsed.tool, input, signal);
     },
 
     async list(signal) {
       const items = await grantedItems();
+      const deadline = AbortSignal.any([
+        signal,
+        AbortSignal.timeout(LIST_DEADLINE_MS),
+      ]);
       const lists = await Promise.all(
-        [...items].map(async ([item, granted]) => {
-          try {
-            return await listItem(item, granted, signal);
-          } catch {
-            // A server that cannot be reached or refuses its credential lists nothing this time.
-            return [];
-          }
-        })
+        [...items].map(
+          async ([item, granted]) =>
+            await beforeDeadline(listItem(item, granted, deadline), deadline)
+        )
       );
       return lists.flat();
     },
@@ -250,4 +303,26 @@ function refusal(message: string): RelayedResult {
     ],
     isError: true,
   };
+}
+
+/**
+ * A server's listing, or nothing when it fails or the deadline passes first. The deadline also aborts the server's
+ * requests; this does not wait for them to notice.
+ */
+async function beforeDeadline(
+  listing: Promise<RelayedTool[]>,
+  deadline: AbortSignal
+): Promise<RelayedTool[]> {
+  // oxlint-disable-next-line promise/avoid-new -- the deadline is an event, and this turns it into an empty listing.
+  const passed = new Promise<RelayedTool[]>((resolve) => {
+    deadline.addEventListener("abort", () => {
+      resolve([]);
+    });
+  });
+  try {
+    return await Promise.race([listing, passed]);
+  } catch {
+    // A server that cannot be reached, refuses its credential, or answers too much lists nothing this time.
+    return [];
+  }
 }

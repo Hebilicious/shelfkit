@@ -4,6 +4,7 @@
  * - `https://mcp.linear.app`: revision 2026-07-28, stateless, with tools that try to collide with ShelfKit's own;
  * - `https://legacy.example`: an older streamable HTTP server that needs `initialize`, hands out a session, answers
  *   over an event stream, and records whether the session was ended;
+ * - `https://edge.example`: the relay's hard cases (`edges.ts`);
  * - `https://redirect.example`: answers every request with a redirect to `https://evil.example`;
  * - anything else: recorded, and answered `502`, so a test can assert it was never called.
  */
@@ -11,10 +12,12 @@ import * as v from "valibot";
 
 import { IdSchema } from "../../src/mcp/wire.ts";
 import type { Id, JsonObject } from "../../src/mcp/wire.ts";
+import { edge } from "./edges.ts";
 
 /** One request a stand-in received. */
 export interface Received {
   readonly origin: string;
+  readonly path: string;
   readonly method: string;
   readonly headers: Readonly<Record<string, string>>;
   /** The JSON-RPC method, for a POST. */
@@ -129,7 +132,7 @@ export class Upstreams {
     init?: RequestInit
   ): Promise<Response> => {
     const request = new Request(input, init);
-    const { origin } = new URL(request.url);
+    const { origin, pathname } = new URL(request.url);
     const text = request.method === "POST" ? await request.text() : "";
     const parsed = v.safeParse(
       MessageSchema,
@@ -147,6 +150,7 @@ export class Upstreams {
       method: request.method,
       origin,
       params: parsed.success ? message.params : null,
+      path: pathname,
       rpc: message.rpc,
     });
     if (origin === "https://mcp.linear.app") {
@@ -154,6 +158,9 @@ export class Upstreams {
     }
     if (origin === "https://legacy.example") {
       return this.legacy(request, message);
+    }
+    if (origin === "https://edge.example") {
+      return await edge(request, message);
     }
     if (origin === "https://redirect.example") {
       return new Response(null, {

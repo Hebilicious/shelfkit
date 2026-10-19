@@ -33,14 +33,23 @@ const DEADLINE_MS = 30_000;
 /** How long ending an older revision's session may take. */
 const CLOSE_DEADLINE_MS = 5000;
 
-/** The most a relayed answer may be, in bytes. */
-const MAXIMUM_ANSWER_BYTES = 4 * 1024 * 1024;
+/** The most one relayed answer may be, in bytes. */
+const MAXIMUM_ANSWER_BYTES = 1024 * 1024;
 
-/** JSON-RPC errors a 2026-07-28 server or an older one gives for a request it cannot take without a handshake. */
-const NEEDS_HANDSHAKE = new Set([-32_000, -32_020, -32_022, -32_600]);
+/** The JSON-RPC errors that say the server refused the revision itself: the request was not run. */
+const VERSION_REFUSED = new Set([-32_020, -32_022]);
 
-/** HTTP statuses an older server gives, with no JSON-RPC answer, to a request that skipped the handshake. */
-const REFUSED_WITHOUT_HANDSHAKE = new Set([400, 404, 405, 406]);
+/**
+ * HTTP statuses an older server gives to a request that skipped the handshake: it refused the request before running
+ * it. A credential refusal (401, 403), a rate limit (429), and any 5xx are not among them, because retrying those with
+ * a handshake would not help, and a 5xx may come from a tool that ran.
+ */
+const REFUSED_WITHOUT_HANDSHAKE = new Set([400, 404, 405, 406, 415]);
+
+/** What one `/mcp` request may still read from all of its relayed servers together, in bytes. */
+export interface ByteBudget {
+  remaining: number;
+}
 
 /** Where to call, and with what credentials. */
 export interface UpstreamTarget {
@@ -90,7 +99,8 @@ interface Posted {
 export function openUpstream(
   target: UpstreamTarget,
   fetcher: Fetcher,
-  clientVersion: string
+  clientVersion: string,
+  budget: ByteBudget
 ): Upstream {
   if (target.transport === "sse") {
     // The HTTP+SSE transport needs a long-lived GET stream per client: a session in all but name.
@@ -106,26 +116,37 @@ export function openUpstream(
     headers: Readonly<Record<string, string>>,
     signal: AbortSignal
   ): Promise<Posted> {
-    const response = await send(
-      fetcher,
-      new Request(target.url, {
-        body: JSON.stringify({ jsonrpc: "2.0", ...message }),
-        headers: {
-          ...target.headers,
-          accept: "application/json, text/event-stream",
-          "content-type": "application/json",
-          ...headers,
-        },
-        method: "POST",
-        redirect: "manual",
-        signal: AbortSignal.any([signal, AbortSignal.timeout(DEADLINE_MS)]),
-      })
-    );
+    const request = new Request(target.url, {
+      body: JSON.stringify({ jsonrpc: "2.0", ...message }),
+      headers: {
+        ...target.headers,
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+        ...headers,
+      },
+      method: "POST",
+      redirect: "manual",
+      signal: AbortSignal.any([signal, AbortSignal.timeout(DEADLINE_MS)]),
+    });
+    const response = await send(fetcher, request);
     if (message.id === undefined) {
       await response.body?.cancel();
       return { answer: null, response };
     }
-    return { answer: await readAnswer(response, message.id), response };
+    try {
+      return {
+        answer: await readAnswer(response, message.id, budget),
+        response,
+      };
+    } catch (error) {
+      // The body broke off: the server failed it, or the deadline or the caller cancelled the read.
+      throw new UpstreamError(
+        request.signal.aborted
+          ? "the server did not finish its answer in time"
+          : "the server's answer broke off",
+        { cause: error }
+      );
+    }
   }
 
   async function handshake(signal: AbortSignal): Promise<LegacySession> {
@@ -234,11 +255,23 @@ function legacyHeaders(legacy: LegacySession): Record<string, string> {
 }
 
 /** Whether a server answered the stateless request in a way that says it wants the older handshake. */
+/**
+ * Whether a server refused the stateless request in a way that says it wants the older handshake, so the request can
+ * be sent again. Only a refusal of the revision, or an HTTP status that says the request was refused before it ran,
+ * qualifies: a call that reached the server and got any other JSON-RPC answer is never sent twice.
+ */
 function needsHandshake({ answer, response }: Posted): boolean {
-  if (answer === null) {
-    return REFUSED_WITHOUT_HANDSHAKE.has(response.status);
+  if (
+    answer !== null &&
+    "error" in answer &&
+    VERSION_REFUSED.has(answer.error.code)
+  ) {
+    return true;
   }
-  return "error" in answer && NEEDS_HANDSHAKE.has(answer.error.code);
+  return (
+    REFUSED_WITHOUT_HANDSHAKE.has(response.status) &&
+    (answer === null || "error" in answer)
+  );
 }
 
 function answerOf({ answer, response }: Posted): Answer {
@@ -279,7 +312,11 @@ async function send(fetcher: Fetcher, request: Request): Promise<Response> {
  * The JSON-RPC answer with `id` in a response: a JSON body, or the event with that id in an event stream, read only
  * until it arrives. `null` when the body is neither.
  */
-async function readAnswer(response: Response, id: Id): Promise<Answer | null> {
+async function readAnswer(
+  response: Response,
+  id: Id,
+  budget: ByteBudget
+): Promise<Answer | null> {
   const body: ReadableStream<Uint8Array> | null = response.body;
   if (body === null) {
     return null;
@@ -289,18 +326,19 @@ async function readAnswer(response: Response, id: Id): Promise<Answer | null> {
     ?.trim()
     .toLowerCase();
   if (type === "text/event-stream") {
-    return await readEventStream(body, id);
+    return await readEventStream(body, id, budget);
   }
   if (type !== "application/json") {
     await body.cancel();
     return null;
   }
-  return answerIn(await readText(body), id);
+  return answerIn(await readText(body, budget), id);
 }
 
 /** The body as text, or `null` when it is longer than an answer may be. */
 async function readText(
-  body: ReadableStream<Uint8Array>
+  body: ReadableStream<Uint8Array>,
+  budget: ByteBudget
 ): Promise<string | null> {
   const decoder = new TextDecoder();
   const reader = body.getReader();
@@ -313,7 +351,10 @@ async function readText(
       return text + decoder.decode();
     }
     length += chunk.value.byteLength;
-    if (length > MAXIMUM_ANSWER_BYTES) {
+    if (
+      !spend(budget, chunk.value.byteLength) ||
+      length > MAXIMUM_ANSWER_BYTES
+    ) {
       // oxlint-disable-next-line eslint/no-await-in-loop -- the read ends here; this is its last await.
       await reader.cancel();
       return null;
@@ -325,7 +366,8 @@ async function readText(
 /** The answer to `id` among a stream's events, read until it arrives; the rest of the stream is cancelled. */
 async function readEventStream(
   body: ReadableStream<Uint8Array>,
-  id: Id
+  id: Id,
+  budget: ByteBudget
 ): Promise<Answer | null> {
   const decoder = new TextDecoder();
   const reader = body.getReader();
@@ -339,7 +381,10 @@ async function readEventStream(
         return answerIn(eventData(buffered + decoder.decode()), id);
       }
       length += chunk.value.byteLength;
-      if (length > MAXIMUM_ANSWER_BYTES) {
+      if (
+        !spend(budget, chunk.value.byteLength) ||
+        length > MAXIMUM_ANSWER_BYTES
+      ) {
         return null;
       }
       buffered = (
@@ -377,4 +422,10 @@ function answerIn(text: string | null, id: Id): Answer | null {
   return parsed?.success === true && parsed.output.id === id
     ? parsed.output
     : null;
+}
+
+/** Take `bytes` from the request's budget; `false` once it is spent. */
+function spend(budget: ByteBudget, bytes: number): boolean {
+  budget.remaining -= bytes;
+  return budget.remaining >= 0;
 }
