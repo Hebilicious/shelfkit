@@ -212,7 +212,7 @@ const idTaken = computed(
       <header class="compose__header row">
         <h1>{{ isNew ? "New profile" : draft.title }}</h1>
         <span v-if="dirty" class="badge warn" data-testid="dirty">unsaved</span>
-        <span class="spacer" />
+        <span class="spacer"></span>
         <span
           class="small muted"
           data-testid="preview-runner"

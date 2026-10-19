@@ -159,7 +159,7 @@ async function created(id: string): Promise<void> {
       <div class="stack prompts__controls">
         <div class="row">
           <h1>Prompts</h1>
-          <span class="spacer" />
+          <span class="spacer"></span>
           <button class="small" type="button" @click="creating = true">New prompt</button>
         </div>
         <input
@@ -237,14 +237,14 @@ async function created(id: string): Promise<void> {
 <style scoped>
 .prompts {
   display: grid;
-  grid-template-columns: var(--layout-measure-pane) 1fr;
+  grid-template-columns: var(--layout-measure-pane) minmax(0, 1fr);
   min-height: 0;
 }
 
 .prompts__list {
   border-inline-end: var(--hairline);
   overflow: auto;
-  max-height: calc(100dvh - var(--spacing-size-16));
+  max-height: calc(100dvh - var(--layout-offset-header));
 }
 
 .prompts__controls {

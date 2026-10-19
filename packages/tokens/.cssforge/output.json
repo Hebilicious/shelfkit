@@ -384,6 +384,28 @@
           "key": "--layout-measure-prose",
           "value": "68ch",
           "variable": "--layout-measure-prose: 68ch;"
+        },
+        "page": {
+          "key": "--layout-measure-page",
+          "value": "96ch",
+          "variable": "--layout-measure-page: 96ch;"
+        },
+        "wide": {
+          "key": "--layout-measure-wide",
+          "value": "108ch",
+          "variable": "--layout-measure-wide: 108ch;"
+        }
+      },
+      "offset": {
+        "header": {
+          "key": "--layout-offset-header",
+          "value": "4rem",
+          "variable": "--layout-offset-header: 4rem;"
+        },
+        "panes": {
+          "key": "--layout-offset-panes",
+          "value": "8rem",
+          "variable": "--layout-offset-panes: 8rem;"
         }
       }
     }

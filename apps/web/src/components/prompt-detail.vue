@@ -406,7 +406,7 @@ function when(timestamp: string): string {
         <div class="panel preview">
           <div class="row">
             <h3>Preview</h3>
-            <span class="spacer" />
+            <span class="spacer"></span>
             <select v-model="previewFormat" aria-label="Preview format">
               <option value="text">Prompt</option>
               <option value="skill">SKILL.md</option>
@@ -486,7 +486,7 @@ function when(timestamp: string): string {
           <div class="row">
             <button class="primary" type="submit" :disabled="saving">Save revision</button>
             <button type="button" @click='tab = "use"'>Cancel</button>
-            <span class="spacer" />
+            <span class="spacer"></span>
             <button class="danger" type="button" @click="remove">Delete prompt</button>
           </div>
         </div>
@@ -506,7 +506,7 @@ function when(timestamp: string): string {
             >
               <span class="mono small">{{ revision.revision.slice(7, 19) }}</span>
               <span class="small ellipsis">{{ revision.message ?? (at === revisions.length - 1 ? "created" : "edited") }}</span>
-              <span class="spacer" />
+              <span class="spacer"></span>
               <span class="small muted">{{ when(revision.createdAt) }}</span>
               <span v-if="at === 0" class="badge">current</span>
             </button>
@@ -548,7 +548,7 @@ function when(timestamp: string): string {
 
 .detail__panes {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  grid-template-columns: minmax(0, var(--layout-measure-pane)) minmax(0, 1fr);
   gap: var(--spacing-size-4);
   align-items: start;
 }

@@ -119,7 +119,7 @@ const SCAN_TONE = { clean: "info", disputed: "warn", flagged: "danger", unscanne
         <h1>{{ summary.data.value?.name ?? shelf }}</h1>
         <p class="muted small">{{ summary.data.value?.description }}</p>
       </div>
-      <span class="spacer" />
+      <span class="spacer"></span>
       <span class="small muted">
         {{ summary.data.value?.itemCount ?? 0 }} items · {{ summary.data.value?.profileCount ?? 0 }} profiles
       </span>
@@ -172,7 +172,7 @@ const SCAN_TONE = { clean: "info", disputed: "warn", flagged: "danger", unscanne
         />
         {{ selected.length }} selected
       </label>
-      <span class="spacer" />
+      <span class="spacer"></span>
       <template v-if="selected.length > 0">
         <label class="small" for="bulk-target">into</label>
         <select id="bulk-target" v-model="target">
@@ -213,7 +213,7 @@ const SCAN_TONE = { clean: "info", disputed: "warn", flagged: "danger", unscanne
           </RouterLink>
           <span class="mono small muted">{{ row.item.id }}</span>
           <span class="small muted ellipsis inventory__about">{{ row.snippet ?? row.item.description }}</span>
-          <span class="spacer" />
+          <span class="spacer"></span>
           <span v-for="entry in row.item.tags" :key="entry" class="chip">#{{ entry }}</span>
           <span
             v-if='row.item.scanStatus !== "unscanned"'

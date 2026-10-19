@@ -87,7 +87,7 @@ const index = useListNav({
   <main class="page">
     <header class="row">
       <h1>Profiles</h1>
-      <span class="spacer" />
+      <span class="spacer"></span>
       <RouterLink v-if="canWrite" class="button primary" :to='{ name: "compose", params: { shelf } }'>New profile</RouterLink>
     </header>
     <p class="small muted">
@@ -136,7 +136,7 @@ const index = useListNav({
               </button>
             </div>
           </div>
-          <span class="spacer" />
+          <span class="spacer"></span>
           <RouterLink
             class="button"
             :to='{ name: "compose", params: { shelf, profile: profile.id } }'

@@ -9,7 +9,7 @@ const emit = defineEmits<{ close: [] }>();
     <section aria-labelledby="help-title" aria-modal="true" class="panel help" role="dialog">
       <div class="row">
         <h2 id="help-title">Keyboard</h2>
-        <span class="spacer" />
+        <span class="spacer"></span>
         <button class="quiet" type="button" @click='emit("close")'>Close</button>
       </div>
       <table class="table">

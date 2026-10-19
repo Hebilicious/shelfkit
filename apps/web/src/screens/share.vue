@@ -65,7 +65,7 @@ async function copy(text: string, what: string): Promise<void> {
       <section v-if="shared.plan" class="panel">
         <div class="row">
           <h2>apm.yml</h2>
-          <span class="spacer" />
+          <span class="spacer"></span>
           <button type="button" @click='copy(shared.plan.apmYml, "apm.yml")'>Copy</button>
         </div>
         <pre data-testid="shared-apm-yml">{{ shared.plan.apmYml }}</pre>
@@ -83,7 +83,7 @@ async function copy(text: string, what: string): Promise<void> {
 
 <style scoped>
 .share {
-  max-width: calc(var(--layout-measure-prose) * 1.4);
+  max-width: var(--layout-measure-page);
   margin: 0 auto;
   width: 100%;
 }

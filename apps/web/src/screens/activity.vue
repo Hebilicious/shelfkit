@@ -44,7 +44,7 @@ function when(timestamp: string): string {
   <main class="page">
     <header class="row">
       <h1>Activity</h1>
-      <span class="spacer" />
+      <span class="spacer"></span>
       <label class="small muted" for="activity-profile">Profile</label>
       <select id="activity-profile" v-model="profile">
         <option value="">Every profile</option>

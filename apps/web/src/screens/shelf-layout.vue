@@ -51,7 +51,7 @@ function active(name: string): boolean {
       >
         {{ section.title }}
       </RouterLink>
-      <span class="spacer" />
+      <span class="spacer"></span>
       <span class="small muted" :title='"Live updates over server-sent events"' data-testid="live">
         {{ liveState === "live" ? "● live" : liveState === "connecting" ? "○ connecting" : "" }}
       </span>

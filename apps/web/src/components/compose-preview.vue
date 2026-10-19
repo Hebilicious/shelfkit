@@ -24,7 +24,7 @@ async function copy(text: string, what: string): Promise<void> {
     <div class="row">
       <h2>apm.yml</h2>
       <span class="small muted">updates as the profile changes</span>
-      <span class="spacer" />
+      <span class="spacer"></span>
       <div class="tabs" role="tablist">
         <button role="tab" type="button" :aria-selected='tab === "apm"' @click='tab = "apm"'>apm.yml</button>
         <button role="tab" type="button" :aria-selected='tab === "files"' @click='tab = "files"'>

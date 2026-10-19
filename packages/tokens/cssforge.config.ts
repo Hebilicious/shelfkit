@@ -184,6 +184,14 @@ export default defineConfig({
             rail: "18rem",
             pane: "22rem",
             prose: "68ch",
+            page: "96ch",
+            wide: "108ch",
+          },
+        },
+        offset: {
+          value: {
+            header: "4rem",
+            panes: "8rem",
           },
         },
       },

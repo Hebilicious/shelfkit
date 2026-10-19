@@ -216,7 +216,7 @@ const PROVENANCE_FIELDS = [
           <button class="quiet" type="button" :aria-pressed="item.favourite" @click="toggleFavourite">
             {{ item.favourite ? "★" : "☆" }}
           </button>
-          <span class="spacer" />
+          <span class="spacer"></span>
           <RouterLink
             v-if='item.kind === "prompt"'
             class="button"
@@ -298,7 +298,7 @@ const PROVENANCE_FIELDS = [
             >
               <span class="mono small">{{ revision.revision.slice(7, 19) }}</span>
               <span class="small ellipsis">{{ revision.message ?? "" }}</span>
-              <span class="spacer" />
+              <span class="spacer"></span>
               <span class="small muted">{{ when(revision.createdAt) }}</span>
               <span v-if="at === 0" class="badge">current</span>
             </button>
@@ -420,7 +420,7 @@ const PROVENANCE_FIELDS = [
 .content {
   display: grid;
   gap: var(--spacing-size-3);
-  max-width: calc(var(--layout-measure-prose) * 1.4);
+  max-width: var(--layout-measure-page);
 }
 
 .split {

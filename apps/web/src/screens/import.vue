@@ -233,7 +233,7 @@ function when(timestamp: string): string {
       <div class="row">
         <span class="badge" :class='{ danger: job.status === "failed", info: job.status === "done" }'>{{ job.status }}</span>
         <code class="small">{{ pretty(job.source) }}</code>
-        <span class="spacer" />
+        <span class="spacer"></span>
         <span class="small muted">{{ when(job.updatedAt) }}</span>
       </div>
       <p v-if="job.error" class="error-text small">{{ job.error }}</p>

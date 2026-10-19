@@ -77,7 +77,7 @@ const index = useListNav({
         >
           <span class="badge">{{ item.kind }}</span>
           <span class="ellipsis" :title="item.description">{{ item.title }}</span>
-          <span class="spacer" />
+          <span class="spacer"></span>
           <span v-if="inProfile.has(item.id)" aria-label="in the profile" class="small muted">✓</span>
           <button
             v-else
@@ -97,7 +97,7 @@ const index = useListNav({
 
 <style scoped>
 .inventory {
-  max-height: calc(100dvh - var(--spacing-size-16) * 2);
+  max-height: calc(100dvh - var(--layout-offset-panes));
   overflow: auto;
 }
 

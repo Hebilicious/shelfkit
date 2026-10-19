@@ -90,4 +90,8 @@
 --layout-measure-rail: 18rem;
 --layout-measure-pane: 22rem;
 --layout-measure-prose: 68ch;
+--layout-measure-page: 96ch;
+--layout-measure-wide: 108ch;
+--layout-offset-header: 4rem;
+--layout-offset-panes: 8rem;
 }

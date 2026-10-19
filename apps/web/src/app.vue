@@ -137,7 +137,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
   <div class="app">
     <header class="app__header">
       <RouterLink class="app__brand" to="/">ShelfKit</RouterLink>
-      <span class="spacer" />
+      <span class="spacer"></span>
       <button
         class="quiet small"
         title="Keyboard shortcuts (?)"

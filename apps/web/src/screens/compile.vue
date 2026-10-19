@@ -250,7 +250,7 @@ const cliCommand = computed(() => `shelfkit compile ${profileId.value} --repo .`
         <section class="panel">
           <div class="row">
             <h2>1. The manifest</h2>
-            <span class="spacer" />
+            <span class="spacer"></span>
             <button type="button" @click='copy(plan.apmYml, "apm.yml")'>Copy</button>
           </div>
           <pre data-testid="compile-apm-yml">{{ plan.apmYml }}</pre>

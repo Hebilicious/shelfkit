@@ -36,7 +36,7 @@ watch(
           <strong>{{ shelf.name }}</strong>
           <span class="mono small muted">{{ shelf.id }}</span>
           <span class="muted small ellipsis">{{ shelf.description }}</span>
-          <span class="spacer" />
+          <span class="spacer"></span>
           <span class="small muted">{{ shelf.itemCount }} items · {{ shelf.profileCount }} profiles</span>
           <span v-if="shelf.public" class="badge">public</span>
         </RouterLink>
@@ -47,7 +47,7 @@ watch(
 
 <style scoped>
 .home {
-  max-width: calc(var(--layout-measure-prose) * 1.5);
+  max-width: var(--layout-measure-wide);
   margin: 0 auto;
   width: 100%;
 }

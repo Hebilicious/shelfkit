@@ -182,7 +182,7 @@ function setTargets(slug: string): void {
               <span class="ellipsis">{{ entry.item?.title ?? entry.id }}</span>
               <span class="mono small muted ellipsis">{{ entry.id }}</span>
               <span v-if="entry.item === undefined" class="badge danger">not in the shelf</span>
-              <span class="spacer" />
+              <span class="spacer"></span>
               <button
                 class="quiet small"
                 type="button"

@@ -111,7 +111,7 @@ function coordinate(id: string): string {
 .rail {
   min-width: 0;
   overflow-wrap: anywhere;
-  max-height: calc(100dvh - var(--spacing-size-16) * 2);
+  max-height: calc(100dvh - var(--layout-offset-panes));
   overflow: auto;
 }
 

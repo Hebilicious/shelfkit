@@ -380,7 +380,7 @@ async function removeSecretName(
           <li v-for="link in shareLinks" :key="link.id" class="list-row">
             <span>{{ link.profile }}</span>
             <span class="small muted">created {{ when(link.createdAt) }}</span>
-            <span class="spacer" />
+            <span class="spacer"></span>
             <span v-if="link.revokedAt" class="badge danger">revoked</span>
             <button v-else class="danger small" type="button" @click="revokeShareLink(link.id)">
               {{ armed === `share:${link.id}` ? "Revoke: sure?" : "Revoke" }}
@@ -405,7 +405,7 @@ async function removeSecretName(
             <span class="badge">{{ entry.kind }}</span>
             <span class="mono small ellipsis">{{ entry.repo ?? entry.url ?? entry.path ?? "" }}</span>
             <span v-if="entry.secret" class="small muted">needs {{ entry.secret }}</span>
-            <span class="spacer" />
+            <span class="spacer"></span>
             <button v-if="canWrite" class="danger small" type="button" @click="removeSource(entry)">Remove</button>
           </li>
         </ul>
@@ -484,7 +484,7 @@ async function removeSecretName(
 
 <style scoped>
 .settings {
-  max-width: calc(var(--layout-measure-prose) * 1.6);
+  max-width: var(--layout-measure-wide);
 }
 
 .secret {

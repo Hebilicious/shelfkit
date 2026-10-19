@@ -74,7 +74,7 @@ async function test(): Promise<void> {
             <span class="badge">{{ entry.item.kind }}</span>
             <span>{{ entry.item.title }}</span>
             <span v-if="entry.recommendedBy.length > 0" class="small muted">recommended by {{ entry.recommendedBy.join(", ") }}</span>
-            <span class="spacer" />
+            <span class="spacer"></span>
             <span v-if="inProfile.has(entry.item.id)" class="small muted">✓ in the profile</span>
             <button v-else class="small" type="button" @click='emit("add", entry.item.id)'>Add</button>
           </li>
