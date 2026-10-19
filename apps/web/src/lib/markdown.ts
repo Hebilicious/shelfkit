@@ -4,7 +4,9 @@
  * markdown-it parses; nothing it produces is ever used as HTML. Its tokens become a small tree of allowlisted
  * elements that a Vue render function draws, so:
  *
- * - raw HTML in the source (blocks and inline tags) is stripped, never escaped into view and never rendered;
+ * - raw HTML in the source (blocks, inline tags, comments) is never rendered as markup: it is shown as text in a
+ *   marker, so nothing that "Copy" puts on the clipboard is invisible in the preview (a comment can carry an
+ *   instruction for the agent that a reader would never see);
  * - only the tags below exist, with only `href` (http, https, mailto, or a fragment), `start` and `colspan`-free
  *   table alignment carried over;
  * - an image is never loaded: it becomes a marker naming its alt text and its address, so a shelf cannot make the
@@ -42,6 +44,7 @@ export function isText(node: MarkdownNode): node is string {
 
 const ALLOWED_TAGS = [
   "a",
+  "div",
   "blockquote",
   "br",
   "code",
@@ -156,6 +159,30 @@ function blockedImage(token: Token): MarkdownElement {
   );
 }
 
+/** Raw HTML from a block (or a comment), shown as text under a label, never as markup. */
+function htmlBlock(token: Token): MarkdownElement {
+  return element(
+    "div",
+    [
+      element(
+        "span",
+        ["HTML, shown as text: it is not rendered, and it is copied"],
+        { class: "md-html__label" }
+      ),
+      element("pre", [element("code", [token.content])]),
+    ],
+    { class: "md-html" }
+  );
+}
+
+/** Raw HTML within a line, shown as code. */
+function htmlInline(token: Token): MarkdownElement {
+  return element("code", [token.content], {
+    class: "md-html-inline",
+    title: "HTML, shown as text: it is not rendered",
+  });
+}
+
 /** What a token that opens or closes nothing becomes. */
 function leaf(token: Token): MarkdownNode[] {
   switch (token.type) {
@@ -191,21 +218,24 @@ function leaf(token: Token): MarkdownNode[] {
     case "image": {
       return [blockedImage(token)];
     }
+    case "html_block": {
+      return [htmlBlock(token)];
+    }
+    case "html_inline": {
+      return [htmlInline(token)];
+    }
     default: {
       return token.content === "" ? [] : [token.content];
     }
   }
 }
 
-/** Convert a flat run of tokens, opening and closing elements as it goes. Raw HTML tokens are dropped. */
+/** Convert a flat run of tokens, opening and closing elements as it goes. Raw HTML becomes a visible marker. */
 function build(tokens: readonly Token[]): MarkdownNode[] {
   const root: MarkdownNode[] = [];
   const open: MarkdownNode[][] = [root];
   for (const token of tokens) {
     const children = open.at(-1) ?? root;
-    if (token.type === "html_block" || token.type === "html_inline") {
-      continue;
-    }
     if (token.nesting === 1) {
       // A tag outside the allowlist (none that markdown-it emits today) keeps its content in a span.
       const node = element(

@@ -396,3 +396,25 @@ table.table th {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* Raw HTML in item content: shown as text, never rendered, so nothing copied is hidden (lib/markdown.ts). */
+.md-html {
+  margin-block: var(--spacing-size-2);
+  padding-inline-start: var(--spacing-size-2);
+  border-inline-start: var(--layout-border-thick) solid var(--signal-warn);
+}
+
+.md-html__label {
+  display: block;
+  font-size: var(--typography_fluid-sans-text-xs);
+  color: var(--signal-warn);
+}
+
+.md-html-inline {
+  color: var(--signal-warn);
+}
+
+.md-blocked-image {
+  color: var(--text-muted);
+  font-style: italic;
+}
