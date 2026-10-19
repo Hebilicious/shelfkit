@@ -160,6 +160,87 @@ describe("the engine", () => {
   });
 });
 
+const LsSchema = v.array(v.object({ id: v.string(), revision: v.string() }));
+
+const ShowSchema = v.object({ resolution: v.unknown() });
+
+describe("the engine's inventory, resolution, and recommendations", () => {
+  let engine: Engine;
+
+  beforeAll(async () => {
+    engine = await loadEngine();
+  });
+
+  it.each(Object.entries(shelves))(
+    "index %s with the revisions `shelfkit ls` reports",
+    async (_name, root) => {
+      const result = engine.inventory(await readShelf(root));
+      if (!result.ok) {
+        throw new Error(JSON.stringify(result.errors));
+      }
+      const listed = v.parse(
+        LsSchema,
+        JSON.parse(
+          execFileSync(binary, ["--shelf", root, "ls", "--json"], {
+            encoding: "utf-8",
+          })
+        )
+      );
+      expect(
+        result.value.items.map((entry) => ({
+          id: entry.item.id,
+          revision: entry.revision,
+        }))
+      ).toStrictEqual(
+        listed.map((row) => ({ id: row.id, revision: row.revision }))
+      );
+      expect(
+        result.value.profiles.map((entry) => entry.profile.id)
+      ).toStrictEqual(profilesOf(root));
+    }
+  );
+
+  it.each(cases)(
+    "resolves %s (%s) %s as `shelfkit show --json` does",
+    async (_name, root, profile) => {
+      const result = engine.resolve(await readShelf(root), { profile });
+      const shown = v.parse(
+        ShowSchema,
+        JSON.parse(
+          execFileSync(binary, ["--shelf", root, "show", "--json", profile], {
+            encoding: "utf-8",
+          })
+        )
+      );
+      expect(result).toStrictEqual({ ok: true, value: shown.resolution });
+    }
+  );
+
+  it("recommends from markers as `shelfkit recommend` does", async () => {
+    const result = engine.recommend(await readShelf(shelves["all-kinds"]), {
+      dependencies: ["vue"],
+      files: ["wrangler.jsonc"],
+      packageManager: "pnpm@11.8.0",
+    });
+    if (!result.ok) {
+      throw new Error(JSON.stringify(result.errors));
+    }
+    expect(result.value.items.map((item) => item.id)).toStrictEqual([
+      "context7",
+      "drizzle",
+      "vue-cloudflare",
+      "vue-sfc-patterns",
+    ]);
+  });
+
+  it("reports a shelf that does not load instead of indexing it", () => {
+    const result = engine.inventory([{ contents: "{", path: "shelf.json" }]);
+    expect(result.ok ? [] : result.errors.map((error) => error.path)).toContain(
+      "shelf.json"
+    );
+  });
+});
+
 describe("the engine after a trap", () => {
   it("throws for the call that trapped and plans again on a fresh instance", async () => {
     const module = await WebAssembly.compile(readFileSync(WASM_PATH));

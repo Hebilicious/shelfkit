@@ -33,12 +33,21 @@
 //! `compile --dry-run --json` prints it; otherwise it is `{ "errors": [{
 //! "path", "message" }] }`.
 //!
-//! Three more calls use the same buffers, each answering with status `0`
+//! More calls use the same buffers, each answering with status `0`
 //! (or `2` for a malformed request):
 //!
 //! - `shelfkit_package()`: the same request as `shelfkit_plan`; the output is
 //!   the profile packaged for a registry, as `crate::package` describes,
 //!   with the archive in base64 (`archive`), or `1` and the errors.
+//! - `shelfkit_inventory()`: `{ "files" }`; the output is the whole shelf
+//!   indexed (`shelfkit_compiler::engine::Inventory`: the manifest, every
+//!   item with its revision, file paths, and coordinate, every bundle, and
+//!   every profile with its resolution), or `1` and the errors.
+//! - `shelfkit_resolve()`: the same request as `shelfkit_plan`; the output
+//!   is the profile's resolution, or `1` and the errors.
+//! - `shelfkit_recommend()`: `{ "files", "markers": { "files"?,
+//!   "dependencies"?, "packageManager"? } }`; the output is what `shelfkit
+//!   recommend --json` prints, or `1` and the errors.
 //! - `shelfkit_registry_prepare()`: `{ "method", "path", "mount"?,
 //!   "authorization"? }`, where `path` is the whole request path and `mount`
 //!   the part the registry's base URL adds (`/apm`; empty by default).
@@ -58,7 +67,10 @@
 //! `shelfkit_abi_version()` changes whenever any of this does.
 
 use serde::{Deserialize, Serialize};
-use shelfkit_compiler::engine::{Request, package_profile, plan};
+use shelfkit_compiler::engine::{
+    Request, inventory, package_profile, plan, recommend_markers, resolution,
+};
+use shelfkit_core::item::Markers;
 use shelfkit_core::{Error, ErrorKind, Errors, FileSource, Listing, MemorySource};
 use shelfkit_registry::protocol::{self, Payload, Prepared};
 use shelfkit_registry::{Access, Context, Credential};
@@ -77,7 +89,7 @@ pub enum Status {
 }
 
 /// The ABI's version, for a host to check before it calls anything else.
-pub const ABI_VERSION: u32 = 4;
+pub const ABI_VERSION: u32 = 5;
 
 /// The largest request the module accepts, in bytes.
 pub const MAX_INPUT: u32 = 512 * 1024 * 1024;
@@ -125,6 +137,27 @@ pub extern "C" fn shelfkit_plan() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn shelfkit_package() -> u32 {
     exchange(package)
+}
+
+/// Index a whole shelf; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_inventory() -> u32 {
+    exchange(index)
+}
+
+/// Resolve one profile; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_resolve() -> u32 {
+    exchange(resolve)
+}
+
+/// Recommend from a repository's markers; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_recommend() -> u32 {
+    exchange(recommend)
 }
 
 /// Step 1 of a registry request; see the crate documentation.
@@ -269,6 +302,65 @@ pub fn package(input: &[u8]) -> (Status, Vec<u8>) {
     }
 }
 
+/// Index a shelf: the output of `shelfkit_inventory`.
+pub fn index(input: &[u8]) -> (Status, Vec<u8>) {
+    let (source, request) = match shelf_request(input) {
+        Ok(parsed) => parsed,
+        Err(answer) => return answer,
+    };
+    if request.profile.is_some() || request.override_profile.is_some() {
+        return bad_request("an inventory request takes `files` only".to_owned());
+    }
+    match inventory(&source) {
+        Ok(found) => (
+            Status::Planned,
+            serde_json::to_vec(&found).unwrap_or_default(),
+        ),
+        Err(errors) => (Status::Failed, failure(errors)),
+    }
+}
+
+/// Resolve a profile: the output of `shelfkit_resolve`.
+pub fn resolve(input: &[u8]) -> (Status, Vec<u8>) {
+    let (source, request) = match shelf_request(input) {
+        Ok(parsed) => parsed,
+        Err(answer) => return answer,
+    };
+    match resolution(&source, &request) {
+        Ok(resolved) => (
+            Status::Planned,
+            serde_json::to_vec(&resolved).unwrap_or_default(),
+        ),
+        Err(errors) => (Status::Failed, failure(errors)),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecommendInput {
+    files: Vec<FileInput>,
+    markers: Markers,
+}
+
+/// Recommend from markers: the output of `shelfkit_recommend`.
+pub fn recommend(input: &[u8]) -> (Status, Vec<u8>) {
+    let request: RecommendInput = match serde_json::from_slice(input) {
+        Ok(request) => request,
+        Err(error) => return bad_request(format!("not a recommend request: {error}")),
+    };
+    let source = match host_shelf(request.files) {
+        Ok(source) => source,
+        Err(answer) => return answer,
+    };
+    match recommend_markers(&source, &request.markers) {
+        Ok(found) => (
+            Status::Planned,
+            serde_json::to_vec(&found).unwrap_or_default(),
+        ),
+        Err(errors) => (Status::Failed, failure(errors)),
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PrepareInput {
@@ -382,11 +474,22 @@ fn shelf_request(input: &[u8]) -> Result<(HostShelf, Request), (Status, Vec<u8>)
         Ok(request) => request,
         Err(error) => return Err(bad_request(format!("not a plan request: {error}"))),
     };
+    let source = host_shelf(request.files)?;
+    let plan_request = Request {
+        profile: request.profile,
+        override_profile: request.override_profile,
+        ..Request::default()
+    };
+    Ok((source, plan_request))
+}
+
+/// The shelf a request's `files` describe.
+fn host_shelf(files: Vec<FileInput>) -> Result<HostShelf, (Status, Vec<u8>)> {
     let mut source = HostShelf {
         files: MemorySource::new(),
         links: Vec::new(),
     };
-    for file in request.files {
+    for file in files {
         if file.symlink {
             source.links.push(file.path);
             continue;
@@ -411,12 +514,7 @@ fn shelf_request(input: &[u8]) -> Result<(HostShelf, Request), (Status, Vec<u8>)
         };
         source.files.insert(file.path, bytes);
     }
-    let plan_request = Request {
-        profile: request.profile,
-        override_profile: request.override_profile,
-        ..Request::default()
-    };
-    Ok((source, plan_request))
+    Ok(source)
 }
 
 fn failure(errors: Errors) -> Vec<u8> {
@@ -577,6 +675,69 @@ mod tests {
         let archive = shelfkit_registry::base64::decode(body["archive"].as_str().unwrap()).unwrap();
         assert_eq!(body["digest"], shelfkit_registry::digest(&archive));
         assert_eq!(body["sizeBytes"], archive.len());
+    }
+
+    #[test]
+    fn indexes_a_shelf_with_revisions_and_resolutions() {
+        let mut body = shelf_files();
+        body.as_object_mut().unwrap().remove("profile");
+        let (status, output) = index(&serde_json::to_vec(&body).unwrap());
+        assert_eq!(status, Status::Planned);
+        let found: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(found["manifest"]["registry"]["namespace"], "acme");
+        assert_eq!(found["items"][0]["item"]["id"], "hi");
+        assert_eq!(found["items"][0]["path"], "items/prompts/hi");
+        assert_eq!(
+            found["items"][0]["files"],
+            serde_json::json!(["item.json", "prompt.md"])
+        );
+        assert_eq!(found["items"][0]["coordinate"]["kind"], "vendored");
+        assert_eq!(found["profiles"][0]["profile"]["id"], "p");
+        assert_eq!(
+            found["profiles"][0]["resolution"]["items"][0]["revision"],
+            found["items"][0]["revision"]
+        );
+        // A profile is a different request.
+        assert_eq!(
+            index(&serde_json::to_vec(&shelf_files()).unwrap()).0,
+            Status::BadRequest
+        );
+    }
+
+    #[test]
+    fn resolves_an_unsaved_profile() {
+        let mut body = shelf_files();
+        let object = body.as_object_mut().unwrap();
+        object.remove("profile");
+        object.insert(
+            "overrideProfile".to_owned(),
+            serde_json::json!({ "id": "draft", "title": "Draft", "items": ["hi"] }),
+        );
+        let (status, output) = resolve(&serde_json::to_vec(&body).unwrap());
+        assert_eq!(status, Status::Planned);
+        let resolved: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(resolved["id"], "draft");
+        assert_eq!(resolved["items"][0]["id"], "hi");
+        assert_eq!(resolved["items"][0]["pinned"], false);
+    }
+
+    #[test]
+    fn recommends_from_markers() {
+        let body = serde_json::json!({
+            "files": [
+                { "path": "shelf.json", "contents": "{ \"name\": \"t\" }" },
+                { "path": "items/stacks/vue/item.json", "contents": "{ \"id\": \"vue\", \"kind\": \"stack\", \"title\": \"Vue\", \"markers\": { \"dependencies\": [\"vue\"] } }" }
+            ],
+            "markers": { "dependencies": ["vue", "react"] }
+        });
+        let (status, output) = recommend(&serde_json::to_vec(&body).unwrap());
+        assert_eq!(status, Status::Planned);
+        let found: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(found["items"][0]["id"], "vue");
+        assert_eq!(
+            found["items"][0]["matched"]["dependencies"],
+            serde_json::json!(["vue"])
+        );
     }
 
     #[test]

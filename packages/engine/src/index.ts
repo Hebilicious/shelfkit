@@ -13,15 +13,27 @@
  * credential, the host resolves the key and loads the package's versions, and `registry.respond` decides the status,
  * headers, and body, and what to store on a publish.
  */
-import { CompilePlanSchema } from "@shelfkit/schema";
-import type { CompilePlan, ProfileSchema } from "@shelfkit/schema";
+import {
+  CompilePlanSchema,
+  InventorySchema,
+  RecommendationSchema,
+  ResolvedProfileSchema,
+} from "@shelfkit/schema";
+import type {
+  CompilePlan,
+  Inventory,
+  Markers,
+  ProfileSchema,
+  Recommendation,
+  ResolvedProfile,
+} from "@shelfkit/schema";
 import * as v from "valibot";
 
 /** A profile document as written in `profiles/<id>.json`, before defaults are filled in. */
 export type ProfileDocument = v.InferInput<typeof ProfileSchema>;
 
 /** The ABI this port speaks; the module reports its own through `shelfkit_abi_version`. */
-export const ABI_VERSION = 4;
+export const ABI_VERSION = 5;
 
 /** One file of a shelf, by its path relative to the shelf root. Bytes that are not UTF-8 text go as a `Uint8Array`. */
 export type ShelfFile = ShelfContent | ShelfLink;
@@ -189,7 +201,28 @@ export interface Registry {
   readonly respond: (request: RespondRequest) => RegistryOutcome;
 }
 
+/** An engine call that answered: its parsed output. */
+export interface Answered<T> {
+  readonly ok: true;
+  readonly value: T;
+}
+
+/** The result of a call that loads the shelf: the answer, or every error, each in its file. */
+export type EngineResult<T> = Answered<T> | NotPlanned;
+
 export interface Engine {
+  /** Load the whole shelf and index it: every item with its revision, files, and coordinate, and every profile resolved. */
+  readonly inventory: (files: readonly ShelfFile[]) => EngineResult<Inventory>;
+  /** Load the shelf and resolve one profile, saved or not (`overrideProfile`), without compiling it. */
+  readonly resolve: (
+    files: readonly ShelfFile[],
+    options?: PlanOptions
+  ) => EngineResult<ResolvedProfile>;
+  /** Recommend items and profiles for a repository's stack markers, as `shelfkit recommend` does. */
+  readonly recommend: (
+    files: readonly ShelfFile[],
+    markers: Markers
+  ) => EngineResult<Recommendation>;
   /** Load the shelf, resolve the profile, and compile it. */
   readonly planCompile: (
     files: readonly ShelfFile[],
@@ -211,6 +244,9 @@ interface Abi {
   readonly shelfkit_input: (length: number) => number;
   readonly shelfkit_plan: () => number;
   readonly shelfkit_package: () => number;
+  readonly shelfkit_inventory: () => number;
+  readonly shelfkit_resolve: () => number;
+  readonly shelfkit_recommend: () => number;
   readonly shelfkit_registry_prepare: () => number;
   readonly shelfkit_registry_respond: () => number;
   readonly shelfkit_output_ptr: () => number;
@@ -231,6 +267,9 @@ const FUNCTIONS = [
   "shelfkit_input",
   "shelfkit_plan",
   "shelfkit_package",
+  "shelfkit_inventory",
+  "shelfkit_resolve",
+  "shelfkit_recommend",
   "shelfkit_registry_prepare",
   "shelfkit_registry_respond",
   "shelfkit_output_ptr",
@@ -313,16 +352,75 @@ export async function createEngine(
       }
     };
   return {
+    inventory: guarded((instance: Abi, files: readonly ShelfFile[]) =>
+      shelfCall(
+        instance,
+        instance.shelfkit_inventory,
+        { files: files.map((file) => encodeFile(file)) },
+        InventorySchema
+      )
+    ),
     packageProfile: guarded(packageProfile),
     planCompile: guarded(
       (instance: Abi, files: readonly ShelfFile[], options: PlanOptions = {}) =>
         planCompile(instance, files, options)
     ),
+    recommend: guarded(
+      (instance: Abi, files: readonly ShelfFile[], markers: Markers) =>
+        shelfCall(
+          instance,
+          instance.shelfkit_recommend,
+          { files: files.map((file) => encodeFile(file)), markers },
+          RecommendationSchema
+        )
+    ),
     registry: {
       prepare: guarded(registryPrepare),
       respond: guarded(registryRespond),
     },
+    resolve: guarded(
+      (instance: Abi, files: readonly ShelfFile[], options: PlanOptions = {}) =>
+        shelfCall(
+          instance,
+          instance.shelfkit_resolve,
+          {
+            files: files.map((file) => encodeFile(file)),
+            overrideProfile: options.overrideProfile,
+            profile: options.profile,
+          },
+          ResolvedProfileSchema
+        )
+    ),
   };
+}
+
+/** What a call that loads the shelf reads: its files, plus what that call adds. */
+interface ShelfRequest {
+  readonly files: readonly FileRequest[];
+  readonly markers?: Markers;
+  readonly overrideProfile?: ProfileDocument;
+  readonly profile?: string;
+}
+
+/** A call that loads the shelf: status 0 and the output, 1 and the shelf's errors, or 2 for a malformed request. */
+function shelfCall<const TSchema extends v.GenericSchema>(
+  abi: Abi,
+  run: () => number,
+  request: ShelfRequest,
+  schema: TSchema
+): EngineResult<v.InferOutput<TSchema>> {
+  const status = call(abi, run, JSON.stringify(request));
+  const text = readOutput(abi);
+  if (status === PLANNED) {
+    return { ok: true, value: v.parse(schema, JSON.parse(text)) };
+  }
+  const { errors } = v.parse(FailureSchema, JSON.parse(text));
+  if (status !== FAILED) {
+    throw new Error(
+      `the engine refused the request: ${errors.map((error) => error.message).join("; ")}`
+    );
+  }
+  return { errors, ok: false };
 }
 
 function planCompile(

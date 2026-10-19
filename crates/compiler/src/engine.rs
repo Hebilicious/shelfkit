@@ -2,10 +2,16 @@
 //! WASM engine share, so `compile --dry-run` and the composer preview run the
 //! same code over the same bytes.
 
+use crate::coordinate::{self, Upstream};
 use crate::manifest::{CompiledManifest, compile};
 use crate::package::{PackagedProfile, package};
+use crate::recommend::{Recommendation, recommend};
+use crate::yaml;
+use serde::Serialize;
+use shelfkit_core::item::Markers;
 use shelfkit_core::{
-    Error, Errors, FileSource, Listing, MemorySource, ResolvedProfile, Shelf, load,
+    Bundle, Error, Errors, FileSource, Item, Listing, Manifest, MemorySource, Notice, Payload, Pin,
+    Profile, ResolvedProfile, Revision, Shelf, load,
 };
 
 /// What to compile.
@@ -41,6 +47,143 @@ pub fn package_profile(
 ) -> Result<PackagedProfile, Errors> {
     let (shelf, resolved) = resolve(source, request)?;
     package(&shelf, &resolved)
+}
+
+/// Resolve one profile of the shelf `source` holds: the same load and
+/// resolution as [`plan`], without compiling. The composer's resolution rail
+/// reads it, for a saved profile or an unsaved override.
+pub fn resolution(source: &dyn FileSource, request: &Request) -> Result<ResolvedProfile, Errors> {
+    resolve(source, request).map(|(_, resolved)| resolved)
+}
+
+/// Recommend items and profiles for a repository's markers, as `shelfkit
+/// recommend` does.
+pub fn recommend_markers(
+    source: &dyn FileSource,
+    markers: &Markers,
+) -> Result<Recommendation, Errors> {
+    let shelf = load(source)?;
+    Ok(recommend(&shelf, markers))
+}
+
+/// Everything a host indexes about a shelf that loaded: the manifest, every
+/// item with its revision and file paths, every bundle, and every profile
+/// with its resolution. The hosted service stores this as metadata; the
+/// bytes stay where they are.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Inventory {
+    pub manifest: Manifest,
+    /// Sorted by id.
+    pub items: Vec<InventoryItem>,
+    /// Sorted by id.
+    pub bundles: Vec<Bundle>,
+    /// Sorted by id.
+    pub profiles: Vec<InventoryProfile>,
+    /// What `shelfkit check` reports beyond errors.
+    pub notices: Vec<Notice>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryItem {
+    /// The item as `item.json` serializes it.
+    pub item: Item,
+    /// The item directory, relative to the shelf root.
+    pub path: String,
+    pub revision: Revision,
+    /// The item's files, relative to its directory, sorted.
+    pub files: Vec<String>,
+    /// What the item compiles to in a profile pinned by revision.
+    pub coordinate: Coordinate,
+}
+
+/// Where an item lands in `apm.yml` when a profile with `pin: revision`
+/// compiles it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Coordinate {
+    /// A `dependencies.apm` reference to its upstream; `entry` is the entry
+    /// as YAML.
+    Upstream { entry: String },
+    /// The item's content is vendored into the profile's local package.
+    Vendored,
+    /// A `dependencies.mcp` entry.
+    Mcp { name: Option<String> },
+    /// A `dependencies.lsp` entry.
+    Lsp { name: String },
+    /// The item's `source` cannot be referenced; compiling it fails.
+    Unresolvable { message: String },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryProfile {
+    /// The profile as `profiles/<id>.json` holds it.
+    pub profile: Profile,
+    pub resolution: ResolvedProfile,
+}
+
+/// Load the shelf `source` holds and index all of it.
+pub fn inventory(source: &dyn FileSource) -> Result<Inventory, Errors> {
+    let shelf = load(source)?;
+    let mut errors = Errors::new();
+    let mut profiles = Vec::new();
+    for (id, profile) in &shelf.profiles {
+        match shelf.resolve(id) {
+            Ok(resolution) => profiles.push(InventoryProfile {
+                profile: profile.clone(),
+                resolution,
+            }),
+            Err(failed) => errors.extend(failed),
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    let items = shelf
+        .items
+        .values()
+        .map(|loaded| InventoryItem {
+            item: loaded.item.clone(),
+            path: loaded.path.clone(),
+            revision: loaded.revision.clone(),
+            files: loaded.files.keys().cloned().collect(),
+            coordinate: item_coordinate(&shelf, &loaded.item),
+        })
+        .collect();
+    Ok(Inventory {
+        notices: shelf.check(),
+        manifest: shelf.manifest.clone(),
+        items,
+        bundles: shelf.bundles.values().cloned().collect(),
+        profiles,
+    })
+}
+
+fn item_coordinate(shelf: &Shelf, item: &Item) -> Coordinate {
+    match &item.payload {
+        Payload::Mcp(mcp) => Coordinate::Mcp {
+            name: mcp.name().map(str::to_owned),
+        },
+        Payload::Lsp(lsp) => Coordinate::Lsp {
+            name: lsp.name.clone(),
+        },
+        Payload::Hook(_) | Payload::Library(_) | Payload::Stack(_) => Coordinate::Vendored,
+        _ => match item.source.as_ref().map(|source| {
+            coordinate::upstream(item.kind(), source, &shelf.manifest.sources, Pin::Revision)
+        }) {
+            Some(Ok(Some(upstream))) => Coordinate::Upstream {
+                entry: upstream_entry(&upstream),
+            },
+            Some(Err(message)) => Coordinate::Unresolvable { message },
+            Some(Ok(None)) | None => Coordinate::Vendored,
+        },
+    }
+}
+
+fn upstream_entry(upstream: &Upstream) -> String {
+    yaml::render(&upstream.entry(None))
 }
 
 fn resolve(source: &dyn FileSource, request: &Request) -> Result<(Shelf, ResolvedProfile), Errors> {
