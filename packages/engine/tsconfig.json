@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // `WebAssembly`, `TextEncoder`, and `btoa` are web platform APIs the Worker, the browser, and Node all have; the DOM
+    // library is where TypeScript declares them.
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

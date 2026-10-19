@@ -9,8 +9,11 @@ tasks:
     # The Worker serves the SPA through its assets binding, so the SPA has to be
     # built before wrangler validates the assets directory. A task-level dep
     # rather than dependsOn, because dependsOn orders projects, not tasks.
+    # The engine's build places the WASM module the MCP tools import as
+    # `@shelfkit/engine/shelfkit.wasm`.
     deps:
       - "web:build"
+      - "engine:build"
     inputs:
       - "src/**/*"
       - "wrangler.jsonc"
@@ -44,6 +47,7 @@ tasks:
     command: "node_modules/.bin/wrangler deploy"
     deps:
       - "web:build"
+      - "engine:build"
     options:
       runInCI: false
   secret:

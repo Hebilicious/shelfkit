@@ -1,0 +1,20 @@
+{
+  "name": "@shelfkit/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node.ts",
+    "./shelfkit.wasm": "./wasm/shelfkit.wasm"
+  },
+  "dependencies": {
+    "@shelfkit/schema": "workspace:*",
+    "valibot": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
