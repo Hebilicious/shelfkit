@@ -72,6 +72,7 @@ tasks:
       - "vitest.config.ts"
       - "/crates/registry/conformance/**/*"
       - "/crates/core/tests/fixtures/all-kinds/**/*"
+      - "/packages/importers/test/fixtures/http/**/*"
       - "/shelf/**/*"
 
   mcp-conform:

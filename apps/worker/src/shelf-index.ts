@@ -17,6 +17,7 @@ import {
   ImportSourceSchema,
   PickSchema,
   ScanVerdictSchema,
+  sourceKindOf,
   UpstreamStateSchema,
 } from "@shelfkit/importers";
 import type {
@@ -2978,7 +2979,7 @@ export class ShelfIndex extends DurableObject<Env> {
 
   /**
    * The imported items (those with a `source`), for the upstream check, each with the kind of its source: the kind of
-   * the `shelf.json` source its `source.id` names, else `git` for a `source.repo`, else `null`.
+   * the `shelf.json` source its `source.id` names, else the kind its own `source` shows (`sourceKindOf`).
    */
   importedItems(
     session: Session,
@@ -3003,8 +3004,7 @@ export class ShelfIndex extends DurableObject<Env> {
           return [];
         }
         const declared = sources.find((entry) => entry.id === source.id)?.kind;
-        const sourceKind =
-          declared ?? (source.repo === undefined ? null : "git");
+        const sourceKind = declared ?? sourceKindOf(source);
         return [
           {
             id: row.id,

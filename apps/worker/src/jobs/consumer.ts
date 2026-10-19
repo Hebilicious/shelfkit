@@ -297,6 +297,10 @@ async function scanItem(
       // A scanner reads what it is given and is given no secret.
       adapterContext(env, dependencies, [], null)
     );
+    if (verdict === null) {
+      // The scanner does not cover this item: no verdict, so the revision stays unscanned.
+      continue;
+    }
     // oxlint-disable-next-line eslint/no-await-in-loop -- recorded as it arrives.
     await stub.recordScan(
       session,
