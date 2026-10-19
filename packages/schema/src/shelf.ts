@@ -128,6 +128,12 @@ export const SourceSchema = v.strictObject({
   version: v.optional(v.string()),
 });
 
+/** A secret name: what `{ "secret": NAME }` and a source's `secret` refer to. */
+export const SecretNameSchema = v.pipe(
+  v.string(),
+  v.regex(/^[A-Z][A-Z0-9_]*$/u, "must be UPPER_SNAKE_CASE")
+);
+
 /** A secret is a reference to a name the runtime resolves, never a literal. A literal is for values that are not secret. */
 export const SecretValueSchema = v.union([
   v.string(),
@@ -383,6 +389,8 @@ export const ShelfSourceSchema = v.strictObject({
   /** For a `shelfkit` source: the profile to import. */
   profile: v.optional(v.string()),
   repo: v.optional(v.string()),
+  /** The secret name of a credential the source needs; released only to the origin the owner bound it to. */
+  secret: v.optional(SecretNameSchema),
   tier: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0))),
   url: v.optional(v.string()),
 });

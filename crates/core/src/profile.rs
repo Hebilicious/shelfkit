@@ -171,6 +171,11 @@ pub struct ShelfSource {
     /// For a `shelfkit` source: the profile to import.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    /// The secret name of a credential the source needs, never the
+    /// credential. A hosted service releases its value only to the origin
+    /// its owner bound the name to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
 }
 
 /// How the shelf appears as an OpenAPM registry. `namespace` is the

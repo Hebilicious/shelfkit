@@ -67,7 +67,8 @@ impl<'de> Deserialize<'de> for SecretValue {
     }
 }
 
-fn is_secret_name(name: &str) -> bool {
+/// Whether `name` is a secret name: UPPER_SNAKE_CASE.
+pub fn is_secret_name(name: &str) -> bool {
     let mut bytes = name.bytes();
     bytes.next().is_some_and(|b| b.is_ascii_uppercase())
         && bytes.all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')

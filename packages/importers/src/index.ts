@@ -14,6 +14,7 @@
  * nothing outside this package.
  */
 import {
+  SecretNameSchema,
   ItemIdSchema,
   ItemKindSchema,
   ItemSchema,
@@ -32,6 +33,11 @@ export const ImportSourceSchema = v.strictObject({
   ref: v.optional(v.string()),
   /** A Git repository. */
   repo: v.optional(v.string()),
+  /**
+   * The secret name of a credential the source needs (a token for a private repository or catalog). The adapter reads
+   * it with `context.secret(name)`, which releases it only to the origin the owner bound the name to.
+   */
+  secret: v.optional(SecretNameSchema),
   /** The `id` of the `shelf.json` source this import reads, when it is one. */
   sourceId: v.optional(v.string()),
   /** The URL of a registry, catalog, marketplace, or another ShelfKit instance. */
@@ -128,7 +134,11 @@ export type Item = v.InferOutput<typeof ItemSchema>;
 /** What an adapter may reach. There is no filesystem and no process: a Worker has neither. */
 export interface AdapterContext {
   readonly fetch: typeof fetch;
-  /** A Worker secret by name, for a source that needs a token; `undefined` when it is not set. */
+  /**
+   * The value of one of the shelf's secret names, for a source that needs a token (name it in the source's `secret`).
+   * It is released only when the owner bound the name to the origin of this source's URL (or of its `https://` Git
+   * repository); otherwise, or when the value is unset, `undefined`. A scanner gets no secret.
+   */
   readonly secret: (name: string) => string | undefined;
   /** The time, RFC 3339 UTC. */
   readonly now: () => string;
