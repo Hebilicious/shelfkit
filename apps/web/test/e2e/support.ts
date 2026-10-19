@@ -49,10 +49,18 @@ export function shelfkit(args: readonly string[]): string {
   });
 }
 
-/** Copy a fixture shelf, name it `namespace` on the registry, and push it. Returns the local copy. */
-export function seedShelf(fixture: string, namespace: string): string {
+/**
+ * Copy a fixture shelf, let `prepare` change the copy, name it `namespace` on the registry, and push it. Returns the
+ * local copy.
+ */
+export function seedShelf(
+  fixture: string,
+  namespace: string,
+  prepare?: (root: string) => void
+): string {
   const root = temporary(namespace);
   cpSync(fixture, root, { recursive: true });
+  prepare?.(root);
   const manifestPath = path.join(root, "shelf.json");
   const manifest = readFileSync(manifestPath, "utf-8").replace(
     /"namespace":\s*"[^"]*"/u,

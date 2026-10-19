@@ -8,8 +8,8 @@
 import { conflictsOf } from "@shelfkit/engine";
 import type { Conflict } from "@shelfkit/engine";
 import type { CompilePlan, Profile, ResolvedProfile } from "@shelfkit/schema";
-import { ref, shallowRef, watch } from "vue";
-import type { Ref } from "vue";
+import { computed, ref, shallowRef, watch } from "vue";
+import type { ComputedRef, Ref } from "vue";
 
 import { execute, messageOf } from "../api/graphql.ts";
 import { readPlan, readResolution } from "../api/json.ts";
@@ -32,6 +32,11 @@ export interface LivePreview {
   readonly preview: Ref<Preview | null>;
   readonly error: Ref<string | null>;
   readonly running: Ref<boolean>;
+  /**
+   * Whether the preview shown was compiled from the draft as it is now. It turns false at the edit, before the debounce
+   * starts the next compile, so an old preview is never presented as the current one.
+   */
+  readonly current: ComputedRef<boolean>;
 }
 
 const DEBOUNCE_MS = 120;
@@ -91,6 +96,14 @@ export function usePreview(
   const browserFailed = ref(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let latest = 0;
+  /** The draft the shown preview was compiled from, as JSON. */
+  const compiledFor = ref<string | null>(null);
+  const requested = computed(() =>
+    document.value === null ? null : JSON.stringify(document.value)
+  );
+  const isCurrent = computed(
+    () => preview.value !== null && compiledFor.value === requested.value
+  );
 
   async function run(): Promise<void> {
     const current = document.value;
@@ -100,6 +113,7 @@ export function usePreview(
     }
     latest += 1;
     const ticket = latest;
+    const key = JSON.stringify(current);
     running.value = true;
     try {
       let next: Preview;
@@ -116,6 +130,7 @@ export function usePreview(
       }
       if (ticket === latest) {
         preview.value = next;
+        compiledFor.value = key;
         if (!browserFailed.value) {
           problem.value = null;
         }
@@ -143,5 +158,5 @@ export function usePreview(
     { deep: true, immediate: true }
   );
 
-  return { error: problem, preview, running };
+  return { current: isCurrent, error: problem, preview, running };
 }

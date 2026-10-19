@@ -1,3 +1,6 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
 /**
  * The composer (`docs/PRD.md` section 9.2): its live `apm.yml` preview and `shelfkit compile --dry-run` produce identical
  * output for the same profile, because both run the same Rust compiler. The preview is compiled in the browser by the
@@ -23,6 +26,11 @@ test.beforeEach(async ({ page }) => {
 async function settledPreview(
   page: Page
 ): Promise<{ apmYml: string; planJson: string }> {
+  // `data-state` is `current` only when the preview shown was compiled from the draft as it is now.
+  await expect(page.getByTestId("preview-runner")).toHaveAttribute(
+    "data-state",
+    "current"
+  );
   await expect(page.getByTestId("preview-runner")).toHaveText(
     "compiled in your browser"
   );
@@ -118,4 +126,37 @@ test("the stack-marker tester reports which stacks a package.json matches", asyn
     .fill("wrangler.jsonc, vite.config.ts");
   await page.getByRole("button", { name: "Test markers" }).click();
   await expect(page.getByTestId("stack-match")).toContainText("vue-cloudflare");
+});
+
+test("an edit marks the preview as updating until the draft is compiled again", async ({
+  page,
+}) => {
+  await page.goto(`/shelves/${SHELF}/compose/minimal`);
+  await settledPreview(page);
+  await page.getByTestId("add-drizzle").click();
+  // At once, before the debounce runs the compile: the old preview is never shown as current.
+  await expect(page.getByTestId("preview-runner")).toHaveText("updating…");
+  await expect(page.getByTestId("preview-runner")).not.toHaveAttribute(
+    "data-state",
+    "current"
+  );
+  await page.getByRole("tab", { name: "Plan JSON" }).click();
+  const after = await settledPreview(page);
+  expect(after.planJson).toContain(
+    '"vendor/minimal/.apm/instructions/drizzle.instructions.md"'
+  );
+});
+
+test("a prompt.md that starts with a byte-order mark previews as the CLI compiles it", async ({
+  page,
+}) => {
+  const shelf = "bom-e2e";
+  const root = seedShelf(FIXTURES.allKinds, shelf, (copy) => {
+    const prompt = path.join(copy, "items/prompts/pr-description/prompt.md");
+    writeFileSync(prompt, `\uFEFF${readFileSync(prompt, "utf-8")}`);
+  });
+  await page.goto(`/shelves/${shelf}/compose/minimal`);
+  await page.getByRole("tab", { name: "Plan JSON" }).click();
+  const preview = await settledPreview(page);
+  expect(preview.planJson).toBe(dryRun(root, "minimal"));
 });

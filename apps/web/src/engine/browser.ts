@@ -72,7 +72,8 @@ async function object(shelf: string, sha256: string): Promise<Uint8Array> {
   }
 }
 
-const utf8 = new TextDecoder("utf-8", { fatal: true });
+// `ignoreBOM`: a leading byte-order mark is part of the file, as the CLI, the Node host and the Worker read it.
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** A file as the engine reads it: text when it is UTF-8, bytes otherwise, exactly as the CLI reads a directory. */
 function asShelfFile(path: string, bytes: Uint8Array): ShelfFile {

@@ -89,7 +89,23 @@ const dirty = computed(
 );
 
 const normalized = computed(() => (draft.value === null ? null : normalizeProfile(draft.value)));
-const { error: previewError, preview, running } = usePreview(shelf, entries, normalized);
+const {
+  current: previewCurrent,
+  error: previewError,
+  preview,
+  running,
+} = usePreview(shelf, entries, normalized);
+
+/** What the header says about the preview: whether it is the draft's, and where it was compiled. */
+const previewStatus = computed(() => {
+  if (running.value) {
+    return "compiling…";
+  }
+  if (!previewCurrent.value) {
+    return preview.value === null ? "" : "updating…";
+  }
+  return preview.value?.runner === "server" ? "compiled on the server" : "compiled in your browser";
+});
 
 function update(next: Profile): void {
   draft.value = next;
@@ -189,16 +205,13 @@ const idTaken = computed(
         <h1>{{ isNew ? "New profile" : draft.title }}</h1>
         <span v-if="dirty" class="badge warn" data-testid="dirty">unsaved</span>
         <span class="spacer" />
-        <span class="small muted" data-testid="preview-runner">
-          {{
-            running
-              ? "compiling…"
-              : preview?.runner === "browser"
-                ? "compiled in your browser"
-                : preview?.runner === "server"
-                  ? "compiled on the server"
-                  : ""
-          }}
+        <span
+          class="small muted"
+          data-testid="preview-runner"
+          :data-state='previewCurrent && !running ? "current" : "stale"'
+          aria-live="polite"
+        >
+          {{ previewStatus }}
         </span>
         <template v-if="canWrite">
           <input
