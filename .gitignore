@@ -37,3 +37,6 @@ dist-worker/
 .env
 .env.*
 !.env.example
+
+# Task worktrees, one for each branch.
+.worktrees/
