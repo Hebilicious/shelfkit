@@ -8,8 +8,15 @@
     "node": ">=26"
   },
   "devDependencies": {
-    "@types/node": "^26.6.1",
-    "tsx": "^4.20.0",
-    "typescript": "^5.9.0"
+    "@gommage/cli": "catalog:",
+    "@oxlint/plugins": "catalog:",
+    "@types/node": "catalog:",
+    "lefthook": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "ultracite": "catalog:"
   }
 }

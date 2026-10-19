@@ -7,9 +7,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "valibot": "^1.1.0"
+    "valibot": "catalog:"
   },
   "devDependencies": {
-    "typescript": "^5.9.0"
+    "typescript": "catalog:"
   }
 }
