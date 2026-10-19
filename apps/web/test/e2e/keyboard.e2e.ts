@@ -1,7 +1,6 @@
 /** The keyboard map: `/` focuses search, `g` then `p` goes to profiles, `j` and `k` move in lists. */
-import { expect, test } from "@playwright/test";
 
-import { FIXTURES, seedShelf, signIn } from "./support.ts";
+import { FIXTURES, seedShelf, signIn, expect, test } from "./support.ts";
 
 const SHELF = "keys-e2e";
 

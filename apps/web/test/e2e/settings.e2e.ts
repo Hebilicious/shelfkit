@@ -2,9 +2,15 @@
  * Settings and sharing: a key is shown once and revoked on a second click, registry visibility is undoable, and a
  * share link renders the profile read-only to a browser that holds no key.
  */
-import { expect, test } from "@playwright/test";
 
-import { FIXTURES, dryRun, seedShelf, signIn } from "./support.ts";
+import {
+  FIXTURES,
+  dryRun,
+  seedShelf,
+  signIn,
+  expect,
+  test,
+} from "./support.ts";
 
 const SHELF = "settings-e2e";
 let seeded = "";

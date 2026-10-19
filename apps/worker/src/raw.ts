@@ -69,6 +69,8 @@ async function serveObject(
   const headers = {
     "cache-control": "private, max-age=31536000, immutable",
     etag: `"${sha256}"`,
+    // An object is opaque bytes, served as application/octet-stream; a browser must not sniff it into HTML.
+    "x-content-type-options": "nosniff",
   };
   if (method === "HEAD") {
     const found = await env.BLOBS.head(objectKey(sha256));

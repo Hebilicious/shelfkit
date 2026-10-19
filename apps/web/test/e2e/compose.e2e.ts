@@ -6,10 +6,17 @@ import path from "node:path";
  * output for the same profile, because both run the same Rust compiler. The preview is compiled in the browser by the
  * WASM engine on the shelf's files plus the unsaved profile.
  */
-import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 
-import { FIXTURES, dryRun, fetchShelf, seedShelf, signIn } from "./support.ts";
+import {
+  FIXTURES,
+  dryRun,
+  fetchShelf,
+  seedShelf,
+  signIn,
+  expect,
+  test,
+} from "./support.ts";
 
 const SHELF = "compose-e2e";
 let seeded = "";

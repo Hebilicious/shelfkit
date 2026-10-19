@@ -2,9 +2,15 @@
  * Live updates over server-sent events (`docs/PRD.md` section 10.2): a dropped subscription comes back by itself, and
  * what changed while it was down is fetched when it does.
  */
-import { expect, test } from "@playwright/test";
 
-import { FIXTURES, seedShelf, signIn, writePromptAsOwner } from "./support.ts";
+import {
+  FIXTURES,
+  seedShelf,
+  signIn,
+  writePromptAsOwner,
+  expect,
+  test,
+} from "./support.ts";
 
 const SHELF = "live-e2e";
 

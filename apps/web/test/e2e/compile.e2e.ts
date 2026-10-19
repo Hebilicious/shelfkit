@@ -3,7 +3,6 @@
  * including a recompile that removes stale vendored files and prunes the directories they leave empty, and a repository
  * that changed after it was opened is planned again rather than overwritten.
  */
-import { expect, test } from "@playwright/test";
 
 import {
   browserDirectoryExists,
@@ -21,6 +20,8 @@ import {
   signIn,
   sortedTree,
   temporary,
+  expect,
+  test,
 } from "./support.ts";
 
 const SHELF = "compile-e2e";

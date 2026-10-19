@@ -14,9 +14,40 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { expect } from "@playwright/test";
+import { test as base, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import type { Profile } from "@shelfkit/schema";
+
+/**
+ * Every spec's `test`: Playwright's, plus a check that runs on every page the spec opens and fails the test on any
+ * Content-Security-Policy violation, so the whole suite runs under the SPA's CSP (`public/_headers`).
+ */
+export const test = base.extend<{ cspViolations: string[] }>({
+  cspViolations: [
+    async ({ context }, use) => {
+      const violations: string[] = [];
+      const watch = (page: Page): void => {
+        page.on("console", (message) => {
+          if (
+            message.type() === "error" &&
+            message.text().includes("Content Security Policy")
+          ) {
+            violations.push(message.text());
+          }
+        });
+      };
+      for (const page of context.pages()) {
+        watch(page);
+      }
+      context.on("page", watch);
+      await use(violations);
+      expect(violations).toStrictEqual([]);
+    },
+    { auto: true },
+  ],
+});
+
+export { expect } from "@playwright/test";
 
 export const PORT = 8792;
 export const BASE_URL = `http://localhost:${PORT}`;

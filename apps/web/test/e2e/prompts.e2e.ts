@@ -3,9 +3,15 @@
  * its variables, copy it as text, as a skill, or as a slash command; favourites and recents; editing with history;
  * delete with undo; and markdown that cannot run script or load a remote image.
  */
-import { expect, test } from "@playwright/test";
 
-import { FIXTURES, clipboard, seedShelf, signIn } from "./support.ts";
+import {
+  FIXTURES,
+  clipboard,
+  seedShelf,
+  signIn,
+  expect,
+  test,
+} from "./support.ts";
 
 const SHELF = "prompts-e2e";
 

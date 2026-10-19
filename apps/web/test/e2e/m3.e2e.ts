@@ -7,7 +7,6 @@
  * after it (reading the repository, `Engine.output`, writing) is the code a person's browser runs. The result is then
  * compared, file by file, with what `shelfkit compile --repo` writes into a copy of the same repository.
  */
-import { expect, test } from "@playwright/test";
 
 import {
   browserRepository,
@@ -24,6 +23,8 @@ import {
   signIn,
   sortedTree,
   temporary,
+  expect,
+  test,
 } from "./support.ts";
 import type { FileTree } from "./support.ts";
 
