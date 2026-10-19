@@ -1,3 +1,4 @@
+import vue from "@vitejs/plugin-vue";
 import { vize } from "@vizejs/vite-plugin";
 import { defineConfig } from "vite";
 
@@ -7,17 +8,19 @@ const worker = `http://127.0.0.1:${process.env.SHELFKIT_WORKER_PORT ?? "8787"}`;
 /**
  * Vize compiles SFCs natively, as a drop-in for @vitejs/plugin-vue.
  *
- * Vize is not production-ready by its own documentation, so this integration
- * is confined to the build config: swapping in @vitejs/plugin-vue is a
- * one-line change, and both paths stay green in CI. See docs/PRD.md 10.4.
+ * Vize is not production-ready by its own documentation, so @vitejs/plugin-vue is the fallback and both paths stay
+ * green: `SHELFKIT_SFC=plugin-vue` builds with it into `dist-plugin-vue/` (`moon run web:build-plugin-vue`, part of
+ * `web:check`). See docs/PRD.md 10.4.
  */
+const fallback = process.env.SHELFKIT_SFC === "plugin-vue";
+
 export default defineConfig({
   build: {
     emptyOutDir: true,
-    outDir: "dist",
+    outDir: fallback ? "dist-plugin-vue" : "dist",
     target: "es2023",
   },
-  plugins: [vize()],
+  plugins: [fallback ? vue() : vize()],
   server: {
     port: 5173,
     proxy: {

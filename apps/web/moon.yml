@@ -35,6 +35,20 @@ tasks:
     outputs:
       - "dist/**/*"
 
+  build-plugin-vue:
+    description: "Build with @vitejs/plugin-vue instead of vize, into dist-plugin-vue/: the PRD's fallback path, kept green."
+    command: "node_modules/.bin/vite build"
+    env:
+      SHELFKIT_SFC: "plugin-vue"
+    deps:
+      - "tokens:build"
+      - "engine:build"
+      - "graphql-types"
+    inputs:
+      - "@group(sources)"
+    outputs:
+      - "dist-plugin-vue/**/*"
+
   # Every GraphQL operation is typed against the Worker's committed SDL. The introspection types are generated, not
   # committed, so they cannot go stale; the check fails when an operation no longer validates against the SDL.
   graphql-types:
@@ -61,6 +75,7 @@ tasks:
       - "graphql-check"
       - "types"
       - "types-test"
+      - "build-plugin-vue"
     inputs:
       - "@group(sources)"
   types:
