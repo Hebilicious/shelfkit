@@ -1,12 +1,10 @@
-/** Module types wrangler's bundler provides: a `.wasm` import is a compiled module, a `.sql` import is its text. */
+/**
+ * Module types wrangler's bundler provides: a `.wasm` import is a compiled module. (`wrangler types` declares `.sql`
+ * imports, which the Text rule in wrangler.jsonc makes.)
+ */
 declare module "*.wasm" {
   const module: WebAssembly.Module;
   export default module;
-}
-
-declare module "*.sql" {
-  const text: string;
-  export default text;
 }
 
 /** Drizzle's bundle of the generated migrations (`drizzle/migrations.js`), keyed by migration folder. */
