@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  rmdirSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -31,7 +32,7 @@ function scratch(): string {
   return mkdtempSync(path.join(tmpdir(), "shelfkit-output-"));
 }
 
-/** Every file under `root` with its bytes, by path relative to it; links are named, never followed. */
+/** Every file under `root` with its bytes, and every directory and link, by path relative to it; links are never followed. */
 function tree(root: string) {
   const found = new Map<string, string>();
   for (const entry of readdirSync(root, {
@@ -42,6 +43,8 @@ function tree(root: string) {
     const relative = path.relative(root, full).split(path.sep).join("/");
     if (entry.isSymbolicLink()) {
       found.set(relative, "<link>");
+    } else if (entry.isDirectory()) {
+      found.set(relative, "<directory>");
     } else if (entry.isFile()) {
       found.set(relative, readFileSync(full).toString("base64"));
     }
@@ -63,6 +66,9 @@ function apply(root: string, output: RepositoryOutput): void {
   }
   for (const file of output.remove) {
     rmSync(path.join(root, file));
+  }
+  for (const directory of output.prune) {
+    rmdirSync(path.join(root, directory));
   }
 }
 
@@ -105,6 +111,16 @@ function refusedLines(stderr: string): string[] {
     .filter((line) => line.startsWith("  - "))
     .map((line) => line.slice("  - ".length));
 }
+
+/** The CLI's refusal lines with the repository's own path taken off, as the engine words them. */
+function relativeLines(stderr: string, root: string): string[] {
+  return refusedLines(stderr).map((line) =>
+    line.startsWith(`${root}/`) ? line.slice(root.length + 1) : line
+  );
+}
+
+/** Bytes that are not UTF-8. */
+const NOT_UTF8 = Buffer.from([0xff, 0xfe, 0x0a]);
 
 const CONFLICTING =
   "name: my-app\nversion: 2.0.0\ntargets: [claude]\ndependencies:\n  apm:\n    - acme/standards#v1\n";
@@ -245,6 +261,7 @@ describe("Engine.output and `shelfkit compile --repo`", () => {
     expect(ran.status).toBe(1);
     expect(result.ok && result.value).toStrictEqual({
       conflicts: [],
+      prune: [],
       refused: refusedLines(ran.stderr),
       remove: [],
       write: [],
@@ -290,6 +307,84 @@ describe("Engine.output and `shelfkit compile --repo`", () => {
       "fail"
     );
     expect(ran.status).toBe(1);
+    expect(result.ok && result.value.refused).toStrictEqual(
+      refusedLines(ran.stderr)
+    );
+  });
+
+  it("prunes the directories a removal empties, as the CLI does", async () => {
+    const output = await bothWrite(
+      (root) => {
+        expect(compile(root, "minimal", "fail")).toMatchObject({ status: 0 });
+        mkdirSync(path.join(root, "vendor/minimal/.apm/skills/old/ref"), {
+          recursive: true,
+        });
+        writeFileSync(
+          path.join(root, "vendor/minimal/.apm/skills/old/SKILL.md"),
+          "old\n"
+        );
+        writeFileSync(
+          path.join(root, "vendor/minimal/.apm/skills/old/ref/a.md"),
+          "old\n"
+        );
+      },
+      "minimal",
+      "fail"
+    );
+    expect(output.prune).toContain("vendor/minimal/.apm/skills/old/ref");
+    expect(output.prune).toContain("vendor/minimal/.apm/skills/old");
+  });
+
+  it("refuses a root apm.yml that is not UTF-8, as the CLI does", async () => {
+    const { ran, result, roots } = await both(
+      (root) => {
+        writeFileSync(path.join(root, "apm.yml"), NOT_UTF8);
+      },
+      "minimal",
+      "fail"
+    );
+    expect(ran.status).toBe(1);
+    expect(result.ok && result.value.refused).toStrictEqual(
+      relativeLines(ran.stderr, roots.cli)
+    );
+    expect(tree(roots.engine)).toStrictEqual(tree(roots.cli));
+  });
+
+  it("never takes a package whose apm.yml is not UTF-8 for its own", async () => {
+    const { ran, result, roots } = await both(
+      (root) => {
+        expect(compile(root, "minimal", "fail")).toMatchObject({ status: 0 });
+        const manifest = path.join(root, "vendor/minimal/apm.yml");
+        writeFileSync(
+          manifest,
+          // In a comment, so a lossy decode would still read the marker.
+          Buffer.concat([readFileSync(manifest), Buffer.from("# "), NOT_UTF8])
+        );
+        writeFileSync(path.join(root, "vendor/minimal/keep-me.txt"), "mine\n");
+      },
+      "minimal",
+      "fail"
+    );
+    expect(ran.status).toBe(1);
+    expect(result.ok && result.value).toMatchObject({
+      refused: relativeLines(ran.stderr, roots.cli),
+      remove: [],
+    });
+    expect(tree(roots.engine)).toStrictEqual(tree(roots.cli));
+  });
+
+  it("reports a link inside an unowned package line for line with the CLI", async () => {
+    const outside = scratch();
+    const { ran, result } = await both(
+      (root) => {
+        mkdirSync(path.join(root, "vendor/minimal"), { recursive: true });
+        symlinkSync(outside, path.join(root, "vendor/minimal/.apm"));
+      },
+      "minimal",
+      "fail"
+    );
+    expect(ran.status).toBe(1);
+    expect(refusedLines(ran.stderr)).toHaveLength(2);
     expect(result.ok && result.value.refused).toStrictEqual(
       refusedLines(ran.stderr)
     );

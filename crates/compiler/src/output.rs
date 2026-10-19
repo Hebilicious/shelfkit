@@ -85,6 +85,11 @@ pub struct Output {
     pub files: BTreeMap<String, Vec<u8>>,
     /// Files to remove, relative to the repository.
     pub remove: Vec<String>,
+    /// Directories to remove after `remove`, deepest first: those the
+    /// removals leave with no file in them. Each is removed only if it is
+    /// empty (a directory the snapshot could not see may keep one), and
+    /// never `vendor/` itself; the CLI removes the same ones.
+    pub prune: Vec<String>,
     /// Declarations in an existing `apm.yml` that differed, and how
     /// `onConflict` settled them.
     pub conflicts: Vec<String>,
@@ -131,6 +136,25 @@ pub fn output(
     repo: &dyn Repository,
     on_conflict: OnConflict,
 ) -> Result<Output, Refusal> {
+    // A plan may arrive over the network: it writes only inside packages.
+    let mut outside: Vec<String> = plan
+        .files
+        .iter()
+        .filter(|file| !is_package_path(&file.path))
+        .map(|file| {
+            format!(
+                "`{}` in the plan is not a file inside a package under {VENDOR_DIR}/; compile writes \
+                 nothing else but apm.yml",
+                file.path
+            )
+        })
+        .collect();
+    if !outside.is_empty() {
+        outside.sort();
+        outside.dedup();
+        return Err(Refusal::Refused(outside));
+    }
+
     let mut out = Output::default();
     let mut refused: Vec<String> = Vec::new();
 
@@ -184,16 +208,19 @@ pub fn output(
     }
 
     // Stale files: only inside packages carrying this profile's marker.
+    let mut existing: Vec<String> = Vec::new();
     for name in &owned {
         match files_under(repo, &format!("{VENDOR_DIR}/{name}")) {
-            Ok(paths) => out.remove.extend(
-                paths
-                    .into_iter()
-                    .filter(|path| !out.files.contains_key(path)),
-            ),
+            Ok(paths) => existing.extend(paths),
             Err(why) => refused.push(why),
         }
     }
+    out.remove = existing
+        .iter()
+        .filter(|path| !out.files.contains_key(*path))
+        .cloned()
+        .collect();
+    out.prune = emptied(&out, &existing);
 
     for path in out.files.keys().chain(&out.remove) {
         if let Err(why) = no_symlink(repo, path) {
@@ -207,6 +234,46 @@ pub fn output(
         refused.dedup();
         Err(Refusal::Refused(refused))
     }
+}
+
+/// `vendor/<package>/<file>`, each component a plain name.
+fn is_package_path(path: &str) -> bool {
+    path.strip_prefix(&format!("{VENDOR_DIR}/"))
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(name, inner)| is_component(name) && is_relative(inner))
+}
+
+/// The directories, deepest first, that removing `out.remove` from the
+/// owned packages' `existing` files leaves with no file, up to but not
+/// including `vendor/`: what the CLI's `apply` removes after each file.
+fn emptied(out: &Output, existing: &[String]) -> Vec<String> {
+    let removed: BTreeSet<&str> = out.remove.iter().map(String::as_str).collect();
+    let remaining: Vec<&str> = existing
+        .iter()
+        .map(String::as_str)
+        .filter(|path| !removed.contains(path))
+        .chain(out.files.keys().map(String::as_str))
+        .collect();
+    let mut dirs: BTreeSet<&str> = BTreeSet::new();
+    for path in &out.remove {
+        let mut current = path.as_str();
+        while let Some((parent, _)) = current.rsplit_once('/') {
+            let prefix = format!("{parent}/");
+            if parent == VENDOR_DIR || remaining.iter().any(|path| path.starts_with(&prefix)) {
+                break;
+            }
+            dirs.insert(parent);
+            current = parent;
+        }
+    }
+    let mut dirs: Vec<String> = dirs.into_iter().map(str::to_owned).collect();
+    dirs.sort_by(|a, b| {
+        b.matches('/')
+            .count()
+            .cmp(&a.matches('/').count())
+            .then_with(|| a.cmp(b))
+    });
+    dirs
 }
 
 fn bullet(lines: &[String]) -> String {
@@ -334,6 +401,12 @@ pub struct Snapshot {
     /// `vendor/`, by path relative to the repository.
     #[serde(default)]
     pub links: Vec<String>,
+    /// Every file among those the engine reads (`apm.yml`, each package's
+    /// `apm.yml`) that exists but is not UTF-8, by path relative to the
+    /// repository. The CLI cannot read such a file either, and refuses as
+    /// it does.
+    #[serde(default)]
+    pub undecodable: Vec<String>,
 }
 
 /// One entry of `vendor/` in a [`Snapshot`].
@@ -376,6 +449,9 @@ impl Snapshot {
         if let Some(link) = self.links.iter().find(|link| !is_relative(link)) {
             return Err(format!("links: `{link}` is not a relative path"));
         }
+        if let Some(path) = self.undecodable.iter().find(|path| !is_relative(path)) {
+            return Err(format!("undecodable: `{path}` is not a relative path"));
+        }
         Ok(())
     }
 
@@ -404,7 +480,7 @@ impl SnapshotPackage {
 }
 
 fn is_component(name: &str) -> bool {
-    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\'])
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0'])
 }
 
 fn is_relative(path: &str) -> bool {
@@ -418,6 +494,9 @@ impl Repository for Snapshot {
         }
         if self.beneath_link(relative) {
             return None;
+        }
+        if self.undecodable.iter().any(|path| path == relative) {
+            return Some(Kind::File);
         }
         if relative == APM_YML {
             return self.apm_yml.as_ref().map(|_| Kind::File);
@@ -447,6 +526,10 @@ impl Repository for Snapshot {
     }
 
     fn read(&self, relative: &str) -> Result<String, String> {
+        if self.undecodable.iter().any(|path| path == relative) {
+            // The words `std::fs::read_to_string` uses, so the CLI's line and this one match.
+            return Err(format!("{relative}: stream did not contain valid UTF-8"));
+        }
         let text = if relative == APM_YML {
             self.apm_yml.as_ref()
         } else {
@@ -646,5 +729,95 @@ mod tests {
         ] {
             assert!(snapshot.validate().is_err());
         }
+    }
+
+    fn run_with(extra: &[VendorFile], snapshot: &Snapshot) -> Result<Output, Refusal> {
+        let mut files = plan_files();
+        files.extend_from_slice(extra);
+        let plan = Plan {
+            profile: "p",
+            apm_yml: "name: p\n",
+            files: &files,
+        };
+        output(plan, snapshot, OnConflict::Fail)
+    }
+
+    #[test]
+    fn a_plan_file_outside_a_package_is_refused() {
+        for path in [
+            "../outside.txt",
+            "/etc/evil",
+            "vendor/../.git/hooks/pre-commit",
+            ".github/workflows/x.yml",
+            "apm.yml",
+            "vendor/p",
+            "vendor/./x",
+            "vendor/p/./x",
+            "vendor/p//x",
+            "vendor/p/x/",
+            "vendor/p/..\\x",
+        ] {
+            let Err(Refusal::Refused(refused)) = run_with(&[file(path, "x")], &Snapshot::default())
+            else {
+                panic!("{path} was not refused");
+            };
+            assert!(
+                refused
+                    .iter()
+                    .any(|line| line.contains(&format!("`{path}`"))),
+                "{path}: {refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn directories_a_removal_empties_are_pruned_deepest_first() {
+        let snapshot = Snapshot {
+            vendor: vec![SnapshotPackage {
+                name: "p".to_owned(),
+                apm_yml: Some(MARKED.to_owned()),
+                files: vec![
+                    ".apm/skills/old/SKILL.md".to_owned(),
+                    ".apm/skills/old/ref/a.md".to_owned(),
+                    ".apm/prompts/gone.prompt.md".to_owned(),
+                ],
+            }],
+            ..Snapshot::default()
+        };
+        let out = run(&snapshot, OnConflict::Fail).unwrap();
+        assert_eq!(
+            out.prune,
+            [
+                "vendor/p/.apm/skills/old/ref",
+                "vendor/p/.apm/skills/old",
+                "vendor/p/.apm/skills",
+            ]
+        );
+    }
+
+    #[test]
+    fn an_undecodable_apm_yml_is_refused_or_not_ours() {
+        let root = Snapshot {
+            undecodable: vec!["apm.yml".to_owned()],
+            ..Snapshot::default()
+        };
+        let Err(Refusal::Refused(refused)) = run(&root, OnConflict::Fail) else {
+            panic!("an undecodable apm.yml was merged");
+        };
+        assert_eq!(refused, ["apm.yml: stream did not contain valid UTF-8"]);
+
+        let package = Snapshot {
+            vendor: vec![SnapshotPackage {
+                name: "p".to_owned(),
+                apm_yml: None,
+                files: vec!["keep-me.txt".to_owned()],
+            }],
+            undecodable: vec!["vendor/p/apm.yml".to_owned()],
+            ..Snapshot::default()
+        };
+        let Err(Refusal::Refused(refused)) = run(&package, OnConflict::Fail) else {
+            panic!("a package with an undecodable apm.yml was taken for ours");
+        };
+        assert!(refused[0].starts_with("vendor/p exists and is not a package"));
     }
 }

@@ -54,11 +54,14 @@
 //!   or `local-wins`, and `repo` is the repository as
 //!   `shelfkit_compiler::output::Snapshot` describes it: `{ "apmYml"?,
 //!   "vendor": [{ "name", "apmYml"?, "files": [path relative to the
-//!   package] }], "links"?: [path] }`. The output is what `shelfkit compile
-//!   --repo` would write: `{ "write": [{ "path", "contents", "encoding" }],
-//!   "remove": [path], "conflicts": [declaration], "refused": [reason] }`.
-//!   When `refused` is not empty, nothing may be written, and `write` and
-//!   `remove` are empty. An `apm.yml` that is not a manifest, or that
+//!   package] }], "links"?: [path], "undecodable"?: [path] }`. The output
+//!   is what `shelfkit compile --repo` would do: `{ "write": [{ "path",
+//!   "contents", "encoding" }], "remove": [path], "prune": [directory],
+//!   "conflicts": [declaration], "refused": [reason] }`, where `prune` lists
+//!   the directories to remove, deepest first and only if empty, after
+//!   `remove`. When `refused` is not empty, nothing may be written, and
+//!   `write`, `remove`, and `prune` are empty. A plan file outside
+//!   `vendor/<package>/` is refused. An `apm.yml` that is not a manifest, or that
 //!   conflicts under `fail`, is `1` and one error on `apm.yml`, worded as the
 //!   CLI words it.
 //! - `shelfkit_registry_prepare()`: `{ "method", "path", "mount"?,
@@ -413,6 +416,7 @@ struct WriteFile {
 struct OutputAnswer {
     write: Vec<WriteFile>,
     remove: Vec<String>,
+    prune: Vec<String>,
     conflicts: Vec<String>,
     refused: Vec<String>,
 }
@@ -450,6 +454,7 @@ pub fn repository_output(input: &[u8]) -> (Status, Vec<u8>) {
                 })
                 .collect(),
             remove: out.remove,
+            prune: out.prune,
             conflicts: out.conflicts,
             refused: Vec::new(),
         },
@@ -871,7 +876,7 @@ mod tests {
             "vendor": [{
                 "name": "p",
                 "apmYml": "name: p\nx-shelfkit-vendored-for: p\n",
-                "files": [".apm/prompts/old.prompt.md"]
+                "files": [".apm/old/stale.md"]
             }]
         });
         let (status, answer) = repository_output(&output_request(repo, "fail"));
@@ -881,9 +886,10 @@ mod tests {
         assert_eq!(answer["write"][0]["encoding"], "utf-8");
         assert_eq!(
             answer["remove"],
-            serde_json::json!(["vendor/p/.apm/prompts/old.prompt.md"])
+            serde_json::json!(["vendor/p/.apm/old/stale.md"])
         );
         assert_eq!(answer["refused"], serde_json::json!([]));
+        assert_eq!(answer["prune"], serde_json::json!(["vendor/p/.apm/old"]));
     }
 
     #[test]
@@ -897,6 +903,37 @@ mod tests {
         assert_eq!(status, Status::Planned);
         let bad = output_request(serde_json::json!({ "links": ["../out"] }), "fail");
         assert_eq!(repository_output(&bad).0, Status::BadRequest);
+    }
+
+    #[test]
+    fn a_crafted_plan_writes_nothing_outside_a_package() {
+        let (_, plan) = respond(&serde_json::to_vec(&shelf_files()).unwrap());
+        let mut plan: serde_json::Value = serde_json::from_slice(&plan).unwrap();
+        let crafted = [
+            "../outside.txt",
+            "/etc/evil",
+            "vendor/../.git/hooks/pre-commit",
+            ".github/workflows/x.yml",
+        ];
+        let files = plan["files"].as_array_mut().unwrap();
+        for path in crafted {
+            files.push(serde_json::json!({ "path": path, "contents": "x" }));
+        }
+        let body = serde_json::json!({ "plan": plan, "repo": { "vendor": [] } });
+        let (status, answer) = repository_output(&serde_json::to_vec(&body).unwrap());
+        assert_eq!(status, Status::Planned);
+        let answer: serde_json::Value = serde_json::from_slice(&answer).unwrap();
+        assert_eq!(answer["write"], serde_json::json!([]));
+        let refused = answer["refused"].as_array().unwrap();
+        assert_eq!(refused.len(), crafted.len());
+        for path in crafted {
+            assert!(
+                refused
+                    .iter()
+                    .any(|line| line.as_str().unwrap().contains(&format!("`{path}`"))),
+                "{path}"
+            );
+        }
     }
 
     #[test]

@@ -139,6 +139,12 @@ export interface RepositorySnapshot {
   readonly vendor: readonly VendorEntry[];
   /** Every symbolic link at `apm.yml`, `vendor`, or under `vendor/`, by path relative to the repository. */
   readonly links?: readonly string[];
+  /**
+   * The root `apm.yml` and each package's `apm.yml` that exist but are not UTF-8, by path relative to the repository. The
+   * CLI cannot read them either: the root one is refused, and a package with one is never ShelfKit's. Decode with
+   * `new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })`, never lossily.
+   */
+  readonly undecodable?: readonly string[];
 }
 
 /** One entry of `vendor/`. */
@@ -167,9 +173,18 @@ export interface RepositoryOutput {
   readonly write: readonly WriteFile[];
   /** Stale files of ShelfKit's own packages, to delete. */
   readonly remove: readonly string[];
+  /**
+   * Directories to remove after `remove`, deepest first: those the removals leave with no file, never `vendor/` itself.
+   * Remove each only if it is empty (a non-recursive remove), as the CLI does: a snapshot cannot show an empty
+   * directory inside, which keeps its parent.
+   */
+  readonly prune: readonly string[];
   /** Declarations the repository's `apm.yml` made differently, settled by `onConflict`. */
   readonly conflicts: readonly string[];
-  /** Why nothing may be written. When this is not empty, `write` and `remove` are. */
+  /**
+   * Why nothing may be written. When this is not empty, `write`, `remove`, and `prune` are. A plan file outside
+   * `vendor/<package>/` (a crafted plan) is refused here.
+   */
   readonly refused: readonly string[];
 }
 
@@ -510,6 +525,7 @@ interface OutputRequest {
 
 const RepositoryOutputSchema = v.strictObject({
   conflicts: v.array(v.string()),
+  prune: v.array(v.string()),
   refused: v.array(v.string()),
   remove: v.array(v.string()),
   write: v.array(
