@@ -598,6 +598,61 @@ pub(super) struct FetchOptions<'a> {
     pub url: Option<&'a str>,
     pub id: Option<&'a str>,
     pub out: Option<&'a Path>,
+    pub force: bool,
+}
+
+const KNOWN: &str = "query Known($id: ID!, $sha256: [String!]!) { shelf(id: $id) { knownObjects(sha256: $sha256) } }";
+
+/// The local shelf files a fetch would replace or remove whose content the
+/// service has never had: work that exists only here.
+fn unpushed(
+    remote: &Remote<'_>,
+    id: &str,
+    dir: &Path,
+    hosted: &Hosted,
+) -> Result<Vec<String>, Failure> {
+    let mut local = Vec::new();
+    if dir.join("shelf.json").is_file() {
+        local.push("shelf.json".to_owned());
+    }
+    for directory in SHELF_DIRECTORIES {
+        walk(dir, &dir.join(directory), &mut local)?;
+    }
+    let mut changed: Vec<(String, String)> = Vec::new();
+    for path in local {
+        let bytes = std::fs::read(dir.join(&path)).map_err(|error| format!("{path}: {error}"))?;
+        let sha256 = hex(&bytes);
+        if hosted
+            .files
+            .get(&path)
+            .is_some_and(|(theirs, _)| *theirs == sha256)
+        {
+            continue;
+        }
+        changed.push((path, sha256));
+    }
+    if changed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut known = BTreeSet::new();
+    for chunk in changed.chunks(2000) {
+        let hashes: Vec<&str> = chunk.iter().map(|(_, sha)| sha.as_str()).collect();
+        let data = remote.graphql(KNOWN, json!({ "id": id, "sha256": hashes }))?;
+        for found in data["shelf"]["knownObjects"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            if let Some(sha) = found.as_str() {
+                known.insert(sha.to_owned());
+            }
+        }
+    }
+    Ok(changed
+        .into_iter()
+        .filter(|(_, sha)| !known.contains(sha))
+        .map(|(path, _)| path)
+        .collect())
 }
 
 /// Whether a path from the service is one a shelf has: `shelf.json`, or a
@@ -647,6 +702,20 @@ pub(super) fn fetch(
     };
     let hosted = hosted(&remote, &id)?
         .ok_or_else(|| format!("{} has no shelf `{id}` this key can read", remote.url()))?;
+    if !options.force {
+        let local_only = unpushed(&remote, &id, &dir, &hosted)?;
+        if !local_only.is_empty() {
+            for path in &local_only {
+                let _ = writeln!(ctx.stderr, "{path}: changed here and never pushed");
+            }
+            return Err(format!(
+                "fetching would replace or remove {} local file(s) the service has never had. Push them first, or \
+                 fetch with `--force` to discard them",
+                local_only.len()
+            )
+            .into());
+        }
+    }
     let mut written = 0;
     for (path, (sha256, _)) in &hosted.files {
         if !is_shelf_path(path) {

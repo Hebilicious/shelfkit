@@ -57,6 +57,8 @@ struct State {
     origin: String,
     packages: BTreeMap<(String, String), String>,
     requests: Vec<String>,
+    /// Every object a commit has named: what `knownObjects` answers from.
+    committed: std::collections::BTreeSet<String>,
 }
 
 /// The hosted service, in memory, plus a keychain and an environment.
@@ -125,9 +127,19 @@ impl Service {
                 "sha256:{}",
                 hex(serde_json::to_string(&files).unwrap().as_bytes())
             );
+            state.committed.extend(files.values().cloned());
             state.files = Some(files);
             state.origin = "push".to_owned();
             return json!({ "data": { "commitSnapshot": { "ok": true, "reason": null, "errors": [], "missing": [], "snapshot": { "digest": digest, "fileCount": 0 } } } });
+        }
+        if query.contains("knownObjects") {
+            let known: Vec<&String> = variables["sha256"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|sha| state.committed.get(sha.as_str().unwrap()))
+                .collect();
+            return json!({ "data": { "shelf": { "knownObjects": known } } });
         }
         if query.contains("Hosted") {
             let Some(files) = &state.files else {
@@ -414,10 +426,60 @@ fn fetch_writes_the_hosted_shelf_byte_for_byte_and_removes_what_it_no_longer_has
 
     std::fs::create_dir_all(out.join("items/prompts/stale")).unwrap();
     std::fs::write(out.join("items/prompts/stale/item.json"), "{}").unwrap();
-    let again = shelfkit(&service, &out, &["fetch"]);
+    let again = shelfkit(&service, &out, &["fetch", "--force"]);
     assert_eq!(again.code, 0, "{}", again.stderr);
     assert!(again.stdout.contains("1 removed"), "{}", again.stdout);
     assert!(!out.join("items/prompts/stale").exists());
+}
+
+#[test]
+fn fetch_refuses_to_discard_work_that_was_never_pushed() {
+    let service = Service::logged_in("fetch-unpushed");
+    let shelf = own_shelf("fetch-unpushed");
+    assert_eq!(shelfkit(&service, &shelf, &["push", "--url", URL]).code, 0);
+    let prompt = shelf.join("items/prompts/commit-style/prompt.md");
+    let pushed = std::fs::read(&prompt).unwrap();
+
+    // An edit made here and never pushed, and a new item: neither is the service's to replace.
+    std::fs::write(&prompt, "Edited here, not pushed.\n").unwrap();
+    std::fs::create_dir_all(shelf.join("items/prompts/draft")).unwrap();
+    std::fs::write(shelf.join("items/prompts/draft/item.json"), "{}").unwrap();
+    let refused = shelfkit(&service, &shelf, &["fetch"]);
+    assert_eq!(refused.code, 1);
+    assert!(
+        refused
+            .stderr
+            .contains("items/prompts/commit-style/prompt.md: changed here and never pushed"),
+        "{}",
+        refused.stderr
+    );
+    assert!(
+        refused.stderr.contains("items/prompts/draft/item.json"),
+        "{}",
+        refused.stderr
+    );
+    assert_eq!(
+        std::fs::read(&prompt).unwrap(),
+        b"Edited here, not pushed.\n"
+    );
+    assert!(shelf.join("items/prompts/draft/item.json").exists());
+
+    // `--force` discards them.
+    let forced = shelfkit(&service, &shelf, &["fetch", "--force"]);
+    assert_eq!(forced.code, 0, "{}", forced.stderr);
+    assert_eq!(std::fs::read(&prompt).unwrap(), pushed);
+    assert!(!shelf.join("items/prompts/draft").exists());
+
+    // Content the service has had (an older push) is replaced by the newer one without `--force`.
+    std::fs::write(&prompt, "A second version.\n").unwrap();
+    assert_eq!(
+        shelfkit(&service, &shelf, &["push", "--no-publish"]).code,
+        0
+    );
+    std::fs::write(&prompt, &pushed).unwrap();
+    let newer = shelfkit(&service, &shelf, &["fetch"]);
+    assert_eq!(newer.code, 0, "{}", newer.stderr);
+    assert_eq!(std::fs::read(&prompt).unwrap(), b"A second version.\n");
 }
 
 #[test]

@@ -133,6 +133,9 @@ enum Command {
     /// not overwritten without `--force`.
     Push(PushArgs),
     /// Write a hosted shelf's snapshot into a directory, removing the shelf files it no longer has.
+    ///
+    /// A local file it would replace or remove whose content the service has never had is work that was never pushed:
+    /// the fetch is refused, naming each one, unless `--force`.
     Fetch(FetchArgs),
 }
 
@@ -170,6 +173,9 @@ struct FetchArgs {
     /// directory.
     #[arg(long, value_name = "DIR")]
     out: Option<PathBuf>,
+    /// Replace or remove local files the service has never had (work that was never pushed).
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Args)]
@@ -382,6 +388,7 @@ where
             ctx,
             shelf,
             &hosted::FetchOptions {
+                force: args.force,
                 id: args.id.as_deref(),
                 out: args.out.as_deref(),
                 url: args.url.as_deref(),
