@@ -8,12 +8,10 @@
  *
  * See docs/PRD.md sections 4, 7, 8, and 10.
  */
-import { ShelfIndex } from "./shelf-index.ts";
-
-export { ShelfIndex };
+export { ShelfIndex } from "./shelf-index.ts";
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  fetch(request: Request, env: Env): Response {
     const url = new URL(request.url);
 
     if (url.pathname === "/health") {

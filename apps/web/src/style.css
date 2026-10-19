@@ -14,7 +14,11 @@ body {
 
 body {
   font-family:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
   background: var(--surface-base);
   color: var(--text-primary);
   font-size: var(--typography_fluid-sans-text-m);

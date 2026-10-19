@@ -11,6 +11,7 @@ import { SHELFKIT_ROUTES } from "./routes.ts";
     <nav aria-label="Sections" class="shell__nav">
       <ul>
         <li v-for="route in SHELFKIT_ROUTES" :key="route.path">
+          <!-- eslint-disable-next-line vue/no-unsafe-url -- every path is a constant in routes.ts, never user input. -->
           <a :href="route.path">{{ route.title }}</a>
           <span class="shell__note">{{ route.note }}</span>
         </li>
