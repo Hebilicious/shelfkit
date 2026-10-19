@@ -404,7 +404,7 @@ Imports are pinned to a resolved commit, version, or digest, and the UI shows dr
 
 ShelfKit runs an MCP endpoint at `/mcp` so an agent can use a shelf without a shell. Almost all of it is ShelfKit's own stateless tools. The one addition is a relay for a remote server whose credential should not be copied into every client config, and that relay is argued for carefully below because the pattern has a real failure mode.
 
-**ShelfKit's tools.** `shelf_search`, `shelf_recommend`, `shelf_get_profile`, `shelf_get_item`, and `shelf_plan_compile`, which returns the `apm.yml` that would be written plus vendored files and the install command. `shelf_plan_compile` never mutates anything: ShelfKit plans, the agent applies, APM installs. Each call reads from a Durable Object or R2 and returns, holding nothing between calls.
+**ShelfKit's tools.** `shelf.search`, `shelf.recommend`, `shelf.profile.get`, `shelf.item.get`, `shelf.compile.plan`, which returns the `apm.yml` that would be written plus vendored files and the install command, and `shelf.report`, which records that an agent applied a plan to a repository. They are [AcidCat](https://github.com/Hebilicious/acidcat) capability ids, served by AcidCat's MCP binding, which names each tool by its id; the contract is `packages/schema/acidcat.catalog.json`. `shelf.compile.plan` never mutates anything: ShelfKit plans, the agent applies, APM installs. Each call reads from a Durable Object or R2 and returns, holding nothing between calls; `shelf.report` writes only its activity record.
 
 **The relay, and why it is not a gateway.** A shelf can list a remote MCP server and declare that ShelfKit relays it. This is not a general aggregation layer: ShelfKit does not host several servers behind one endpoint as a convenience, and it never hosts a local one. What the relay buys is one holder for a credential, and §8.1 explains the hazard that comes with it.
 
@@ -420,7 +420,7 @@ So ShelfKit does not pretend to be transparent. Four rules:
 
 1. **Every hosted tool is namespaced by its owning item**, as `<item>__<tool>`, and item ids may not contain `__`, which makes the separator unambiguous rather than merely unlikely to collide. Names are length-checked, since MCP asks for tool names of 128 characters or fewer.
 2. **A key grants access to declared items, not to everything the shelf knows.** Hosting is opt-in per item and per key, and the endpoint's tool list is computed from the key, so an agent cannot discover a backend it was not granted.
-3. **ShelfKit's own tools are never merged into a backend's namespace**, and a hosted backend can never claim a `shelf_*` name.
+3. **ShelfKit's own tools are never merged into a backend's namespace**, and a hosted backend can never claim a `shelf.*` name. A capability id contains no `_`, so it can never take the `<item>__<tool>` form.
 4. **Credentials belong to the item, not to the caller.** ShelfKit injects a credential it holds, which is the only reason the relay exists. Role-based scoping also keeps the ambient authority small: a key reachable by a relayed server sees that server's tools and nothing else.
 
 ### 8.2 What is relayed, and what is not
@@ -445,7 +445,7 @@ What ShelfKit does instead:
 | Need | What happens |
 | --- | --- |
 | An agent wants an MCP server | The item compiles into `dependencies.mcp`, APM writes the harness config, and the client runs the server itself. This is the normal path and it covers `stdio` and remote alike. |
-| An agent has no local process | It calls `shelf_search` and `shelf_plan_compile` to learn what to configure, and the orchestration layer it runs on starts the process. |
+| An agent has no local process | It calls `shelf.search` and `shelf.compile.plan` to learn what to configure, and the orchestration layer it runs on starts the process. |
 | ShelfKit wants to expose its own capability | It adds a **stateless tool on the Worker or a Durable Object**: search, read an item, resolve a profile, compile a manifest. Request in, answer out. |
 | A remote server needs a credential it should not hand out | The hosted remote variant in §8.2 relays the call and holds the credential. It owns no process and keeps no session. |
 
