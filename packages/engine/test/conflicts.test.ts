@@ -1,3 +1,4 @@
+import { CompileNoteSchema } from "@shelfkit/schema";
 import { describe, expect, it } from "vitest";
 
 import { NOTE_SEVERITY, conflictsOf } from "../src/index.ts";
@@ -35,13 +36,9 @@ describe("the conflict panel", () => {
     ).toStrictEqual([{ ...note("brand-new"), severity: "warning" }]);
   });
 
-  it("weighs every compile note code", () => {
-    expect([...NOTE_SEVERITY.keys()].toSorted()).toStrictEqual([
-      "hook-approval",
-      "hosted-mcp",
-      "mcp-schema-mismatch",
-      "producer-nonconformant-target",
-      "unratified-lsp",
-    ]);
+  it("weighs every code a compile note can carry", () => {
+    expect([...NOTE_SEVERITY.keys()].toSorted()).toStrictEqual(
+      CompileNoteSchema.entries.code.options.toSorted()
+    );
   });
 });
