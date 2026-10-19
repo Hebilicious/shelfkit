@@ -2,7 +2,7 @@
  * The engine in Node: the module read from disk, and a shelf read from a directory. Not for the Worker or the browser,
  * which have no filesystem; they pass a compiled module to `createEngine`.
  */
-import { readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import * as v from "valibot";
@@ -10,7 +10,12 @@ import * as v from "valibot";
 import { SuiteSchema } from "./conformance.ts";
 import type { Suite } from "./conformance.ts";
 import { createEngine } from "./index.ts";
-import type { Engine, ShelfFile } from "./index.ts";
+import type {
+  Engine,
+  RepositorySnapshot,
+  ShelfFile,
+  VendorEntry,
+} from "./index.ts";
 
 /** Where `moon run engine:build` places the module. */
 export const WASM_PATH = path.resolve(
@@ -86,6 +91,111 @@ async function readShelfFile(
   } catch {
     return { contents: bytes, path: relative };
   }
+}
+
+/** What is at `target`, without following a link; `undefined` when nothing is. */
+async function kindAt(
+  target: string
+): Promise<"file" | "directory" | "link" | "other" | undefined> {
+  try {
+    const stats = await lstat(target);
+    if (stats.isSymbolicLink()) {
+      return "link";
+    }
+    if (stats.isDirectory()) {
+      return "directory";
+    }
+    return stats.isFile() ? "file" : "other";
+  } catch {
+    return undefined;
+  }
+}
+
+/** The marker a package ShelfKit vendored carries in its `apm.yml`. */
+const OWNER_KEY = "x-shelfkit-vendored-for";
+
+/**
+ * The repository at `root` as `Engine.output` reads it: its `apm.yml`, every entry of `vendor/`, and every symbolic
+ * link among them. Unlike a browser, Node sees links, so this reports each one. A package's files are listed only when
+ * its `apm.yml` mentions the ownership marker, since the engine reads no others.
+ */
+export async function readRepository(
+  root: string
+): Promise<RepositorySnapshot> {
+  const links: string[] = [];
+  const manifest = await kindAt(path.join(root, "apm.yml"));
+  if (manifest === "link") {
+    links.push("apm.yml");
+  }
+  const apmYml =
+    manifest === "file"
+      ? await readFile(path.join(root, "apm.yml"), "utf-8")
+      : undefined;
+  const vendor: VendorEntry[] = [];
+  const vendorKind = await kindAt(path.join(root, "vendor"));
+  if (vendorKind === "link") {
+    links.push("vendor");
+  } else if (vendorKind === "directory") {
+    const entries = await readdir(path.join(root, "vendor"), {
+      withFileTypes: true,
+    });
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) {
+        links.push(`vendor/${entry.name}`);
+      } else if (!entry.isDirectory()) {
+        vendor.push({ files: [], name: entry.name });
+      }
+    }
+    const packages = await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry) => await readPackage(root, entry.name, links))
+    );
+    vendor.push(...packages);
+  }
+  const sorted = {
+    links: links.toSorted(),
+    vendor: vendor.toSorted((a, b) =>
+      a.name < b.name ? -1 : Number(a.name > b.name)
+    ),
+  };
+  return apmYml === undefined ? sorted : { ...sorted, apmYml };
+}
+
+/** One directory of `vendor/`, adding each link inside it to `links`. */
+async function readPackage(
+  root: string,
+  name: string,
+  links: string[]
+): Promise<VendorEntry> {
+  const directory = path.join(root, "vendor", name);
+  const manifestKind = await kindAt(path.join(directory, "apm.yml"));
+  const apmYml =
+    manifestKind === "file"
+      ? await readFile(path.join(directory, "apm.yml"), "utf-8")
+      : undefined;
+  const files: string[] = [];
+  if (apmYml?.includes(OWNER_KEY) === true) {
+    const entries = await readdir(directory, {
+      recursive: true,
+      withFileTypes: true,
+    });
+    for (const entry of entries) {
+      const relative = path
+        .relative(directory, path.join(entry.parentPath, entry.name))
+        .split(path.sep)
+        .join("/");
+      if (entry.isSymbolicLink()) {
+        links.push(`vendor/${name}/${relative}`);
+      } else if (!entry.isDirectory()) {
+        files.push(relative);
+      }
+    }
+  } else if (manifestKind === "link") {
+    links.push(`vendor/${name}/apm.yml`);
+  }
+  const entry = { files: files.toSorted(), name };
+  return apmYml === undefined ? entry : { ...entry, apmYml };
 }
 
 /** The registry conformance suite in this repository. */
