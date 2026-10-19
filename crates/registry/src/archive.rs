@@ -187,13 +187,24 @@ pub fn read(archive: &[u8]) -> Result<Files, ArchiveError> {
     walk(&tar)
 }
 
-/// Pending overrides for the next entry, from PAX or GNU headers.
+/// The override one PAX (`x`) or GNU long-name (`L`) header makes for the
+/// entry after it.
 #[derive(Default)]
 struct Pending {
+    /// The kind of the meta header, for messages.
+    from: Option<u8>,
     path: Option<String>,
     size: Option<usize>,
 }
 
+/// Walk the tar stream strictly. Python's `tarfile`, which APM extracts
+/// with, resolves some headers in ways a reader could disagree with, so
+/// rather than emulate it, anything whose meaning could differ is refused:
+/// a global PAX header, more than one meta header before an entry, a PAX
+/// `size` that disagrees with the header's, PAX records that make links or
+/// sparse files, a name that is not UTF-8, and any entry that is not a
+/// regular file or a directory. A non-empty `prefix` field is applied
+/// whether or not the header carries the `ustar` magic, as Python does.
 fn walk(tar: &[u8]) -> Result<Files, ArchiveError> {
     let mut files = Files::new();
     let mut directories: Vec<String> = Vec::new();
@@ -206,17 +217,17 @@ fn walk(tar: &[u8]) -> Result<Files, ArchiveError> {
             ));
         };
         if block.iter().all(|byte| *byte == 0) {
+            if pending.from.is_some() {
+                return Err(unsafe_entry(
+                    "the archive ends with a PAX or long-name header that describes no entry",
+                ));
+            }
             break;
         }
         verify_checksum(block, offset)?;
         let kind = block[156];
-        let header_size = octal(&block[124..136])
+        let size = octal(&block[124..136])
             .ok_or_else(|| malformed_at(offset, "has an unreadable size"))?;
-        let size = if matches!(kind, b'x' | b'g' | b'L' | b'K') {
-            header_size
-        } else {
-            pending.size.take().unwrap_or(header_size)
-        };
         let start = offset + BLOCK;
         let data = tar
             .get(start..start.saturating_add(size))
@@ -224,78 +235,84 @@ fn walk(tar: &[u8]) -> Result<Files, ArchiveError> {
         offset = start + size.div_ceil(BLOCK) * BLOCK;
 
         match kind {
-            b'x' => {
-                let records =
-                    pax(data).ok_or_else(|| malformed_at(start, "has a corrupt PAX header"))?;
-                for (key, value) in records {
-                    match key.as_str() {
-                        "path" => pending.path = Some(value),
-                        "size" => {
-                            pending.size = Some(value.parse().map_err(|_| {
-                                malformed_at(start, "has a PAX size that is not a number")
-                            })?);
-                        }
-                        "linkpath" => {
-                            return Err(ArchiveError::Unsafe(
-                                "the archive contains a link (a PAX `linkpath`)".to_owned(),
-                            ));
-                        }
-                        _ => {}
-                    }
+            b'x' | b'L' => {
+                if let Some(previous) = pending.from {
+                    return Err(unsafe_entry(&format!(
+                        "a `{}` header follows a `{}` header before any entry; one PAX or long-name \
+                         header may describe an entry",
+                        char::from(kind),
+                        char::from(previous)
+                    )));
+                }
+                pending.from = Some(kind);
+                if kind == b'L' {
+                    pending.path = Some(utf8_name(data)?);
+                } else {
+                    let records =
+                        pax(data).ok_or_else(|| malformed_at(start, "has a corrupt PAX header"))?;
+                    apply_pax(&mut pending, records, start)?;
                 }
                 continue;
             }
-            // Global PAX records describe no single entry.
-            b'g' => continue,
-            b'L' => {
-                pending.path = Some(c_string(data));
-                continue;
+            b'g' => {
+                return Err(unsafe_entry(
+                    "the archive has a global PAX header (`g`), which changes every later entry",
+                ));
             }
             _ => {}
         }
 
+        if let Some(declared) = pending.size
+            && declared != size
+        {
+            return Err(unsafe_entry(&format!(
+                "a PAX `size` of {declared} disagrees with the header's size of {size}"
+            )));
+        }
         let path = match pending.path.take() {
             Some(path) => path,
-            None => header_path(block),
+            None => header_path(block)?,
         };
+        pending = Pending::default();
         let normalized = normalize(&path).map_err(ArchiveError::Unsafe)?;
+        let directory = kind == b'5' || (kind == b'\0' && path.ends_with('/'));
         match kind {
-            b'0' | b'\0' | b'7' => {
-                let Some(normalized) = normalized else {
-                    return Err(ArchiveError::Unsafe(format!(
-                        "`{path}` is a file at the archive's root directory itself"
-                    )));
-                };
-                if directories.contains(&normalized) || files.contains_key(&normalized) {
-                    return Err(ArchiveError::Unsafe(format!(
-                        "`{normalized}` appears twice in the archive"
-                    )));
-                }
-                files.insert(normalized, data.to_vec());
-            }
-            b'5' => {
+            _ if directory => {
                 if let Some(normalized) = normalized {
                     if files.contains_key(&normalized) {
-                        return Err(ArchiveError::Unsafe(format!(
+                        return Err(unsafe_entry(&format!(
                             "`{normalized}` appears twice in the archive"
                         )));
                     }
                     directories.push(normalized);
                 }
             }
+            b'0' | b'\0' | b'7' => {
+                let Some(normalized) = normalized else {
+                    return Err(unsafe_entry(&format!(
+                        "`{path}` is a file at the archive's root directory itself"
+                    )));
+                };
+                if directories.contains(&normalized) || files.contains_key(&normalized) {
+                    return Err(unsafe_entry(&format!(
+                        "`{normalized}` appears twice in the archive"
+                    )));
+                }
+                files.insert(normalized, data.to_vec());
+            }
             b'1' | b'2' | b'K' => {
-                return Err(ArchiveError::Unsafe(format!(
+                return Err(unsafe_entry(&format!(
                     "`{path}` is a link; a package archive holds only files and directories"
                 )));
             }
             b'3' | b'4' | b'6' => {
-                return Err(ArchiveError::Unsafe(format!(
+                return Err(unsafe_entry(&format!(
                     "`{path}` is a device or a FIFO; a package archive holds only files and directories"
                 )));
             }
             other => {
-                return Err(ArchiveError::Unsafe(format!(
-                    "`{path}` has entry type `{}`, which the registry does not accept",
+                return Err(unsafe_entry(&format!(
+                    "`{path}` has entry type `{}`; a package archive holds only files and directories",
                     char::from(other).escape_debug()
                 )));
             }
@@ -304,20 +321,62 @@ fn walk(tar: &[u8]) -> Result<Files, ArchiveError> {
     Ok(files)
 }
 
-/// The path in a header: `prefix/name` for `ustar`, `name` otherwise.
-fn header_path(block: &[u8]) -> String {
-    let name = c_string(&block[..100]);
-    let ustar = &block[257..262] == b"ustar";
-    let prefix = if ustar {
-        c_string(&block[345..500])
-    } else {
-        String::new()
-    };
-    if prefix.is_empty() {
+/// Apply one PAX header's records to the next entry.
+fn apply_pax(
+    pending: &mut Pending,
+    records: Vec<(String, String)>,
+    start: usize,
+) -> Result<(), ArchiveError> {
+    for (key, value) in records {
+        match key.as_str() {
+            "path" => pending.path = Some(value),
+            "size" => {
+                pending.size = Some(
+                    value
+                        .parse()
+                        .map_err(|_| malformed_at(start, "has a PAX size that is not a number"))?,
+                );
+            }
+            "linkpath" => {
+                return Err(unsafe_entry(
+                    "the archive contains a link (a PAX `linkpath`)",
+                ));
+            }
+            key if key.starts_with("GNU.sparse") => {
+                return Err(unsafe_entry(
+                    "the archive contains a sparse file (a PAX `GNU.sparse` record)",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn unsafe_entry(message: &str) -> ArchiveError {
+    ArchiveError::Unsafe(message.to_owned())
+}
+
+/// The path in a header: `prefix/name` whenever the prefix field is not
+/// empty, with or without the `ustar` magic, because Python applies it so.
+fn header_path(block: &[u8]) -> Result<String, ArchiveError> {
+    let name = utf8_name(&block[..100])?;
+    let prefix = utf8_name(&block[345..500])?;
+    Ok(if prefix.is_empty() {
         name
     } else {
         format!("{prefix}/{name}")
-    }
+    })
+}
+
+/// A NUL-terminated name, which must be UTF-8.
+fn utf8_name(bytes: &[u8]) -> Result<String, ArchiveError> {
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    String::from_utf8(bytes[..end].to_vec())
+        .map_err(|_| unsafe_entry("an entry's name is not UTF-8"))
 }
 
 /// Normalize an entry path: `./` and repeated `/` are dropped. `None` is the
@@ -386,14 +445,6 @@ fn octal(field: &[u8]) -> Option<usize> {
         return Some(0);
     }
     usize::from_str_radix(text, 8).ok()
-}
-
-fn c_string(bytes: &[u8]) -> String {
-    let end = bytes
-        .iter()
-        .position(|byte| *byte == 0)
-        .unwrap_or(bytes.len());
-    String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
 /// PAX records: `<length> <key>=<value>\n`, the length counting the whole record.
@@ -563,5 +614,74 @@ mod tests {
             read(&raw_archive(&[bad_sum])),
             Err(ArchiveError::Malformed(_))
         ));
+    }
+
+    fn pax_data(key: &str, value: &str) -> Vec<u8> {
+        let body = format!(" {key}={value}\n");
+        let mut length = body.len() + 1;
+        while format!("{length}{body}").len() != length {
+            length += 1;
+        }
+        format!("{length}{body}").into_bytes()
+    }
+
+    #[test]
+    fn read_refuses_what_python_tarfile_could_read_differently() {
+        let cases: Vec<(&str, Vec<Vec<u8>>)> = vec![
+            (
+                "a PAX size that disagrees with the header",
+                vec![
+                    raw_entry("p", b'x', &pax_data("size", "512")),
+                    raw_entry("a.md", b'0', b"x"),
+                ],
+            ),
+            (
+                "a sparse file",
+                vec![
+                    raw_entry("p", b'x', &pax_data("GNU.sparse.map", "0,1")),
+                    raw_entry("a.md", b'0', b"x"),
+                ],
+            ),
+            (
+                "a PAX header and a long name before one entry",
+                vec![
+                    raw_entry("p", b'x', &pax_data("comment", "hi")),
+                    raw_entry("././@LongLink", b'L', b"b.md\0"),
+                    raw_entry("a.md", b'0', b"x"),
+                ],
+            ),
+            (
+                "a PAX header that describes no entry",
+                vec![raw_entry("p", b'x', &pax_data("path", "a.md"))],
+            ),
+            (
+                "a name that is not UTF-8",
+                vec![raw_entry("a\u{80}", b'0', b"x")],
+            ),
+            ("a GNU sparse entry", vec![raw_entry("s.md", b'S', b"")]),
+        ];
+        for (label, entries) in cases {
+            let mut entries = entries;
+            if label == "a name that is not UTF-8" {
+                // Replace the UTF-8 encoding of U+0080 with a lone 0x80 byte.
+                entries[0][1] = 0x80;
+                entries[0][2] = 0;
+                let mut header = [0u8; BLOCK];
+                header.copy_from_slice(&entries[0][..BLOCK]);
+                header[148..156].copy_from_slice(b"        ");
+                let sum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
+                entries[0][148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+            }
+            assert!(
+                matches!(read(&raw_archive(&entries)), Err(ArchiveError::Unsafe(_))),
+                "{label}"
+            );
+        }
+        // One PAX header whose size agrees with the header is fine.
+        let agreeing = raw_archive(&[
+            raw_entry("p", b'x', &pax_data("size", "1")),
+            raw_entry("a.md", b'0', b"x"),
+        ]);
+        assert_eq!(read(&agreeing).unwrap()["a.md"], b"x");
     }
 }

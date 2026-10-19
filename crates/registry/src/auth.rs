@@ -8,7 +8,11 @@
 //! - no credential: an anonymous read of a public shelf is allowed;
 //!   anything else is `401`, never `403`, so a client can tell "auth
 //!   required" from "not authorized";
-//! - a credential the host does not know, or cannot parse: `401`;
+//! - a credential the host does not know, or cannot parse: `401`, even on a
+//!   public shelf, as the API's section 3.1 has it ("missing/invalid
+//!   token"), so a revoked key fails loudly rather than reading as anonymous;
+//! - a known key reads a public shelf whatever its scopes, because APM sends
+//!   its configured key on every request;
 //! - a known key without the scope the route needs: `403`, naming it.
 
 use crate::identity::{PackageId, Route};
@@ -168,6 +172,12 @@ pub fn decide(route: &Route, access: &Access, public: bool) -> Decision {
             Decision::Unauthenticated("the credential is not a key this registry knows".to_owned())
         }
         Access::Key { scopes } if scopes.iter().any(|scope| scope.allows(route)) => Decision::Allow,
+        // A known key reads what anyone may read. APM sends its configured
+        // token on every request to a registry, so a publish-only key, or one
+        // scoped to another package, must not break installs from a public
+        // shelf. (The API's fixture 9.5.2, a key without `read` refused with
+        // 403, therefore holds for private shelves only.)
+        Access::Key { .. } if route.is_read() && public => Decision::Allow,
         Access::Key { .. } => Decision::Forbidden(required(route)),
     }
 }
@@ -254,9 +264,28 @@ mod tests {
             Decision::Allow
         );
         assert_eq!(
-            decide(&list("acme/x"), &key(&["publish:acme/*"]), true),
+            decide(&list("acme/x"), &key(&["publish:acme/*"]), false),
             Decision::Forbidden(vec!["read".to_owned(), "read:acme/x".to_owned()])
         );
+    }
+
+    #[test]
+    fn a_known_key_reads_a_public_shelf_whatever_its_scopes_and_an_unknown_one_does_not() {
+        for scopes in [&["publish:acme/*"][..], &["read:other/y"][..]] {
+            assert_eq!(decide(&list("acme/x"), &key(scopes), true), Decision::Allow);
+            assert!(matches!(
+                decide(&list("acme/x"), &key(scopes), false),
+                Decision::Forbidden(_)
+            ));
+        }
+        assert!(matches!(
+            decide(&publish("acme/x"), &key(&["read:other/y"]), true),
+            Decision::Forbidden(_)
+        ));
+        assert!(matches!(
+            decide(&list("acme/x"), &Access::Invalid, true),
+            Decision::Unauthenticated(_)
+        ));
     }
 
     #[test]

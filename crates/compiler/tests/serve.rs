@@ -213,19 +213,76 @@ fn a_private_shelf_answers_a_request_without_a_key_with_401_not_403() {
 }
 
 #[test]
-fn serve_refuses_a_malformed_key_without_printing_it() {
-    // Runs the shelfkit binary itself.
-    #[allow(clippy::disallowed_methods)]
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_shelfkit"))
-        .arg("--shelf")
-        .arg(repository_root().join("shelf"))
-        .args(["serve", "--port", "0", "--key", "write=hunter2"])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("is not a scope"), "{stderr}");
-    assert!(!stderr.contains("hunter2"), "{stderr}");
+fn serve_refuses_a_malformed_key_without_printing_any_part_of_it() {
+    // Each entry, and the secret in it that must not appear.
+    for (entry, secret) in [
+        ("write=hunter2", "hunter2"),
+        ("s3cr3t-token=read", "s3cr3t-token"),
+        ("hunter2", "hunter2"),
+        ("read:../x=hunter2", "hunter2"),
+    ] {
+        // Runs the shelfkit binary itself.
+        #[allow(clippy::disallowed_methods)]
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_shelfkit"))
+            .arg("--shelf")
+            .arg(repository_root().join("shelf"))
+            .args(["serve", "--port", "0", "--key", entry])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{entry}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("not `SCOPES=KEY`"), "{stderr}");
+        assert!(!stderr.contains(secret), "`{secret}` was printed: {stderr}");
+        assert!(!stderr.contains(entry), "`{entry}` was printed: {stderr}");
+    }
+}
+
+/// Read what the server sends back on `stream`, waiting at most `wait`.
+fn status_within(stream: &mut TcpStream, wait: std::time::Duration) -> Option<u16> {
+    stream.set_read_timeout(Some(wait)).unwrap();
+    let mut raw = Vec::new();
+    let _ = stream.read_to_end(&mut raw);
+    let head = String::from_utf8_lossy(&raw);
+    head.split(' ').nth(1)?.parse().ok()
+}
+
+#[test]
+fn a_client_that_trickles_its_request_is_cut_off_at_the_deadline() {
+    let shelf = repository_root().join("shelf");
+    let server = Server::start(&shelf, &["--request-timeout", "1"], "");
+    let address = server.url.strip_prefix("http://").unwrap().to_owned();
+    let mut stream = TcpStream::connect(&address).unwrap();
+    let started = std::time::Instant::now();
+    // A byte every 300 ms: each read succeeds, the request never completes.
+    for byte in b"GET /v1/packages/hebilicious/default/versions HTTP/1.1\r\n"
+        .iter()
+        .take(5)
+    {
+        stream.write_all(&[*byte]).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    let status = status_within(&mut stream, std::time::Duration::from_secs(5));
+    assert_eq!(status, Some(408));
+    assert!(started.elapsed() < std::time::Duration::from_secs(4));
+}
+
+#[test]
+fn a_connection_over_the_limit_is_refused_with_503() {
+    let shelf = repository_root().join("shelf");
+    let server = Server::start(&shelf, &["--max-connections", "1"], "");
+    let address = server.url.strip_prefix("http://").unwrap().to_owned();
+    // One idle connection holds the only slot.
+    let _held = TcpStream::connect(&address).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let mut second = TcpStream::connect(&address).unwrap();
+    assert_eq!(
+        status_within(&mut second, std::time::Duration::from_secs(5)),
+        Some(503)
+    );
+    drop(_held);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let path = "/v1/packages/hebilicious/default/versions";
+    assert_eq!(server.send(&get(path, &[])).status, 200);
 }
 
 /// M1's exit criterion as a test: APM installs a profile from `shelfkit

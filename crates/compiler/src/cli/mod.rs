@@ -241,6 +241,12 @@ struct ServeArgs {
     /// A key, as `SCOPES=KEY`. Repeatable. Prefer SHELFKIT_SERVE_KEYS.
     #[arg(long = "key", value_name = "SCOPES=KEY")]
     keys: Vec<String>,
+    /// Seconds a client has to send a whole request; a slower one gets 408.
+    #[arg(long, default_value_t = 30, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..))]
+    request_timeout: u64,
+    /// Connections served at once; one more gets 503.
+    #[arg(long, default_value_t = 64, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    max_connections: u64,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -1234,7 +1240,7 @@ fn serve_command(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &ServeArgs
     let key_count = keys.len();
     let mut store = MemoryStore::new();
     store.add_shelf(&namespace, public);
-    let mut registry = Registry { store, keys };
+    let mut registry = Registry::new(store, keys);
 
     let listener = serve::bind(args.port)
         .map_err(|error| format!("cannot listen on 127.0.0.1:{}: {error}", args.port))?;
@@ -1310,6 +1316,10 @@ fn serve_command(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &ServeArgs
 
     let shared = Arc::new(Mutex::new(registry));
     let log: Arc<Mutex<dyn Write + Send>> = Arc::new(Mutex::new(std::io::stderr()));
-    serve::run(&listener, &shared, &log);
+    let limits = serve::Limits {
+        request_timeout: std::time::Duration::from_secs(args.request_timeout),
+        max_connections: usize::try_from(args.max_connections).unwrap_or(usize::MAX),
+    };
+    serve::run(&listener, &shared, &log, limits);
     Ok(())
 }

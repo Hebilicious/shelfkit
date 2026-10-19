@@ -39,11 +39,13 @@
 //! - `shelfkit_package()`: the same request as `shelfkit_plan`; the output is
 //!   the profile packaged for a registry, as `crate::package` describes,
 //!   with the archive in base64 (`archive`), or `1` and the errors.
-//! - `shelfkit_registry_prepare()`: `{ "method", "path", "authorization"? }`.
+//! - `shelfkit_registry_prepare()`: `{ "method", "path", "mount"?,
+//!   "authorization"? }`, where `path` is the whole request path and `mount`
+//!   the part the registry's base URL adds (`/apm`; empty by default).
 //!   The output is `{ "respond": <response> }` when the registry answers by
 //!   itself, or `{ "route": <route>, "credential": { "kind": "none" |
 //!   "unreadable" } | { "kind": "key", "key" } }` for the host to resolve.
-//! - `shelfkit_registry_respond()`: `{ "method", "path", "access", "context",
+//! - `shelfkit_registry_respond()`: `{ "method", "path", "mount"?, "access", "context",
 //!   "contentType"?, "ifNoneMatch"?, "body"? (base64), "now" }`, where
 //!   `access` is `shelfkit_registry::Access` and `context` is
 //!   `shelfkit_registry::Context`. The output is `{ "response", "publish"? }`.
@@ -75,7 +77,7 @@ pub enum Status {
 }
 
 /// The ABI's version, for a host to check before it calls anything else.
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 4;
 
 /// The largest request the module accepts, in bytes.
 pub const MAX_INPUT: u32 = 512 * 1024 * 1024;
@@ -272,6 +274,9 @@ pub fn package(input: &[u8]) -> (Status, Vec<u8>) {
 struct PrepareInput {
     method: String,
     path: String,
+    /// The path the registry's base URL adds, as `/apm`; empty at the root.
+    #[serde(default)]
+    mount: String,
     #[serde(default)]
     authorization: Option<String>,
 }
@@ -285,6 +290,7 @@ pub fn registry_prepare(input: &[u8]) -> (Status, Vec<u8>) {
     let output = match protocol::prepare(
         &request.method,
         &request.path,
+        &request.mount,
         request.authorization.as_deref(),
     ) {
         Prepared::Respond(response) => serde_json::json!({ "respond": response }),
@@ -314,6 +320,8 @@ pub fn registry_prepare(input: &[u8]) -> (Status, Vec<u8>) {
 struct RespondInput {
     method: String,
     path: String,
+    #[serde(default)]
+    mount: String,
     access: Access,
     context: Context,
     #[serde(default)]
@@ -339,7 +347,7 @@ pub fn registry_respond(input: &[u8]) -> (Status, Vec<u8>) {
             None => return bad_request("`body` is not valid base64".to_owned()),
         },
     };
-    let route = match protocol::prepare(&request.method, &request.path, None) {
+    let route = match protocol::prepare(&request.method, &request.path, &request.mount, None) {
         Prepared::Route { route, .. } => route,
         Prepared::Respond(response) => {
             let output = serde_json::json!({ "response": response });

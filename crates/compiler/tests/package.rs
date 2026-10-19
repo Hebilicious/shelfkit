@@ -176,10 +176,7 @@ fn a_packaged_profile_passes_the_registrys_publish_validation() {
     .unwrap();
     let mut store = MemoryStore::new();
     store.add_shelf(&packaged.owner, packaged.public);
-    let mut registry = Registry {
-        store,
-        keys: MemoryKeys::new(),
-    };
+    let mut registry = Registry::new(store, MemoryKeys::new());
     let package = PackageId::parse(&packaged.package).unwrap();
     let now = "2026-10-19T12:00:00Z";
     let created = registry.publish(&package, &packaged.version, packaged.archive.clone(), now);

@@ -14,8 +14,9 @@ use shelfkit_registry::host::{HttpResponse, MemoryKeys, MemoryStore, Registry, R
 use shelfkit_registry::{PackageId, Scope, archive};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The environment variable `serve` reads keys from: whitespace-separated
 /// `SCOPES=KEY` entries, as `--key` takes them.
@@ -27,19 +28,22 @@ const MAX_HEAD: usize = 64 * 1024;
 /// Parse one `SCOPES=KEY` entry: comma-separated scopes, then the key.
 /// The key is everything after the first `=`, so it may contain `=`.
 pub fn parse_key(entry: &str) -> Result<(String, Vec<Scope>), String> {
-    let Some((scopes, key)) = entry.split_once('=') else {
-        return Err(
-            "a key is `SCOPES=KEY`, as `read,publish:acme/*=<key>` (the key itself is not shown)"
-                .to_owned(),
-        );
+    // No part of a malformed entry is echoed: a key written the wrong way
+    // round would otherwise be printed as a scope.
+    let malformed = || {
+        "not `SCOPES=KEY` with scopes from `read`, `read:{owner}/{repo}`, `publish:{owner}/{repo}`, and \
+         `publish:{owner}/*`, as `read,publish:acme/*=<key>` (the entry is not shown, since it holds a key)"
+            .to_owned()
     };
+    let (scopes, key) = entry.split_once('=').ok_or_else(malformed)?;
     if key.is_empty() {
-        return Err(format!("the key for `{scopes}` is empty"));
+        return Err(malformed());
     }
     let scopes = scopes
         .split(',')
         .map(Scope::parse)
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| malformed())?;
     Ok((key.to_owned(), scopes))
 }
 
@@ -51,24 +55,102 @@ pub fn bind(port: u16) -> std::io::Result<TcpListener> {
     TcpListener::bind((Ipv4Addr::LOCALHOST, port))
 }
 
-/// Serve until the process ends, logging one line per request (method,
-/// path, status; never a header) to `log`.
-pub fn run(listener: &TcpListener, registry: &Shared, log: &Arc<Mutex<dyn Write + Send>>) {
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
-        let registry = Arc::clone(registry);
-        let log = Arc::clone(log);
-        std::thread::spawn(move || connection(stream, &registry, &log));
+/// How much of the machine one client may hold.
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    /// The whole request (head and body) must arrive within this, however
+    /// slowly it trickles; a client that is slower gets `408`.
+    pub request_timeout: Duration,
+    /// Connections served at once; one more gets `503` at once.
+    pub max_connections: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            request_timeout: Duration::from_secs(30),
+            max_connections: 64,
+        }
     }
 }
 
-fn connection(stream: TcpStream, registry: &Shared, log: &Arc<Mutex<dyn Write + Send>>) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
+/// Serve until the process ends, logging one line per request (method,
+/// path, status; never a header) to `log`.
+pub fn run(
+    listener: &TcpListener,
+    registry: &Shared,
+    log: &Arc<Mutex<dyn Write + Send>>,
+    limits: Limits,
+) {
+    let open = Arc::new(AtomicUsize::new(0));
+    for stream in listener.incoming() {
+        let Ok(mut stream) = stream else { continue };
+        if open.fetch_add(1, Ordering::SeqCst) >= limits.max_connections {
+            open.fetch_sub(1, Ordering::SeqCst);
+            let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+            let mut busy = error(
+                503,
+                "busy",
+                "Too many connections",
+                "the registry is serving as many connections as it allows; retry shortly",
+            );
+            busy.headers
+                .push(("Retry-After".to_owned(), "1".to_owned()));
+            let _ = write_response(&mut stream, &busy);
+            continue;
+        }
+        let guard = Open(Arc::clone(&open));
+        let registry = Arc::clone(registry);
+        let log = Arc::clone(log);
+        std::thread::spawn(move || {
+            connection(stream, &registry, &log, limits.request_timeout);
+            drop(guard);
+        });
+    }
+}
+
+/// One open connection, counted until it is dropped.
+struct Open(Arc<AtomicUsize>);
+
+impl Drop for Open {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// A socket whose reads all end by one deadline: each read waits only for
+/// what is left of it, so a client trickling a byte at a time cannot hold a
+/// thread past the deadline.
+struct Deadline {
+    stream: TcpStream,
+    deadline: Instant,
+}
+
+impl Read for Deadline {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::Error::from(std::io::ErrorKind::TimedOut));
+        }
+        self.stream.set_read_timeout(Some(left))?;
+        self.stream.read(buf)
+    }
+}
+
+fn connection(
+    stream: TcpStream,
+    registry: &Shared,
+    log: &Arc<Mutex<dyn Write + Send>>,
+    timeout: Duration,
+) {
+    let _ = stream.set_write_timeout(Some(timeout));
     let Ok(writer) = stream.try_clone() else {
         return;
     };
-    let mut reader = BufReader::new(stream);
+    let mut reader = BufReader::new(Deadline {
+        stream,
+        deadline: Instant::now() + timeout,
+    });
     let mut writer = writer;
     let (line, response) = match read_request(&mut reader, &mut writer) {
         Ok(request) => {
@@ -87,9 +169,26 @@ fn connection(stream: TcpStream, registry: &Shared, log: &Arc<Mutex<dyn Write + 
     let _ = write_response(&mut writer, &response);
 }
 
+/// A failed read: `408` when the deadline passed, `400` otherwise.
+fn read_failed(error: &std::io::Error, detail: &str) -> Box<HttpResponse> {
+    if matches!(
+        error.kind(),
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+    ) {
+        Box::new(self::error(
+            408,
+            "request-timeout",
+            "Request timeout",
+            "the request did not arrive in time",
+        ))
+    } else {
+        bad_request(detail)
+    }
+}
+
 /// Read one request: the head, then a `Content-Length` body.
 fn read_request(
-    reader: &mut BufReader<TcpStream>,
+    reader: &mut BufReader<Deadline>,
     writer: &mut TcpStream,
 ) -> Result<Request, Box<HttpResponse>> {
     let mut head = Vec::new();
@@ -99,7 +198,7 @@ fn read_request(
             .by_ref()
             .take((MAX_HEAD - head.len()) as u64 + 1)
             .read_until(b'\n', &mut line)
-            .map_err(|_| bad_request("the request could not be read"))?;
+            .map_err(|e| read_failed(&e, "the request could not be read"))?;
         if read == 0 {
             return Err(bad_request(
                 "the connection closed before the request ended",
@@ -168,7 +267,7 @@ fn read_request(
         let mut body = vec![0; length];
         reader
             .read_exact(&mut body)
-            .map_err(|_| bad_request("the body is shorter than its Content-Length"))?;
+            .map_err(|e| read_failed(&e, "the body is shorter than its Content-Length"))?;
         request.body = body;
     }
     Ok(request)
@@ -205,12 +304,14 @@ fn reason(status: u16) -> &'static str {
         403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        408 => "Request Timeout",
         409 => "Conflict",
         411 => "Length Required",
         413 => "Content Too Large",
         415 => "Unsupported Media Type",
         422 => "Unprocessable Content",
         431 => "Request Header Fields Too Large",
+        503 => "Service Unavailable",
         505 => "HTTP Version Not Supported",
         _ => "Internal Server Error",
     }

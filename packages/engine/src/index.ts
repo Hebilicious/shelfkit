@@ -21,7 +21,7 @@ import * as v from "valibot";
 export type ProfileDocument = v.InferInput<typeof ProfileSchema>;
 
 /** The ABI this port speaks; the module reports its own through `shelfkit_abi_version`. */
-export const ABI_VERSION = 3;
+export const ABI_VERSION = 4;
 
 /** One file of a shelf, by its path relative to the shelf root. Bytes that are not UTF-8 text go as a `Uint8Array`. */
 export type ShelfFile = ShelfContent | ShelfLink;
@@ -163,7 +163,10 @@ export interface RegistryContext {
 
 export interface RespondRequest {
   readonly method: string;
+  /** The whole request path, as given to `prepare`. */
   readonly path: string;
+  /** The same mount as given to `prepare`. */
+  readonly mount?: string;
   readonly access: RegistryAccess;
   readonly context: RegistryContext;
   readonly contentType?: string;
@@ -434,7 +437,10 @@ const OutcomeSchema = v.strictObject({
 /** What `shelfkit_registry_prepare` reads. */
 interface PrepareRequest {
   readonly method: string;
+  /** The whole request path, mount included. */
   readonly path: string;
+  /** The path the registry's base URL adds, as `/apm`; the root by default. URLs in responses keep it. */
+  readonly mount?: string;
   readonly authorization?: string;
 }
 

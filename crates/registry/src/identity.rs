@@ -109,6 +109,15 @@ pub fn check_version(version: &str) -> Result<(), String> {
     if version.len() > 256 {
         return Err("the version is longer than 256 bytes".to_owned());
     }
+    // A version is a path segment on every host. `.` and `..` are dot
+    // segments a URL parser removes (the Worker would route them elsewhere),
+    // and `/` (or `\\`) would split it: refused, so every host agrees.
+    if version == "." || version == ".." {
+        return Err(format!("the version `{version}` is a dot segment"));
+    }
+    if version.contains('/') || version.contains('\\') {
+        return Err(format!("the version `{version}` contains a path separator"));
+    }
     Ok(())
 }
 
@@ -315,10 +324,15 @@ mod tests {
                 version: "0.0.0+abc".to_owned()
             })
         );
-        assert!(matches!(
-            route("PUT", "/v1/packages/a/b/versions/%0A"),
-            Err(RouteError::Invalid(_))
-        ));
+        for version in ["%0A", "%2E%2E", "%2e", "a%2Fb", "a%5Cb"] {
+            assert!(
+                matches!(
+                    route("PUT", &format!("/v1/packages/a/b/versions/{version}")),
+                    Err(RouteError::Invalid(_))
+                ),
+                "{version}"
+            );
+        }
     }
 
     #[test]

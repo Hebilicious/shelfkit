@@ -9,9 +9,17 @@
       "digest": "sha256:83bb9e0b0f71c3c52d990621a1defaa9dd9ef1db5c234eaa25600e52937cfe1f",
       "file": "archives/web-1.0.0.tar.gz"
     },
+    "web-1.0.0+build.1": {
+      "digest": "sha256:857f44bc8b10aafc950c818e302c026fea04a6e6f3508a007195e523996ddb44",
+      "file": "archives/web-1.0.0+build.1.tar.gz"
+    },
     "web-1.0.0-absolute-path": {
       "digest": "sha256:52ef4d50d24f04d2cc774482cda67be0c7b2795ff104f296ec1aaf038d29fbd9",
       "file": "archives/web-1.0.0-absolute-path.tar.gz"
+    },
+    "web-1.0.0-global-pax-path": {
+      "digest": "sha256:5e4b27252543e4ffc66dc512d81818e247b2b846d782f8f166c17cefeacb6449",
+      "file": "archives/web-1.0.0-global-pax-path.tar.gz"
     },
     "web-1.0.0-named-other": {
       "digest": "sha256:46fd762904a8e6bd0ed5cdd59f369dd037e8f80cf42ef59cf6f2ed1382c3d79f",
@@ -25,8 +33,16 @@
       "digest": "sha256:d0fc4dec2ad153746eb301b63e9b8139efedee65ac396cfb71d1add35f7da743",
       "file": "archives/web-1.0.0-other.tar.gz"
     },
+    "web-1.0.0-pax-size-smuggles-a-link": {
+      "digest": "sha256:5bb8596c9c22637b8c3460368a0460a2586f2218179c075899cfc966efabb1a3",
+      "file": "archives/web-1.0.0-pax-size-smuggles-a-link.tar.gz"
+    },
+    "web-1.0.0-prefix-without-magic": {
+      "digest": "sha256:c5d526b727ebe24f5b4111cc929b17bdfe4f9af22fda36a71b62d0d97cf6f692",
+      "file": "archives/web-1.0.0-prefix-without-magic.tar.gz"
+    },
     "web-1.0.0-symlink": {
-      "digest": "sha256:58a724f9e244b82a79fd6a645fad1ba7944738bea5c3082060a0a2381a8ee689",
+      "digest": "sha256:e4b496b53ca6a10d67e8a30eebf135b18f967bd26fad2a5c173b06d2ebb3f404",
       "file": "archives/web-1.0.0-symlink.tar.gz"
     },
     "web-1.0.0-traversal": {
@@ -36,6 +52,10 @@
     "web-1.0.0-truncated-gzip": {
       "digest": "sha256:11ed2f11e984cf7ebb1c8e4549cbf42c1cc5d22c0d4b53e8cad88adbb62b4edc",
       "file": "archives/web-1.0.0-truncated-gzip.tar.gz"
+    },
+    "web-1.0.0-two-pax-paths": {
+      "digest": "sha256:2a76b467d4c640bfb498c6cec373ca469759997cd45223863c4722f17a2d5e29",
+      "file": "archives/web-1.0.0-two-pax-paths.tar.gz"
     },
     "web-1.0.0-zip": {
       "digest": "sha256:86b9143a7b90185b2a5bfdeeddebd450c118a1a6479308261a9d2a4a2b3ae586",
@@ -214,6 +234,19 @@
         },
         {
           "expect": {
+            "status": 304
+          },
+          "name": "a weak validator matches too (RFC 9110 weak comparison)",
+          "request": {
+            "headers": {
+              "If-None-Match": "W/\"sha256:83bb9e0b0f71c3c52d990621a1defaa9dd9ef1db5c234eaa25600e52937cfe1f\""
+            },
+            "method": "GET",
+            "path": "/v1/packages/acme/web/versions/1.0.0/download"
+          }
+        },
+        {
+          "expect": {
             "json": {
               "package": "acme/web",
               "versions": [
@@ -357,6 +390,47 @@
             "problem": true,
             "status": 409
           },
+          "name": "the same version under different letter case is 409",
+          "request": {
+            "auth": {
+              "bearer": "publisher"
+            },
+            "body": {
+              "archive": "web-1.0.0-other"
+            },
+            "headers": {
+              "Content-Type": "application/gzip"
+            },
+            "method": "PUT",
+            "path": "/v1/packages/ACME/Web/versions/1.0.0"
+          }
+        },
+        {
+          "expect": {
+            "json": {
+              "package": "Acme/WEB",
+              "versions": [
+                {
+                  "digest": "$digest:web-1.0.0",
+                  "published_at": "$any",
+                  "size_bytes": "$size:web-1.0.0",
+                  "version": "1.0.0"
+                }
+              ]
+            },
+            "status": 200
+          },
+          "name": "a listing under different letter case is the same package",
+          "request": {
+            "method": "GET",
+            "path": "/v1/packages/Acme/WEB/versions"
+          }
+        },
+        {
+          "expect": {
+            "problem": true,
+            "status": 409
+          },
           "name": "a different body of another type is still 409",
           "request": {
             "auth": {
@@ -411,6 +485,126 @@
           "request": {
             "method": "GET",
             "path": "/v1/packages/acme/web/versions/1.0.0/download"
+          }
+        }
+      ]
+    },
+    {
+      "keys": [
+        {
+          "key": "conformance-publisher-key",
+          "name": "publisher",
+          "scopes": [
+            "publish:acme/*",
+            "read"
+          ]
+        }
+      ],
+      "name": "a version with build metadata",
+      "public": true,
+      "steps": [
+        {
+          "expect": {
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "json": {
+              "digest": "$digest:web-1.0.0+build.1",
+              "package": "acme/web",
+              "published_at": "$any",
+              "size_bytes": "$size:web-1.0.0+build.1",
+              "version": "1.0.0+build.1"
+            },
+            "status": 201
+          },
+          "name": "publish 1.0.0+build.1 with the + percent-encoded",
+          "request": {
+            "auth": {
+              "bearer": "publisher"
+            },
+            "body": {
+              "archive": "web-1.0.0+build.1"
+            },
+            "headers": {
+              "Content-Type": "application/gzip"
+            },
+            "method": "PUT",
+            "path": "/v1/packages/acme/web/versions/1.0.0%2Bbuild.1"
+          }
+        },
+        {
+          "expect": {
+            "json": {
+              "package": "acme/web",
+              "versions": [
+                {
+                  "digest": "$digest:web-1.0.0+build.1",
+                  "published_at": "$any",
+                  "size_bytes": "$size:web-1.0.0+build.1",
+                  "version": "1.0.0+build.1"
+                }
+              ]
+            },
+            "status": 200
+          },
+          "name": "the listing has the version as published",
+          "request": {
+            "method": "GET",
+            "path": "/v1/packages/acme/web/versions"
+          }
+        },
+        {
+          "expect": {
+            "body": {
+              "archive": "web-1.0.0+build.1"
+            },
+            "headers": {
+              "Content-Type": "application/gzip",
+              "ETag": "$etag:web-1.0.0+build.1"
+            },
+            "status": 200
+          },
+          "name": "download with the + percent-encoded, as APM sends it",
+          "request": {
+            "method": "GET",
+            "path": "/v1/packages/acme/web/versions/1.0.0%2Bbuild.1/download"
+          }
+        },
+        {
+          "expect": {
+            "body": {
+              "archive": "web-1.0.0+build.1"
+            },
+            "headers": {
+              "Content-Type": "application/gzip",
+              "ETag": "$etag:web-1.0.0+build.1"
+            },
+            "status": 200
+          },
+          "name": "download with a literal + names the same version",
+          "request": {
+            "method": "GET",
+            "path": "/v1/packages/acme/web/versions/1.0.0+build.1/download"
+          }
+        },
+        {
+          "expect": {
+            "problem": true,
+            "status": 409
+          },
+          "name": "the same version again is 409",
+          "request": {
+            "auth": {
+              "bearer": "publisher"
+            },
+            "body": {
+              "archive": "web-1.0.0+build.1"
+            },
+            "headers": {
+              "Content-Type": "application/gzip"
+            },
+            "method": "PUT",
+            "path": "/v1/packages/acme/web/versions/1.0.0%2Bbuild.1"
           }
         }
       ]
@@ -566,7 +760,9 @@
           "expect": {
             "json": {
               "extensions": {
-                "errors": "$any"
+                "errors": [
+                  "the archive has no apm.yml at its root"
+                ]
               }
             },
             "problem": true,
@@ -591,7 +787,9 @@
           "expect": {
             "json": {
               "extensions": {
-                "errors": "$any"
+                "errors": [
+                  "apm.yml declares version `9.9.9`, but the archive is published as `2.0.0`; the two must match"
+                ]
               }
             },
             "problem": true,
@@ -616,7 +814,9 @@
           "expect": {
             "json": {
               "extensions": {
-                "errors": "$any"
+                "errors": [
+                  "apm.yml names the package `other`, but it is published as `acme/web`, whose repo is `web`"
+                ]
               }
             },
             "problem": true,
@@ -641,7 +841,9 @@
           "expect": {
             "json": {
               "extensions": {
-                "errors": "$any"
+                "errors": [
+                  "`/tmp/escape.md` is an absolute path"
+                ]
               }
             },
             "problem": true,
@@ -666,7 +868,9 @@
           "expect": {
             "json": {
               "extensions": {
-                "errors": "$any"
+                "errors": [
+                  "`../escape.md` climbs out of the package with `..`"
+                ]
               }
             },
             "problem": true,
@@ -691,7 +895,9 @@
           "expect": {
             "json": {
               "extensions": {
-                "errors": "$any"
+                "errors": [
+                  "`link.md` is a link; a package archive holds only files and directories"
+                ]
               }
             },
             "problem": true,
@@ -704,6 +910,114 @@
             },
             "body": {
               "archive": "web-1.0.0-symlink"
+            },
+            "headers": {
+              "Content-Type": "application/gzip"
+            },
+            "method": "PUT",
+            "path": "/v1/packages/acme/web/versions/1.0.0"
+          }
+        },
+        {
+          "expect": {
+            "json": {
+              "extensions": {
+                "errors": [
+                  "a `x` header follows a `x` header before any entry; one PAX or long-name header may describe an entry"
+                ]
+              }
+            },
+            "problem": true,
+            "status": 422
+          },
+          "name": "two PAX headers before one entry are 422",
+          "request": {
+            "auth": {
+              "bearer": "publisher"
+            },
+            "body": {
+              "archive": "web-1.0.0-two-pax-paths"
+            },
+            "headers": {
+              "Content-Type": "application/gzip"
+            },
+            "method": "PUT",
+            "path": "/v1/packages/acme/web/versions/1.0.0"
+          }
+        },
+        {
+          "expect": {
+            "json": {
+              "extensions": {
+                "errors": [
+                  "the archive has a global PAX header (`g`), which changes every later entry"
+                ]
+              }
+            },
+            "problem": true,
+            "status": 422
+          },
+          "name": "a global PAX header is 422",
+          "request": {
+            "auth": {
+              "bearer": "publisher"
+            },
+            "body": {
+              "archive": "web-1.0.0-global-pax-path"
+            },
+            "headers": {
+              "Content-Type": "application/gzip"
+            },
+            "method": "PUT",
+            "path": "/v1/packages/acme/web/versions/1.0.0"
+          }
+        },
+        {
+          "expect": {
+            "json": {
+              "extensions": {
+                "errors": [
+                  "a `x` header follows a `x` header before any entry; one PAX or long-name header may describe an entry"
+                ]
+              }
+            },
+            "problem": true,
+            "status": 422
+          },
+          "name": "a PAX size override that hides a link is 422",
+          "request": {
+            "auth": {
+              "bearer": "publisher"
+            },
+            "body": {
+              "archive": "web-1.0.0-pax-size-smuggles-a-link"
+            },
+            "headers": {
+              "Content-Type": "application/gzip"
+            },
+            "method": "PUT",
+            "path": "/v1/packages/acme/web/versions/1.0.0"
+          }
+        },
+        {
+          "expect": {
+            "json": {
+              "extensions": {
+                "errors": [
+                  "`../evil.md` climbs out of the package with `..`"
+                ]
+              }
+            },
+            "problem": true,
+            "status": 422
+          },
+          "name": "a `..` prefix in a header without the ustar magic is 422",
+          "request": {
+            "auth": {
+              "bearer": "publisher"
+            },
+            "body": {
+              "archive": "web-1.0.0-prefix-without-magic"
             },
             "headers": {
               "Content-Type": "application/gzip"
@@ -1213,7 +1527,165 @@
       ]
     },
     {
-      "keys": [],
+      "keys": [
+        {
+          "key": "conformance-publish-only-key",
+          "name": "publish-only",
+          "scopes": [
+            "publish:acme/*"
+          ]
+        },
+        {
+          "key": "conformance-other-reader-key",
+          "name": "other-reader",
+          "scopes": [
+            "read:acme/other"
+          ]
+        }
+      ],
+      "name": "keys presented to a public shelf",
+      "public": true,
+      "steps": [
+        {
+          "expect": {
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "json": {
+              "digest": "$digest:web-1.0.0",
+              "package": "acme/web",
+              "published_at": "$any",
+              "size_bytes": "$size:web-1.0.0",
+              "version": "1.0.0"
+            },
+            "status": 201
+          },
+          "name": "publish 1.0.0",
+          "request": {
+            "auth": {
+              "bearer": "publish-only"
+            },
+            "body": {
+              "archive": "web-1.0.0"
+            },
+            "headers": {
+              "Content-Type": "application/gzip"
+            },
+            "method": "PUT",
+            "path": "/v1/packages/acme/web/versions/1.0.0"
+          }
+        },
+        {
+          "expect": {
+            "json": {
+              "package": "acme/web",
+              "versions": [
+                {
+                  "digest": "$digest:web-1.0.0",
+                  "published_at": "$any",
+                  "size_bytes": "$size:web-1.0.0",
+                  "version": "1.0.0"
+                }
+              ]
+            },
+            "status": 200
+          },
+          "name": "a publish-only key reads the listing, as anonymous would",
+          "request": {
+            "auth": {
+              "bearer": "publish-only"
+            },
+            "method": "GET",
+            "path": "/v1/packages/acme/web/versions"
+          }
+        },
+        {
+          "expect": {
+            "body": {
+              "archive": "web-1.0.0"
+            },
+            "headers": {
+              "Content-Type": "application/gzip",
+              "ETag": "$etag:web-1.0.0"
+            },
+            "status": 200
+          },
+          "name": "a publish-only key downloads",
+          "request": {
+            "auth": {
+              "bearer": "publish-only"
+            },
+            "method": "GET",
+            "path": "/v1/packages/acme/web/versions/1.0.0/download"
+          }
+        },
+        {
+          "expect": {
+            "json": {
+              "package": "acme/web",
+              "versions": "$any"
+            },
+            "status": 200
+          },
+          "name": "a key scoped to another package reads, as anonymous would",
+          "request": {
+            "auth": {
+              "basic": "other-reader"
+            },
+            "method": "GET",
+            "path": "/v1/packages/acme/web/versions"
+          }
+        },
+        {
+          "expect": {
+            "problem": true,
+            "status": 403
+          },
+          "name": "a key scoped to another package still cannot publish",
+          "request": {
+            "auth": {
+              "bearer": "other-reader"
+            },
+            "body": {
+              "archive": "web-1.1.0"
+            },
+            "headers": {
+              "Content-Type": "application/gzip"
+            },
+            "method": "PUT",
+            "path": "/v1/packages/acme/web/versions/1.1.0"
+          }
+        },
+        {
+          "expect": {
+            "headers": {
+              "WWW-Authenticate": "$any"
+            },
+            "problem": true,
+            "status": 401
+          },
+          "name": "an unknown key is 401 even on a public shelf",
+          "request": {
+            "auth": {
+              "raw": "Bearer revoked-or-unknown"
+            },
+            "method": "GET",
+            "path": "/v1/packages/acme/web/versions"
+          }
+        }
+      ]
+    },
+    {
+      "keys": [
+        {
+          "name": "publisher",
+          "key": "conformance-publisher-key",
+          "scopes": [
+            "publish:acme/*",
+            "read"
+          ]
+        }
+      ],
       "name": "errors",
       "public": true,
       "steps": [
@@ -1276,6 +1748,26 @@
           "request": {
             "method": "GET",
             "path": "/v1/packages/web/versions"
+          }
+        },
+        {
+          "expect": {
+            "problem": true,
+            "status": 400
+          },
+          "name": "a version containing an encoded slash is 400",
+          "request": {
+            "auth": {
+              "bearer": "publisher"
+            },
+            "body": {
+              "archive": "web-1.0.0"
+            },
+            "headers": {
+              "Content-Type": "application/gzip"
+            },
+            "method": "PUT",
+            "path": "/v1/packages/acme/web/versions/a%2Fb"
           }
         }
       ]

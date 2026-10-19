@@ -120,10 +120,19 @@ pub struct Outcome {
     pub publish: Option<VersionRecord>,
 }
 
-/// Step 1: route the request and read its `Authorization` header.
-pub fn prepare(method: &str, path: &str, authorization: Option<&str>) -> Prepared {
+/// Step 1: route the request and read its `Authorization` header. `path` is
+/// the request's whole path, and `mount` the path the registry's base URL
+/// adds (`""` at the root, `/apm` for the Worker): the three routes are
+/// matched below it, and every URL a response carries (`instance`,
+/// `Location`) is built from the whole path, so it is right under any mount.
+pub fn prepare(method: &str, path: &str, mount: &str, authorization: Option<&str>) -> Prepared {
     let instance = path.split_once('?').map_or(path, |(path, _)| path);
-    match crate::identity::route(method, path) {
+    let mount = mount.trim_end_matches('/');
+    let relative = match path.strip_prefix(mount) {
+        Some(rest) if rest.starts_with('/') => rest,
+        _ => "",
+    };
+    match crate::identity::route(method, relative) {
         Ok(route) => Prepared::Route {
             route,
             credential: Credential::from_header(authorization),
@@ -160,7 +169,8 @@ pub fn prepare(method: &str, path: &str, authorization: Option<&str>) -> Prepare
     }
 }
 
-/// Step 2: decide the response.
+/// Step 2: decide the response. `instance` is the request's whole path, as
+/// given to [`prepare`].
 pub fn respond(
     route: &Route,
     instance: &str,
@@ -287,9 +297,11 @@ fn download(
         ),
     ];
     let matches = payload.if_none_match.is_some_and(|value| {
-        value
-            .split(',')
-            .any(|tag| tag.trim() == etag || tag.trim() == "*")
+        // RFC 9110 weak comparison: `W/"x"` matches `"x"`.
+        value.split(',').any(|tag| {
+            let tag = tag.trim();
+            tag == "*" || tag.strip_prefix("W/").unwrap_or(tag) == etag
+        })
     });
     if matches {
         return Response {

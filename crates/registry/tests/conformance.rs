@@ -96,8 +96,75 @@ fn the_library_passes_the_conformance_suite() {
                 .collect();
             keys.add(&key.key, scopes);
         }
-        let mut registry = Registry { store, keys };
+        let mut registry = Registry::new(store, keys);
         move |request| registry.handle(request, "2026-10-19T12:00:00Z")
     });
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The same suite with the registry mounted at `/apm`, as PRD 7.1 mounts
+/// it in the Worker: requests carry the mount, and so does every URL a
+/// response builds.
+#[test]
+fn the_library_passes_the_conformance_suite_under_a_mount() {
+    let (suite, archives) = load();
+    let failures = conformance::run(&suite, &archives, |scenario| {
+        let mut store = MemoryStore::new();
+        store.add_shelf(&suite.owner, scenario.public);
+        let mut keys = MemoryKeys::new();
+        for key in &scenario.keys {
+            let scopes = key
+                .scopes
+                .iter()
+                .map(|s| Scope::parse(s).unwrap())
+                .collect();
+            keys.add(&key.key, scopes);
+        }
+        let mut registry = Registry::new(store, keys);
+        registry.mount = "/apm".to_owned();
+        move |request: &shelfkit_registry::host::Request| {
+            let mut mounted = request.clone();
+            mounted.path = format!("/apm{}", request.path);
+            registry.handle(&mounted, "2026-10-19T12:00:00Z")
+        }
+    });
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn urls_in_responses_carry_the_mount() {
+    let (_, archives) = load();
+    let mut store = MemoryStore::new();
+    store.add_shelf("acme", true);
+    let mut registry = Registry::new(store, MemoryKeys::new());
+    registry.mount = "/apm".to_owned();
+    let package = shelfkit_registry::PackageId::parse("acme/web").unwrap();
+    let created = registry.publish(&package, "1.0.0", archives["web-1.0.0"].clone(), "now");
+    assert_eq!(created.status, 201);
+    assert_eq!(
+        created.header("location"),
+        Some("/apm/v1/packages/acme/web/versions/1.0.0/download")
+    );
+    let get = |path: &str| shelfkit_registry::host::Request {
+        method: "GET".to_owned(),
+        path: path.to_owned(),
+        ..shelfkit_registry::host::Request::default()
+    };
+    assert_eq!(
+        registry
+            .handle(&get("/apm/v1/packages/acme/web/versions"), "now")
+            .status,
+        200
+    );
+    let outside = registry.handle(&get("/v1/packages/acme/web/versions"), "now");
+    assert_eq!(outside.status, 404);
+    let missing = registry.handle(
+        &get("/apm/v1/packages/acme/web/versions/9.9.9/download"),
+        "now",
+    );
+    let body: serde_json::Value = serde_json::from_slice(&missing.body).unwrap();
+    assert_eq!(
+        body["instance"],
+        "/apm/v1/packages/acme/web/versions/9.9.9/download"
+    );
 }

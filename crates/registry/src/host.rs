@@ -73,13 +73,25 @@ impl HttpResponse {
     }
 }
 
-/// A registry over a store and a key set.
+/// A registry over a store and a key set, served below `mount`.
 pub struct Registry<S, K> {
     pub store: S,
     pub keys: K,
+    /// The path the base URL adds: `""` at the root, `/apm` under PRD 7.1's
+    /// mount. Request paths include it.
+    pub mount: String,
 }
 
 impl<S: Store, K: Keys> Registry<S, K> {
+    /// A registry at the root of its host.
+    pub fn new(store: S, keys: K) -> Self {
+        Self {
+            store,
+            keys,
+            mount: String::new(),
+        }
+    }
+
     /// Handle one request. `now` is the time a publish records, RFC 3339 UTC.
     pub fn handle(&mut self, request: &Request, now: &str) -> HttpResponse {
         self.dispatch(request, None, now)
@@ -98,7 +110,8 @@ impl<S: Store, K: Keys> Registry<S, K> {
         let request = Request {
             method: "PUT".to_owned(),
             path: format!(
-                "/v1/packages/{}/versions/{}",
+                "{}/v1/packages/{}/versions/{}",
+                self.mount,
                 package.path(),
                 crate::identity::encode(version)
             ),
@@ -118,6 +131,7 @@ impl<S: Store, K: Keys> Registry<S, K> {
         let prepared = protocol::prepare(
             &request.method,
             &request.path,
+            &self.mount,
             request.header("authorization"),
         );
         let (route, credential) = match prepared {

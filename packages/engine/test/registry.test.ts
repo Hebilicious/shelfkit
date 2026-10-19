@@ -102,7 +102,8 @@ function sender(url: string) {
 function memoryHost(
   engine: Engine,
   owner: string,
-  scenario: Scenario
+  scenario: Scenario,
+  mount = ""
 ): Started {
   const shelves = new Map([[owner.toLowerCase(), { public: scenario.public }]]);
   const keys = new Map(scenario.keys.map((key) => [key.key, key.scopes]));
@@ -138,10 +139,12 @@ function memoryHost(
   return {
     send: (request): ConformanceResponse => {
       const headers = toHeaders(request.headers);
+      const whole = `${mount}${request.path}`;
       const prepared = engine.registry.prepare({
         authorization: headers.get("authorization") ?? undefined,
         method: request.method,
-        path: request.path,
+        mount,
+        path: whole,
       });
       if ("respond" in prepared) {
         return toResponse(prepared.respond);
@@ -167,8 +170,9 @@ function memoryHost(
         },
         ifNoneMatch: headers.get("if-none-match") ?? undefined,
         method: request.method,
+        mount,
         now: "2026-10-19T12:00:00Z",
-        path: request.path,
+        path: whole,
       });
       if (outcome.publish !== undefined) {
         stored.push({
@@ -210,6 +214,14 @@ describe("the registry conformance suite", () => {
     const { suite, archives } = await loadConformanceSuite();
     const failures = await runConformance(suite, archives, (scenario) =>
       memoryHost(engine, suite.owner, scenario)
+    );
+    expect(failures).toStrictEqual([]);
+  });
+
+  it("passes against the engine mounted at /apm, as the Worker mounts it", async () => {
+    const { suite, archives } = await loadConformanceSuite();
+    const failures = await runConformance(suite, archives, (scenario) =>
+      memoryHost(engine, suite.owner, scenario, "/apm")
     );
     expect(failures).toStrictEqual([]);
   });

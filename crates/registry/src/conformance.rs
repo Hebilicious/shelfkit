@@ -463,31 +463,127 @@ pub fn archives() -> Result<BTreeMap<String, Vec<u8>>, String> {
         "web-1.0.0-zip".to_owned(),
         zip("apm.yml", manifest("web", "1.0.0").as_bytes()),
     );
+    out.insert(
+        "web-1.0.0+build.1".to_owned(),
+        packed(&[
+            ("apm.yml", manifest("web", "1.0.0+build.1").into_bytes()),
+            (rule, instructions("A build of 1.0.0.")),
+        ])?,
+    );
+    smuggling(&mut out, &manifest("web", "1.0.0"));
     Ok(out)
 }
 
 /// A tar entry with any type and name, which [`pack`] would never write.
 fn raw_entry(name: &str, kind: u8, data: &[u8]) -> Vec<u8> {
+    raw_header_entry(name, kind, data, data.len(), "", true)
+}
+
+/// A tar entry with full control of the header: its recorded `size`, its
+/// `ustar` prefix, and whether it carries the `ustar` magic at all.
+fn raw_header_entry(
+    name: &str,
+    kind: u8,
+    data: &[u8],
+    size: usize,
+    prefix: &str,
+    ustar: bool,
+) -> Vec<u8> {
     let mut header = [0u8; 512];
     header[..name.len()].copy_from_slice(name.as_bytes());
     header[100..108].copy_from_slice(b"0000644\0");
     header[108..116].copy_from_slice(b"0000000\0");
     header[116..124].copy_from_slice(b"0000000\0");
-    header[124..136].copy_from_slice(format!("{:011o}\0", data.len()).as_bytes());
+    header[124..136].copy_from_slice(format!("{size:011o}\0").as_bytes());
     header[136..148].copy_from_slice(b"00000000000\0");
     header[148..156].copy_from_slice(b"        ");
     header[156] = kind;
     if kind == b'2' {
-        header[157..157 + 10].copy_from_slice(b"/etc/hosts");
+        header[157..157 + 11].copy_from_slice(b"/etc/passwd");
     }
-    header[257..263].copy_from_slice(b"ustar\0");
-    header[263..265].copy_from_slice(b"00");
+    if ustar {
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+    }
+    header[345..345 + prefix.len()].copy_from_slice(prefix.as_bytes());
     let sum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
     header[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
     let mut entry = header.to_vec();
     entry.extend_from_slice(data);
     entry.resize(entry.len().div_ceil(512) * 512, 0);
     entry
+}
+
+/// The data of a PAX header: `<length> <key>=<value>\n` records, the length
+/// counting the whole record, its own digits included.
+fn pax_records(records: &[(&str, &str)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (key, value) in records {
+        let body = format!(" {key}={value}\n");
+        let mut length = body.len() + 1;
+        while format!("{length}{body}").len() != length {
+            length += 1;
+        }
+        out.extend_from_slice(format!("{length}{body}").as_bytes());
+    }
+    out
+}
+
+/// Archives that a strict reader and Python's `tarfile`, which APM 0.33.0
+/// extracts with, would read differently. Each starts with a valid `apm.yml`.
+fn smuggling(out: &mut BTreeMap<String, Vec<u8>>, manifest: &str) {
+    let archive = |entries: Vec<Vec<u8>>| {
+        let mut tar = raw_entry("apm.yml", b'0', manifest.as_bytes());
+        for entry in entries {
+            tar.extend(entry);
+        }
+        tar.resize(tar.len() + 1024, 0);
+        gzip(&tar)
+    };
+    // Two PAX headers before one entry: Python applies the first `path`.
+    out.insert(
+        "web-1.0.0-two-pax-paths".to_owned(),
+        archive(vec![
+            raw_entry(
+                "PaxHeader/a",
+                b'x',
+                &pax_records(&[("path", "../escape.md")]),
+            ),
+            raw_entry("PaxHeader/b", b'x', &pax_records(&[("path", "ok.md")])),
+            raw_entry("ok.md", b'0', b"ok"),
+        ]),
+    );
+    // A global PAX header: Python merges its `path` into every later entry.
+    out.insert(
+        "web-1.0.0-global-pax-path".to_owned(),
+        archive(vec![
+            raw_entry(
+                "GlobalHead",
+                b'g',
+                &pax_records(&[("path", "../global.md")]),
+            ),
+            raw_entry("PaxHeader/c", b'x', &pax_records(&[("comment", "hi")])),
+            raw_entry("ok3.md", b'0', b"ok"),
+        ]),
+    );
+    // Two PAX `size` overrides: the "data" of the file is, to Python, the
+    // header of a symbolic link to /etc/passwd.
+    let link = raw_entry("evil-link", b'2', b"");
+    out.insert(
+        "web-1.0.0-pax-size-smuggles-a-link".to_owned(),
+        archive(vec![
+            raw_entry("PaxHeader/d", b'x', &pax_records(&[("size", "0")])),
+            raw_entry("PaxHeader/e", b'x', &pax_records(&[("size", "512")])),
+            raw_header_entry("data.md", b'0', &link, link.len(), "", true),
+        ]),
+    );
+    // No `ustar` magic, but a prefix: Python applies it, making `../evil.md`.
+    out.insert(
+        "web-1.0.0-prefix-without-magic".to_owned(),
+        archive(vec![raw_header_entry(
+            "evil.md", b'0', b"x", 1, "..", false,
+        )]),
+    );
 }
 
 fn gzip(tar: &[u8]) -> Vec<u8> {
