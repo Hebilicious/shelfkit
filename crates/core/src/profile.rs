@@ -107,6 +107,13 @@ pub struct Profile {
     pub title: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
+    /// The semver this profile publishes as on a registry. A profile's
+    /// identity is its revision; a version exists only for publishing, and
+    /// without one the registry version is generated from the revision
+    /// (`docs/PRD.md` section 13, question 1). It is not inherited through
+    /// `extends`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     #[serde(default)]
     pub items: Vec<ItemRef>,
     /// Named item groups, expanded before `extends`.
@@ -196,9 +203,69 @@ pub struct Manifest {
     pub sources: Vec<ShelfSource>,
 }
 
+/// Whether `text` is a semantic version 2.0.0: `MAJOR.MINOR.PATCH`, numbers
+/// without leading zeros, then an optional `-pre.release` and `+build.meta`
+/// of dot-separated identifiers. APM's registry client reads exactly these
+/// as versions it can range-match and exact-match.
+pub fn is_semver(text: &str) -> bool {
+    let (rest, build) = match text.split_once('+') {
+        Some((rest, build)) => (rest, Some(build)),
+        None => (text, None),
+    };
+    let (core, pre) = match rest.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (rest, None),
+    };
+    let number = |part: &str| {
+        !part.is_empty()
+            && part.bytes().all(|b| b.is_ascii_digit())
+            && (part == "0" || !part.starts_with('0'))
+    };
+    let identifier = |part: &str| {
+        !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    };
+    let parts: Vec<&str> = core.split('.').collect();
+    parts.len() == 3
+        && parts.iter().all(|part| number(part))
+        && pre.is_none_or(|pre| {
+            pre.split('.').all(|part| {
+                identifier(part) && (!part.bytes().all(|b| b.is_ascii_digit()) || number(part))
+            })
+        })
+        && build.is_none_or(|build| build.split('.').all(identifier))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn semver_is_the_2_0_0_grammar() {
+        for good in [
+            "0.0.0",
+            "1.2.3",
+            "10.20.30",
+            "1.0.0-alpha.1",
+            "1.0.0+sha256.abc",
+            "1.0.0-rc.1+b.2",
+            "1.0.0-0a",
+        ] {
+            assert!(is_semver(good), "{good}");
+        }
+        for bad in [
+            "1.0",
+            "01.0.0",
+            "1.0.0-",
+            "1.0.0+",
+            "1.0.0-01",
+            "v1.0.0",
+            "1.0.0-a..b",
+            "1.0.0+a_b",
+            "",
+        ] {
+            assert!(!is_semver(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn item_refs_parse_pins() {

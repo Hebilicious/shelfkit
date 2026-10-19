@@ -41,6 +41,10 @@ export const ItemIdSchema = v.pipe(
   v.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u, "must be lowercase kebab-case")
 );
 
+/** Semantic Versioning 2.0.0, as the Rust `is_semver` checks it: no leading zeros, dot-separated identifiers. */
+const SEMVER =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*))*)?(?:\+[\dA-Za-z-]+(?:\.[\dA-Za-z-]+)*)?$/u;
+
 /** Profiles and bundles use the item id rules. */
 export const ProfileIdSchema = ItemIdSchema;
 
@@ -339,6 +343,10 @@ export const ProfileSchema = v.strictObject({
   id: ProfileIdSchema,
   items: v.array(ItemRefSchema),
   title: v.string(),
+  /** The semver the profile publishes as on a registry; without it, one is generated from the revision. */
+  version: v.optional(
+    v.pipe(v.string(), v.regex(SEMVER, "must be a semantic version"))
+  ),
 });
 
 export const ProfileSummarySchema = v.strictObject({

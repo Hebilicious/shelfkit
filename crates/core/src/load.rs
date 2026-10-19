@@ -819,6 +819,17 @@ impl Loader<'_> {
                     }
                 }
             }
+            if let Some(version) = &profile.version
+                && !crate::profile::is_semver(version)
+            {
+                self.invalid(
+                    path.clone(),
+                    format!(
+                        "`version` `{version}` is not a semantic version (`MAJOR.MINOR.PATCH`, with an \
+                         optional `-prerelease` and `+build`)"
+                    ),
+                );
+            }
             if profile
                 .compile
                 .name
