@@ -23,7 +23,10 @@ apps/
 crates/
   core/        the shelf format: loading, validation, revisions, resolution
   compiler/    profile to apm.yml, plus the `shelfkit` binary
+  registry/    the OpenAPM Registry HTTP API, shared by `shelfkit serve` and the Worker
+  wasm/        the crates as a WebAssembly module
 packages/
+  engine/      the typed port over the WebAssembly module
   schema/      boundary validation shared by the Worker and the CLI
   tokens/      CSSForge design tokens
 shelf/         ShelfKit's own shelf, describing how ShelfKit is built
@@ -48,6 +51,18 @@ moon run worker:setup  # provision a Cloudflare account and deploy
 ```
 
 `moon run :build` and friends run a task in every project that defines it. `moon query tasks` lists every task.
+
+## A shelf as a registry
+
+`shelfkit serve` publishes every profile of a shelf as `{registry.namespace}/{profile}` and serves the OpenAPM Registry HTTP API on `http://127.0.0.1:7878`, in memory. APM installs from it with its experimental registry client:
+
+```bash
+shelfkit --shelf shelf serve           # prints the apm.yml lines that install each profile
+apm experimental enable registries     # once, in APM's own configuration
+apm install                            # in a repository whose apm.yml declares the printed registry and id
+```
+
+A profile publishes at its `version`, or at `0.0.0+sha256.<profile revision>` when it has none, and a version is immutable. APM sends no credentials over plain http, so it installs only from a public shelf on loopback. Without the flag, `shelfkit compile` and `apm install` take the Git and vendored path.
 
 ## Self-hosting
 
