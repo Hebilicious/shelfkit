@@ -8,14 +8,17 @@
  * - The Worker has already authenticated the request (`src/auth/index.ts`): `session` is never `invalid`, because an
  *   unknown, malformed, or revoked key is answered `401` before this handler runs. It may be `anonymous`, which reads
  *   public shelves only.
- * - Each capability is one call on the shelf's object (`src/shelf-index.ts`), addressed by the input's `shelf` with
- *   `shelfStub(env, shelf)`: `search`, `recommend`, `getProfile`, `getItem`, `planCompile`, and `report`, each taking
- *   `(session, shelf, input)` and answering `{ ok: true, value }` with the capability's output or `{ ok: false,
- *   failure }` with one of its failures. A shelf the session cannot read answers `ShelfNotFound`.
- * - The relay: a hosted MCP item is one whose item.json has `"flavour": "hosted"`. A session may call its tools when
- *   `mayRelay(access(session, shelf, isPublic), item)` holds: the owner, or a key with the scope `mcp:{shelf}/{item}`
- *   (`src/auth/scopes.ts`). Tools are namespaced `<item>__<tool>`. The item's `headers` values that are `{ "secret":
- *   "NAME" }` resolve with `resolveSecret` (`src/secrets.ts`), and never reach the caller.
+ * - Each capability is one call on the shelf's object (`src/shelf-index.ts`), reached with `existingShelf(env, shelf)`
+ *   (`src/auth/index.ts`), which answers `null` for a shelf the deployment does not hold without creating its object;
+ *   answer `ShelfNotFound` then. The methods are `search`, `recommend`, `getProfile`, `getItem`, `planCompile`, and
+ *   `report`, each taking `(session, shelf, input)` and answering `{ ok: true, value }` with the capability's output or
+ *   `{ ok: false, failure }` with one of its failures. A shelf the session cannot read answers `ShelfNotFound`.
+ * - The relay: a hosted MCP item is one whose item.json has `"flavour": "hosted"`. `relayable(session, shelf)` lists
+ *   the hosted items the session may relay (the owner, or a key with the scope `mcp:{shelf}/{item}`); tools are
+ *   namespaced `<item>__<tool>`. `relayHeaders(session, shelf, item)` answers where to send a call and its headers,
+ *   with each `{ "secret": "NAME" }` resolved inside the object by the secret rule (`src/secrets.ts`): only to the
+ *   origin the owner bound `NAME` to. It fails with `SecretUnavailable` rather than release a credential elsewhere or
+ *   call without it. Resolved headers go upstream only, never to the caller.
  */
 import type { Session } from "../auth/index.ts";
 import { problem } from "../http.ts";

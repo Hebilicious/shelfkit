@@ -273,8 +273,13 @@ describe("the MCP capabilities, as object methods", () => {
     expect(found.ok ? null : found.failure._tag).toBe("ShelfNotFound");
   });
 
-  it("list only the hosted MCP items a key was granted, with the shelf's secret names", async () => {
-    await stub().putSecretName(owner, "kit", "LINEAR_API_KEY");
+  it("list only the hosted MCP items a key was granted, and the secret names only to a reader", async () => {
+    await stub().putSecretName(
+      owner,
+      "kit",
+      "LINEAR_API_KEY",
+      "https://mcp.linear.app"
+    );
     const granted = await createKey("kit", ["mcp:kit/linear"]);
     const plain = await createKey("kit", ["read"]);
     const relay = await stub().relayable(
@@ -282,9 +287,10 @@ describe("the MCP capabilities, as object methods", () => {
       "kit"
     );
     expect(relay?.servers.map((server) => server.id)).toStrictEqual(["linear"]);
-    expect(relay?.secretNames).toStrictEqual(["LINEAR_API_KEY"]);
+    expect(relay?.secretNames).toStrictEqual([]);
     const none = await stub().relayable(asKey(plain.id, ["read"]), "kit");
     expect(none?.servers).toStrictEqual([]);
+    expect(none?.secretNames).toStrictEqual(["LINEAR_API_KEY"]);
   });
 });
 
@@ -560,7 +566,7 @@ describe("the GraphQL API", () => {
     const decoder = new TextDecoder();
     await reader.read();
     await stub().setFavourite(owner, "kit", "linear", true);
-    await stub().putSecretName(owner, "kit", "TOKEN");
+    await stub().putSecretName(owner, "kit", "TOKEN", "https://mcp.linear.app");
     const { value } = await reader.read();
     expect(decoder.decode(value)).toContain('"kind":"settings"');
     await reader.cancel();
@@ -590,7 +596,7 @@ describe("GraphQL subscriptions", () => {
     const decoder = new TextDecoder();
     const received: string[] = [];
     // The subscription is open once the object has a subscriber; then a change arrives as an event.
-    await stub().putSecretName(owner, "kit", "FIRST");
+    await stub().putSecretName(owner, "kit", "FIRST", "https://mcp.linear.app");
     for (
       let attempt = 0;
       attempt < 20 && !received.join("").includes("shelfChanged");
@@ -602,7 +608,12 @@ describe("GraphQL subscriptions", () => {
         decoder.decode(v.parse(v.instance(Uint8Array), read.value))
       );
       // oxlint-disable-next-line eslint/no-await-in-loop -- each change is made after the stream is read.
-      await stub().putSecretName(owner, "kit", `SECOND_${attempt}`);
+      await stub().putSecretName(
+        owner,
+        "kit",
+        `SECOND_${attempt}`,
+        "https://mcp.linear.app"
+      );
     }
     await reader.cancel();
     expect(received.join("")).toContain('"kind":"settings"');

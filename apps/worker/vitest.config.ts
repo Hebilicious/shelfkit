@@ -63,6 +63,9 @@ export default defineConfig({
           OWNER_KEY_HASH: createHash("sha256")
             .update(TEST_OWNER_KEY)
             .digest("hex"),
+          // Test values for the secret rule: each is released only to the origin its name is bound to.
+          SHELFKIT_SECRET_GITHUB_TOKEN: "test-github-token",
+          SHELFKIT_SECRET_LINEAR_API_KEY: "test-linear-token",
         },
       },
       wrangler: { configPath: "./wrangler.jsonc" },

@@ -10,13 +10,13 @@ import type {
 } from "@shelfkit/importers";
 import * as v from "valibot";
 
-import { shelfStub } from "../auth/index.ts";
+import { listShelves, shelfStub } from "../auth/index.ts";
 import type { Session } from "../auth/index.ts";
 import { GitHubForge } from "../forge/github.ts";
 import { indexFromForge } from "../forge/index.ts";
 import type { Forge } from "../forge/index.ts";
-import { secretBinding } from "../secrets.ts";
-import { SHELF_MARKERS } from "../shelf-index.ts";
+import { resolveSecret } from "../secrets.ts";
+import type { SecretBindingRecord } from "../secrets.ts";
 import { JobMessageSchema } from "./messages.ts";
 import type { JobMessage } from "./messages.ts";
 
@@ -25,30 +25,53 @@ export interface JobDependencies {
   readonly adapters: readonly SourceAdapter[];
   readonly scanners: readonly Scanner[];
   readonly forge: Forge;
-  readonly context: AdapterContext;
+  readonly fetch: typeof fetch;
+  readonly now: () => string;
 }
 
 export function jobDependencies(env: Env): JobDependencies {
   return {
     adapters,
-    context: {
-      fetch: async (input, init) => await fetch(input, init),
-      now: () => `${new Date().toISOString().slice(0, 19)}Z`,
-      // BOUNDARY: a binding read by name is untyped until this checks that it is a string.
-      secret: (name) => {
-        const value: unknown = Object.getOwnPropertyDescriptor(
-          env,
-          secretBinding(name)
-        )?.value;
-        return typeof value === "string" ? value : undefined;
-      },
-    },
+    fetch: async (input, init) => await fetch(input, init),
     forge: new GitHubForge(
       async (input, init) => await fetch(input, init),
       env.GITHUB_TOKEN
     ),
+    now: () => `${new Date().toISOString().slice(0, 19)}Z`,
     scanners,
   };
+}
+
+/**
+ * The context an adapter or a scanner runs with, for one destination: `secret(name)` releases a secret only by the
+ * secret rule (`src/secrets.ts`): the shelf lists the name, and the owner bound it to the destination's origin. A
+ * destination of `null` (no URL to send to) releases nothing.
+ */
+export function adapterContext(
+  env: Env,
+  dependencies: JobDependencies,
+  bindings: readonly SecretBindingRecord[],
+  destination: string | null
+): AdapterContext {
+  return {
+    fetch: dependencies.fetch,
+    now: dependencies.now,
+    secret: (name) =>
+      destination === null
+        ? undefined
+        : resolveSecret(env, bindings, name, destination),
+  };
+}
+
+/** Where a source sends its requests: its URL, or its Git repository's when that is a URL. */
+function sourceDestination(source: {
+  readonly url?: string;
+  readonly repo?: string;
+}): string | null {
+  return (
+    source.url ??
+    (source.repo?.startsWith("https://") === true ? source.repo : null)
+  );
 }
 
 export async function consume(batch: MessageBatch, env: Env): Promise<void> {
@@ -132,7 +155,11 @@ async function discoverImport(
     return;
   }
   try {
-    const found = await adapter.discover(job.source, dependencies.context);
+    const bindings = await stub.secretBindings(session, message.shelf);
+    const found = await adapter.discover(
+      job.source,
+      adapterContext(env, dependencies, bindings, sourceDestination(job.source))
+    );
     await stub.discovered(session, message.shelf, message.job, found);
   } catch (error) {
     await stub.discovered(session, message.shelf, message.job, {
@@ -159,6 +186,13 @@ async function applyImport(
     return;
   }
   try {
+    const bindings = await stub.secretBindings(session, message.shelf);
+    const context = adapterContext(
+      env,
+      dependencies,
+      bindings,
+      sourceDestination(job.source)
+    );
     const candidates = new Map(
       job.candidates.map((candidate) => [candidate.key, candidate])
     );
@@ -168,12 +202,7 @@ async function applyImport(
         if (candidate === undefined) {
           throw new Error(`no candidate ${pick.candidate}`);
         }
-        return await adapter.fetch(
-          job.source,
-          candidate,
-          pick,
-          dependencies.context
-        );
+        return await adapter.fetch(job.source, candidate, pick, context);
       })
     );
     const committed = await stub.applyImport(
@@ -204,6 +233,7 @@ async function checkUpstream(
 ): Promise<void> {
   const session: Session = { job: message.type, kind: "system" };
   const stub = shelfStub(env, message.shelf);
+  const bindings = await stub.secretBindings(session, message.shelf);
   for (const imported of await stub.importedItems(session, message.shelf)) {
     const adapter =
       imported.sourceKind === null
@@ -216,7 +246,12 @@ async function checkUpstream(
       // oxlint-disable-next-line eslint/no-await-in-loop -- one upstream at a time, to be gentle with each source.
       const state = await adapter.checkUpstream(
         imported.item,
-        dependencies.context
+        adapterContext(
+          env,
+          dependencies,
+          bindings,
+          sourceDestination(imported.item.source ?? {})
+        )
       );
       // oxlint-disable-next-line eslint/no-await-in-loop -- recorded as it is learned.
       await stub.recordUpstream(session, message.shelf, imported.id, state);
@@ -259,7 +294,8 @@ async function scanItem(
         item,
         revision,
       },
-      dependencies.context
+      // A scanner reads what it is given and is given no secret.
+      adapterContext(env, dependencies, [], null)
     );
     // oxlint-disable-next-line eslint/no-await-in-loop -- recorded as it arrives.
     await stub.recordScan(
@@ -295,16 +331,7 @@ async function indexForge(
 
 /** The hourly cron: queue an upstream check for every shelf the deployment holds. */
 export async function scheduled(env: Env): Promise<void> {
-  const shelves: string[] = [];
-  let cursor: string | undefined;
-  do {
-    // oxlint-disable-next-line eslint/no-await-in-loop -- R2 lists a page at a time.
-    const page = await env.BLOBS.list({ cursor, prefix: SHELF_MARKERS });
-    shelves.push(
-      ...page.objects.map((object) => object.key.slice(SHELF_MARKERS.length))
-    );
-    cursor = page.truncated ? page.cursor : undefined;
-  } while (cursor !== undefined);
+  const shelves = await listShelves(env);
   for (let start = 0; start < shelves.length; start += 100) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- a batch holds at most 100 messages.
     await env.JOBS.sendBatch(

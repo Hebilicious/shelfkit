@@ -142,3 +142,26 @@ export interface KeyRecord {
 }
 
 export type { CompilePlan as Plan } from "@shelfkit/schema";
+
+/** Where the MCP relay sends a call to a hosted item, with its credentials resolved. Never returned to a client. */
+export interface RelayTarget {
+  readonly item: string;
+  readonly url: string;
+  readonly transport: "http" | "sse" | "streamable-http";
+  readonly tools: readonly string[];
+  /** Literal headers, and each secret header's value, released only to `url`'s origin. */
+  readonly headers: Readonly<Record<string, string>>;
+}
+
+/** Why the relay may not call a hosted item. */
+export type RelayRefused =
+  | {
+      readonly _tag: "NotRelayable";
+      readonly item: string;
+      readonly message: string;
+    }
+  | {
+      readonly _tag: "SecretUnavailable";
+      readonly secrets: readonly string[];
+      readonly message: string;
+    };

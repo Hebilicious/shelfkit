@@ -49,19 +49,27 @@ import { DurableObject } from "cloudflare:workers";
 import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import * as v from "valibot";
 
+import { SHELF_MARKERS } from "./auth/index.ts";
 import {
   displayPrefix,
   newShareToken,
   newShelfKey,
   secretHash,
 } from "./auth/keys.ts";
-import { parseScope, registryScopes } from "./auth/scopes.ts";
-import { access, mayEditProfile, mayRelay } from "./auth/session.ts";
+import { parseScope } from "./auth/scopes.ts";
+import {
+  access,
+  mayEditProfile,
+  mayRelay,
+  registryAccess,
+} from "./auth/session.ts";
 import type { Session, ShelfAccess } from "./auth/session.ts";
 import { migrateDatabase, openDatabase } from "./db/migrate.ts";
 import type { ShelfDatabase } from "./db/migrate.ts";
 import * as table from "./db/schema.ts";
 import { engine } from "./engine.ts";
+import { resolveSecret, secretOrigin } from "./secrets.ts";
+import type { SecretBindingRecord } from "./secrets.ts";
 import type {
   Committed,
   CompileFailed,
@@ -86,6 +94,8 @@ import type {
   ShelfProblem,
   SnapshotFile,
   SnapshotRecord,
+  RelayRefused,
+  RelayTarget,
 } from "./shelf/api.ts";
 import {
   bodyText,
@@ -96,8 +106,14 @@ import {
   isShelfPath,
   manifestText,
 } from "./shelf/files.ts";
-import { bodySnippet, ftsQuery, SEARCH_SQL } from "./shelf/search.ts";
 import {
+  bodySnippet,
+  ftsQuery,
+  queryWords,
+  SEARCH_SQL,
+} from "./shelf/search.ts";
+import {
+  archiveKey,
   isSha256Hex,
   objectKey,
   putObject,
@@ -106,9 +122,6 @@ import {
 
 /** The registry's mount on the Worker: packages are `/apm/v1/packages/...`. */
 export const REGISTRY_MOUNT = "/apm";
-
-/** Where the Worker lists the shelves it holds, one empty marker object each, for the cron and the owner's list. */
-export const SHELF_MARKERS = "shelves/";
 
 /** The time, RFC 3339 UTC to the second. */
 function now(): string {
@@ -321,12 +334,17 @@ interface Loaded {
 
 const encoder = new TextEncoder();
 
+/** The full-text index's layout: rebuilt when the stored version is not this. */
+const SEARCH_INDEX_VERSION = "contentless-1";
+
 export class ShelfIndex extends DurableObject<Env> {
   private readonly db: ShelfDatabase;
   private loaded: Loaded | undefined;
   private readonly plans = new Map<string, Plan | CompileFailed>();
-  private readonly subscribers = new Set<
-    WritableStreamDefaultWriter<Uint8Array>
+  /** Each open event stream, with the session that opened it, which is checked again before every event. */
+  private readonly subscribers = new Map<
+    WritableStreamDefaultWriter<Uint8Array>,
+    Session
   >();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -334,9 +352,9 @@ export class ShelfIndex extends DurableObject<Env> {
     this.db = openDatabase(ctx.storage);
     // There is no CLI path to a Durable Object's SQLite, so the schema is migrated here, before any request reaches
     // the object. `PRAGMA user_version` is unsupported, so the version is recorded explicitly (`src/db/migrate.ts`).
-    // oxlint-disable-next-line eslint/require-await -- blockConcurrencyWhile takes an async callback; migrating is synchronous.
     void ctx.blockConcurrencyWhile(async () => {
       migrateDatabase(ctx.storage);
+      await this.rebuildSearchIndex();
     });
   }
 
@@ -602,19 +620,47 @@ export class ShelfIndex extends DurableObject<Env> {
     return { files, snapshot };
   }
 
-  /** Whether the shelf references the R2 object `sha256`, so `session` may download it. */
+  /**
+   * Whether a committed snapshot of the shelf references the R2 object `sha256`, so `session` may download it. An
+   * upload no commit took is not served: a refused push leaves nothing readable.
+   */
   mayReadObject(session: Session, shelf: string, sha256: string): boolean {
     const granted = this.reader(session, shelf);
     if ("ok" in granted) {
       return false;
     }
-    return (
-      this.db
-        .select({ sha256: table.blob.sha256 })
-        .from(table.blob)
-        .where(eq(table.blob.sha256, sha256))
-        .get() !== undefined
-    );
+    return this.referenced([sha256]).length === 1;
+  }
+
+  /**
+   * Which of `hashes` a committed snapshot of the shelf has ever referenced: content the service has, now or in its
+   * history. `shelfkit fetch` uses it to tell a local file it may replace from local work it must not.
+   */
+  referencedObjects(
+    session: Session,
+    shelf: string,
+    hashes: readonly string[]
+  ): string[] | null {
+    const granted = this.reader(session, shelf);
+    if ("ok" in granted) {
+      return null;
+    }
+    return this.referenced(hashes);
+  }
+
+  private referenced(hashes: readonly string[]): string[] {
+    const wanted = [...new Set(hashes)].filter((hash) => isSha256Hex(hash));
+    if (wanted.length === 0) {
+      return [];
+    }
+    return this.db
+      .select({ sha256: table.blob.sha256 })
+      .from(table.blob)
+      .where(
+        and(inArray(table.blob.sha256, wanted), eq(table.blob.referenced, 1))
+      )
+      .all()
+      .map((row) => row.sha256);
   }
 
   /**
@@ -938,8 +984,13 @@ export class ShelfIndex extends DurableObject<Env> {
       .run();
     this.db
       .insert(table.blob)
-      .values({ createdAt: stamp, sha256: manifestHash, size: manifestSize })
-      .onConflictDoNothing()
+      .values({
+        createdAt: stamp,
+        referenced: 1,
+        sha256: manifestHash,
+        size: manifestSize,
+      })
+      .onConflictDoUpdate({ set: { referenced: 1 }, target: table.blob.sha256 })
       .run();
 
     this.db.delete(table.file).run();
@@ -947,6 +998,11 @@ export class ShelfIndex extends DurableObject<Env> {
       this.db
         .insert(table.file)
         .values({ path, ...entry })
+        .run();
+      this.db
+        .update(table.blob)
+        .set({ referenced: 1 })
+        .where(eq(table.blob.sha256, entry.sha256))
         .run();
     }
 
@@ -1002,27 +1058,14 @@ export class ShelfIndex extends DurableObject<Env> {
         })
         .onConflictDoNothing()
         .run();
-      this.ctx.storage.sql.exec(
-        "DELETE FROM item_search WHERE item_id = ?",
-        item.id
-      );
-      this.ctx.storage.sql.exec(
-        "INSERT INTO item_search (item_id, title, description, tags, body) VALUES (?, ?, ?, ?, ?)",
-        item.id,
-        item.title,
-        item.description ?? "",
-        (item.tags ?? []).join(" "),
-        bodyText(entry.path, entry.files, contents)
-      );
+      this.indexText(item, bodyText(entry.path, entry.files, contents));
     }
     const removed = [...before.keys()];
     for (const id of removed) {
       this.db.delete(table.item).where(eq(table.item.id, id)).run();
-      this.ctx.storage.sql.exec(
-        "DELETE FROM item_search WHERE item_id = ?",
-        id
-      );
+      this.unindexText(id);
     }
+    this.setMeta("search_index", SEARCH_INDEX_VERSION);
 
     const profilesBefore = new Map(
       this.db
@@ -1128,16 +1171,77 @@ export class ShelfIndex extends DurableObject<Env> {
     });
   }
 
+  /**
+   * Index an item's text in the contentless full-text table: its terms are kept, its text is not. The rowid comes from
+   * `item_search_row`, which maps it back to the item.
+   */
+  private indexText(item: Item, body: string): void {
+    this.unindexText(item.id);
+    this.db.insert(table.itemSearchRow).values({ itemId: item.id }).run();
+    const row = this.db
+      .select({ rowid: table.itemSearchRow.rowid })
+      .from(table.itemSearchRow)
+      .where(eq(table.itemSearchRow.itemId, item.id))
+      .get();
+    this.ctx.storage.sql.exec(
+      "INSERT INTO item_search (rowid, title, description, tags, body) VALUES (?, ?, ?, ?, ?)",
+      row?.rowid ?? null,
+      item.title,
+      item.description ?? "",
+      (item.tags ?? []).join(" "),
+      body
+    );
+  }
+
+  private unindexText(itemId: string): void {
+    const row = this.db
+      .select({ rowid: table.itemSearchRow.rowid })
+      .from(table.itemSearchRow)
+      .where(eq(table.itemSearchRow.itemId, itemId))
+      .get();
+    if (row !== undefined) {
+      this.ctx.storage.sql.exec(
+        "DELETE FROM item_search WHERE rowid = ?",
+        row.rowid
+      );
+      this.db
+        .delete(table.itemSearchRow)
+        .where(eq(table.itemSearchRow.itemId, itemId))
+        .run();
+    }
+  }
+
+  /**
+   * Rebuild the full-text index from the current snapshot when this code's index is not there yet: after the
+   * migration that made it contentless, it is empty.
+   */
+  private async rebuildSearchIndex(): Promise<void> {
+    if (
+      this.shelfId() === null ||
+      this.metaValue("search_index") === SEARCH_INDEX_VERSION
+    ) {
+      return;
+    }
+    const contents = await this.contents();
+    const items = this.db.select().from(table.item).all();
+    this.ctx.storage.transactionSync(() => {
+      for (const row of items) {
+        this.indexText(row.document, bodyText(row.path, row.files, contents));
+      }
+      this.setMeta("search_index", SEARCH_INDEX_VERSION);
+    });
+  }
+
   // --- The six MCP capabilities ------------------------------------------------------------------------------------
 
   /** `shelf.search`: items by text over titles, descriptions, tags, and bodies, filtered by kind and tag. */
-  search(
+  async search(
     session: Session,
     shelf: string,
     input: SearchInput
-  ): Outcome<SearchOutput, ShelfNotFound> {
+  ): Promise<Outcome<SearchOutput, ShelfNotFound>> {
     const limit = input.limit ?? 20;
-    const found = this.inventory(session, shelf, {
+    const found = await this.inventory(session, shelf, {
       kinds: input.kinds,
       limit,
       query: input.query,
@@ -1153,11 +1257,11 @@ export class ShelfIndex extends DurableObject<Env> {
   }
 
   /** The Shelf screen's list: every item, or those matching `query`, filtered by kind and tag. */
-  inventory(
+  async inventory(
     session: Session,
     shelf: string,
     input: InventoryInput
-  ): Outcome<InventoryOutput, ShelfNotFound> {
+  ): Promise<Outcome<InventoryOutput, ShelfNotFound>> {
     const granted = this.reader(session, shelf);
     if ("ok" in granted) {
       return granted;
@@ -1177,11 +1281,17 @@ export class ShelfIndex extends DurableObject<Env> {
         .toSorted((a, b) => compare(a.kind, b.kind) || compare(a.id, b.id))
         .map((row) => ({ id: row.id }));
     } else {
+      const contents = await this.contents();
+      const words = queryWords(input.query ?? "");
       ordered = this.ctx.storage.sql
-        .exec<{ id: string; snippet: string | null }>(SEARCH_SQL, query)
+        .exec<{ id: string }>(SEARCH_SQL, query)
         .toArray()
         .map((row) => {
-          const snippet = bodySnippet(row.snippet);
+          const item = byId.get(row.id);
+          const snippet =
+            item === undefined
+              ? undefined
+              : bodySnippet(bodyText(item.path, item.files, contents), words);
           return snippet === undefined
             ? { id: row.id }
             : { id: row.id, snippet };
@@ -2105,7 +2215,8 @@ export class ShelfIndex extends DurableObject<Env> {
     const sha256 = await putObject(
       this.env.BLOBS,
       request.body,
-      "application/gzip"
+      "application/gzip",
+      archiveKey
     );
     // Nothing awaits from here to the insert.
     const decided = respond();
@@ -2129,15 +2240,6 @@ export class ShelfIndex extends DurableObject<Env> {
         sizeBytes: record.size_bytes,
         version: record.version,
       })
-      .run();
-    this.db
-      .insert(table.blob)
-      .values({
-        createdAt: record.published_at,
-        sha256,
-        size: record.size_bytes,
-      })
-      .onConflictDoNothing()
       .run();
     this.broadcast({
       at: record.published_at,
@@ -2275,6 +2377,7 @@ export class ShelfIndex extends DurableObject<Env> {
     | {
         readonly name: string;
         readonly description: string | null;
+        readonly origin: string | null;
         readonly createdAt: string;
         readonly configured: boolean;
       }[]
@@ -2294,24 +2397,37 @@ export class ShelfIndex extends DurableObject<Env> {
       }));
   }
 
+  /**
+   * Create or change a secret name and the one origin its value may be sent to (`https://host[:port]`). The owner
+   * only: binding a name to an origin decides where a credential may go.
+   */
   putSecretName(
     session: Session,
     shelf: string,
     name: string,
+    origin: string,
     description?: string
   ): boolean {
+    const bound = secretOrigin(origin);
     if (
       this.granted(session)?.owner !== true ||
       this.shelfId() !== shelf ||
-      !/^[A-Z][A-Z0-9_]*$/u.test(name)
+      !/^[A-Z][A-Z0-9_]*$/u.test(name) ||
+      bound === null ||
+      bound !== origin.replace(/\/$/u, "")
     ) {
       return false;
     }
     this.db
       .insert(table.secretName)
-      .values({ createdAt: now(), description: description ?? null, name })
+      .values({
+        createdAt: now(),
+        description: description ?? null,
+        name,
+        origin: bound,
+      })
       .onConflictDoUpdate({
-        set: { description: description ?? null },
+        set: { description: description ?? null, origin: bound },
         target: table.secretName.name,
       })
       .run();
@@ -2331,9 +2447,21 @@ export class ShelfIndex extends DurableObject<Env> {
     return true;
   }
 
+  /** The secret names and their origins, for the Worker's own jobs, which resolve a source's secret with them. */
+  secretBindings(session: Session, shelf: string): SecretBindingRecord[] {
+    if (session.kind !== "system" || this.shelfId() !== shelf) {
+      return [];
+    }
+    return this.db
+      .select({ name: table.secretName.name, origin: table.secretName.origin })
+      .from(table.secretName)
+      .all();
+  }
+
   /**
-   * The hosted MCP items (`"flavour": "hosted"`) `session` may relay, with the secret names the shelf lists, which
-   * `resolveSecret` needs. The MCP relay (issue #6) reads this and nothing else to decide what to expose.
+   * The hosted MCP items (`"flavour": "hosted"`) `session` may relay. The shelf's secret names come with them only for
+   * a session that may read the shelf; the relay itself never needs them, because `relayHeaders` resolves the
+   * credentials here.
    */
   relayable(
     session: Session,
@@ -2346,7 +2474,18 @@ export class ShelfIndex extends DurableObject<Env> {
     if (granted === null || this.shelfId() !== shelf) {
       return null;
     }
-    const servers = this.db
+    const secretNames = granted.read
+      ? this.db
+          .select({ name: table.secretName.name })
+          .from(table.secretName)
+          .all()
+          .map((row) => row.name)
+      : [];
+    return { secretNames, servers: this.hostedServers(granted) };
+  }
+
+  private hostedServers(granted: ShelfAccess) {
+    return this.db
       .select()
       .from(table.item)
       .where(eq(table.item.kind, "mcp"))
@@ -2358,12 +2497,74 @@ export class ShelfIndex extends DurableObject<Env> {
           document.flavour === "hosted" &&
           mayRelay(granted, document.id)
       );
-    const secretNames = this.db
-      .select({ name: table.secretName.name })
+  }
+
+  /**
+   * Where the relay sends a call to the hosted MCP item `item`, with its headers resolved: literals as written, and
+   * each `{ "secret": "NAME" }` by the secret rule (`src/secrets.ts`), for the item's own URL. A secret that does not
+   * resolve (not listed, bound to another origin, or unset) fails the whole call, so a server is never called without
+   * its credential and a credential never goes anywhere but the origin the owner bound it to.
+   */
+  relayHeaders(
+    session: Session,
+    shelf: string,
+    item: string
+  ): Outcome<RelayTarget, RelayRefused> {
+    const granted = this.granted(session);
+    const server =
+      granted === null || this.shelfId() !== shelf
+        ? undefined
+        : this.hostedServers(granted).find((found) => found.id === item);
+    if (server === undefined) {
+      return {
+        failure: {
+          _tag: "NotRelayable",
+          item,
+          message: `this key may not relay \`${item}\``,
+        },
+        ok: false,
+      };
+    }
+    const bindings = this.db
+      .select({ name: table.secretName.name, origin: table.secretName.origin })
       .from(table.secretName)
-      .all()
-      .map((row) => row.name);
-    return { secretNames, servers };
+      .all();
+    const headers: Record<string, string> = {};
+    const unresolved: string[] = [];
+    for (const [header, value] of Object.entries(server.headers ?? {})) {
+      const literal = v.safeParse(v.string(), value);
+      if (literal.success) {
+        headers[header] = literal.output;
+        continue;
+      }
+      const name = v.parse(SecretReferenceSchema, value).secret;
+      const resolved = resolveSecret(this.env, bindings, name, server.url);
+      if (resolved === undefined) {
+        unresolved.push(name);
+      } else {
+        headers[header] = resolved;
+      }
+    }
+    if (unresolved.length > 0) {
+      return {
+        failure: {
+          _tag: "SecretUnavailable",
+          message: `the secrets ${unresolved.join(", ")} are not released to ${secretOrigin(server.url) ?? server.url}`,
+          secrets: unresolved,
+        },
+        ok: false,
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        headers,
+        item,
+        tools: server.tools ?? [],
+        transport: server.transport ?? "streamable-http",
+        url: server.url,
+      },
+    };
   }
 
   // --- Share links ---------------------------------------------------------------------------------------------------
@@ -2414,9 +2615,13 @@ export class ShelfIndex extends DurableObject<Env> {
     return { link, token };
   }
 
+  /**
+   * The share links `session` may see: every one for a member, else those of the profiles it may edit, since whoever
+   * may create a profile's link may list and revoke it.
+   */
   shareLinks(session: Session, shelf: string): ShareLinkRecord[] | null {
-    const granted = this.reader(session, shelf);
-    if ("ok" in granted || !granted.member) {
+    const granted = this.granted(session);
+    if (granted === null || this.shelfId() !== shelf) {
       return null;
     }
     return this.db
@@ -2424,6 +2629,7 @@ export class ShelfIndex extends DurableObject<Env> {
       .from(table.shareLink)
       .orderBy(desc(table.shareLink.createdAt))
       .all()
+      .filter((row) => granted.member || mayEditProfile(granted, row.profileId))
       .map((row) => ({
         createdAt: row.createdAt,
         id: row.id,
@@ -2432,9 +2638,20 @@ export class ShelfIndex extends DurableObject<Env> {
       }));
   }
 
+  /** Revoke a share link: allowed to whoever may create a link for its profile. */
   revokeShareLink(session: Session, shelf: string, id: string): boolean {
     const granted = this.granted(session);
-    if (granted?.write !== true || this.shelfId() !== shelf) {
+    const link = this.db
+      .select({ profileId: table.shareLink.profileId })
+      .from(table.shareLink)
+      .where(eq(table.shareLink.id, id))
+      .get();
+    if (
+      granted === null ||
+      this.shelfId() !== shelf ||
+      link === undefined ||
+      !mayEditProfile(granted, link.profileId)
+    ) {
       return false;
     }
     return (
@@ -2878,7 +3095,7 @@ export class ShelfIndex extends DurableObject<Env> {
       Uint8Array
     >();
     const writer = writable.getWriter();
-    this.subscribers.add(writer);
+    this.subscribers.set(writer, session);
     void this.send(writer, encoder.encode(": connected\n\n"));
     void this.forget(writer);
     return readable;
@@ -2907,38 +3124,69 @@ export class ShelfIndex extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Send an event to every open stream whose session may still read it. Access is checked again for each event, not
+   * once at subscription: a stream whose key was revoked, or whose shelf stopped being public, is closed, and `keys`
+   * events reach only the owner, while `settings`, `activity`, and `import` events reach only members.
+   */
   private broadcast(event: ShelfEvent): void {
     const bytes = encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
-    for (const writer of this.subscribers) {
-      void this.send(writer, bytes);
+    for (const [writer, session] of this.subscribers) {
+      const granted = this.stillGranted(session);
+      if (granted === null || !granted.read) {
+        this.subscribers.delete(writer);
+        void closeQuietly(writer);
+        continue;
+      }
+      if (mayReceive(granted, event)) {
+        void this.send(writer, bytes);
+      }
     }
+  }
+
+  /** What a subscriber's session may do now: `null` once its key has been revoked. */
+  private stillGranted(session: Session): ShelfAccess | null {
+    if (session.kind === "key") {
+      const key = this.db
+        .select({ revokedAt: table.apiKey.revokedAt })
+        .from(table.apiKey)
+        .where(eq(table.apiKey.id, session.keyId))
+        .get();
+      if (key === undefined || key.revokedAt !== null) {
+        return null;
+      }
+    }
+    return this.granted(session);
   }
 }
 
-/**
- * The registry's view of a session on this shelf. A key of another shelf is a key the deployment knows: it reads this
- * shelf if it is public, as any known key does, and otherwise finds no shelf at all, so a key cannot learn that a
- * private shelf exists.
- */
-function registryAccess(session: Session, owner: string) {
-  if (session.kind === "anonymous") {
-    return { credential: "anonymous" } as const;
+/** A header's `{ "secret": "NAME" }`, as against a literal value. */
+const SecretReferenceSchema = v.strictObject({ secret: v.string() });
+
+/** End an event stream; one the client already closed needs nothing. */
+async function closeQuietly(
+  writer: WritableStreamDefaultWriter<Uint8Array>
+): Promise<void> {
+  try {
+    await writer.close();
+  } catch {
+    // Already closed by the client.
   }
-  if (session.kind === "owner" || session.kind === "system") {
-    return {
-      credential: "key",
-      scopes: ["read", `publish:${owner}/*`],
-    } as const;
+}
+
+/** Whether a subscriber with `granted` may see `event`. */
+function mayReceive(granted: ShelfAccess, event: ShelfEvent): boolean {
+  if (event.kind === "keys") {
+    return granted.owner;
   }
-  if (session.kind === "key") {
-    // A scope names its package, so a key's scopes grant nothing on another shelf's packages, except `read`, which
-    // the registry defines as every package; `registryShelf` hides a private shelf from such a key.
-    return {
-      credential: "key",
-      scopes: registryScopes(session.scopes),
-    } as const;
+  if (
+    event.kind === "settings" ||
+    event.kind === "activity" ||
+    event.kind === "import"
+  ) {
+    return granted.member;
   }
-  return { credential: "invalid" } as const;
+  return granted.read;
 }
 
 const IMPORT_STATUS = v.picklist([

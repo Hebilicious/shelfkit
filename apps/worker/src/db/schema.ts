@@ -1,10 +1,10 @@
 /**
  * The shelf's own database: one SQLite database per Durable Object, one object per shelf.
  *
- * Everything here is metadata. File bytes, snapshot manifests, and registry archives live in R2 under
- * `objects/<sha256>`, and a row names them by hash. The one derived copy of text is the full-text index
- * (`item_search`, created by hand in the first migration because Drizzle does not model FTS5 tables): it indexes a
- * prompt's body so search can find it, and is rebuilt from R2 whenever the snapshot changes.
+ * Everything here is metadata. File bytes and snapshot manifests live in R2 under `objects/<sha256>`, published
+ * registry archives under `archives/<sha256>`, and a row names them by hash. The full-text index (`item_search`,
+ * created by hand in a migration because Drizzle does not model FTS5 tables) is contentless: it holds the index's
+ * terms and no text, and snippets are cut from the content in R2.
  *
  * Migrations are generated from this file by `moon run worker:db-generate` and run inside the object, in its
  * constructor, behind `blockConcurrencyWhile` (`src/db/migrate.ts`). Never edit a generated migration.
@@ -63,6 +63,11 @@ export const file = sqliteTable("file", {
 /** Every R2 object this shelf references or uploaded, so a key reads only its own shelf's objects. */
 export const blob = sqliteTable("blob", {
   createdAt: text("created_at").notNull(),
+  /**
+   * 1 once a committed snapshot, an item revision, or a published version names the object. An upload that no commit
+   * names is 0, and `/raw` does not serve it.
+   */
+  referenced: integer().notNull().default(0),
   sha256: text().primaryKey(),
   size: integer().notNull(),
 });
@@ -278,6 +283,20 @@ export const secretName = sqliteTable("secret_name", {
   createdAt: text("created_at").notNull(),
   description: text(),
   name: text().primaryKey(),
+  /**
+   * The one origin (`https://host[:port]`) the value may be sent to. A row from before origins were bound has none, and
+   * its secret is released nowhere until the owner binds one.
+   */
+  origin: text(),
+});
+
+/**
+ * The full-text index's rowids, one per item. The index itself (`item_search`, a contentless FTS5 table created by
+ * hand in a migration) keeps no text, so it answers rowids and this maps them back to items.
+ */
+export const itemSearchRow = sqliteTable("item_search_row", {
+  itemId: text("item_id").notNull().unique(),
+  rowid: integer().primaryKey({ autoIncrement: true }),
 });
 
 /** A read-only link to one profile. Only the SHA-256 of the token is kept. */

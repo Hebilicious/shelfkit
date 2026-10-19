@@ -204,6 +204,7 @@ describe("the browser's cookie", () => {
     const cookie = await signIn();
     const viewer = await graphql(VIEWER, {}, undefined, {
       cookie: cookie.split(";")[0] ?? "",
+      origin: ORIGIN,
     });
     expect(v.parse(ViewerSchema, viewer.data).viewer.shelf).toBe("acme");
 

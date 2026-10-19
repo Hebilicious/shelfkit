@@ -23,6 +23,8 @@ import * as v from "valibot";
 
 import {
   access,
+  listShelves,
+  shelfExists,
   sessionForKey,
   shelfStub,
   signInCookie,
@@ -230,8 +232,32 @@ async function loadShelf(
   context: GraphQLContext,
   id: string
 ): Promise<ShelfNode | null> {
-  const found = await shelfStub(context.env, id).summary(context.session, id);
+  const target = await existingShelf(context, id);
+  if (target === null) {
+    return null;
+  }
+  const found = await target.summary(context.session, id);
   return found.ok ? { id, summary: found.value } : null;
+}
+
+/** The shelf's object when the deployment holds the shelf, checked once per request; `null` creates nothing. */
+async function existingShelf(context: GraphQLContext, shelf: string) {
+  const exists = await context.memo(
+    `exists ${shelf}`,
+    async () => await shelfExists(context.env, shelf)
+  );
+  return exists ? shelfStub(context.env, shelf) : null;
+}
+
+/** The shelf's object for a mutation, or `NOT_FOUND` when the deployment holds no such shelf. */
+async function held(context: GraphQLContext, shelf: string) {
+  const target = await existingShelf(context, shelf);
+  if (target === null) {
+    throw new GraphQLError(`there is no shelf \`${shelf}\``, {
+      extensions: { code: "NOT_FOUND" },
+    });
+  }
+  return target;
 }
 
 function encoding(value: string | null | undefined): "utf-8" | "base64" {
@@ -1298,12 +1324,13 @@ export function buildSchema(): GraphQLSchema {
     .objectRef<{
       readonly name: string;
       readonly description: string | null;
+      readonly origin: string | null;
       readonly createdAt: string;
       readonly configured: boolean;
     }>("SecretName")
     .implement({
       description:
-        'A secret name items may reference as `{ "secret": "NAME" }`. Its value is the Worker secret `SHELFKIT_SECRET_<NAME>`, set with Wrangler; `configured` says whether it is set.',
+        'A secret name items and sources may reference as `{ "secret": "NAME" }`. Its value is the Worker secret `SHELFKIT_SECRET_<NAME>`, set with Wrangler, and is sent only to `origin`; `configured` says whether it is set.',
       fields: (t) => ({
         configured: t.exposeBoolean("configured"),
         createdAt: t.field({
@@ -1312,6 +1339,11 @@ export function buildSchema(): GraphQLSchema {
         }),
         description: t.exposeString("description", { nullable: true }),
         name: t.exposeString("name"),
+        origin: t.exposeString("origin", {
+          description:
+            "The one origin the value may be sent to; null releases it nowhere.",
+          nullable: true,
+        }),
       }),
     });
 
@@ -1553,6 +1585,28 @@ export function buildSchema(): GraphQLSchema {
           return found;
         },
         type: [ApiKey],
+      }),
+      knownObjects: t.stringList({
+        args: {
+          sha256: t.arg.stringList({
+            description: "Lowercase hex SHA-256 digests, at most 2000.",
+            required: true,
+          }),
+        },
+        description:
+          "Which of these digests a committed snapshot of the shelf has ever referenced: content the service has. `shelfkit fetch` replaces a local file only when its content is known here, so it never discards unpushed work.",
+        resolve: async (shelf, args, context) => {
+          if (args.sha256.length > 2000) {
+            throw badInput("ask about at most 2000 digests at once");
+          }
+          return (
+            (await stub(context, shelf.id).referencedObjects(
+              context.session,
+              shelf.id,
+              args.sha256
+            )) ?? []
+          );
+        },
       }),
       manifest: t.field({
         description: "shelf.json.",
@@ -1847,6 +1901,19 @@ export function buildSchema(): GraphQLSchema {
 
   builder.queryType({
     fields: (t) => ({
+      shareLinks: t.field({
+        args: { shelf: t.arg.id({ required: true }) },
+        description:
+          "The share links the viewer may manage: every one for a member, else those of the profiles it may edit. A key that may create a profile's link lists it here even when it cannot read the shelf.",
+        resolve: async (_root, args, context) => {
+          const shelf = shelfArg(args.shelf);
+          const found = await existingShelf(context, shelf);
+          return found === null
+            ? []
+            : ((await found.shareLinks(context.session, shelf)) ?? []);
+        },
+        type: [ShareLink],
+      }),
       sharedProfile: t.field({
         args: { token: t.arg.string({ required: true }) },
         description: "The profile a share link names. Needs no key.",
@@ -1856,9 +1923,10 @@ export function buildSchema(): GraphQLSchema {
           if (parsed.kind !== "share") {
             return null;
           }
-          return await shelfStub(context.env, parsed.shelf).sharedProfile(
-            await secretHash(args.token)
-          );
+          const target = await existingShelf(context, parsed.shelf);
+          return target === null
+            ? null
+            : await target.sharedProfile(await secretHash(args.token));
         },
         type: SharedProfile,
       }),
@@ -1883,12 +1951,9 @@ export function buildSchema(): GraphQLSchema {
           if (session.kind !== "owner") {
             return [];
           }
-          const listed = await context.env.BLOBS.list({ prefix: "shelves/" });
+          const listed = await listShelves(context.env);
           const found = await Promise.all(
-            listed.objects.map(
-              async (object) =>
-                await loadShelf(context, object.key.slice("shelves/".length))
-            )
+            listed.map(async (id) => await loadShelf(context, id))
           );
           return found.filter((shelf): shelf is ShelfNode => shelf !== null);
         },
@@ -1938,21 +2003,23 @@ export function buildSchema(): GraphQLSchema {
         resolve: async (_root, args, context) => {
           requireKey(context);
           const shelf = shelfArg(args.shelf);
+          // Only the owner creates a shelf; anyone else's commit to a shelf that does not exist finds none.
+          const target =
+            context.session.kind === "owner"
+              ? shelfStub(context.env, shelf)
+              : await held(context, shelf);
           return committed(
-            await shelfStub(context.env, shelf).commitSnapshot(
-              context.session,
-              {
-                files: args.files.map((file) => ({
-                  path: file.path,
-                  sha256: file.sha256,
-                  size: file.size,
-                })),
-                message: args.message ?? undefined,
-                origin: "push",
-                parent: args.parent ?? undefined,
-                shelf,
-              }
-            )
+            await target.commitSnapshot(context.session, {
+              files: args.files.map((file) => ({
+                path: file.path,
+                sha256: file.sha256,
+                size: file.size,
+              })),
+              message: args.message ?? undefined,
+              origin: "push",
+              parent: args.parent ?? undefined,
+              shelf,
+            })
           );
         },
         type: Commit,
@@ -1971,10 +2038,11 @@ export function buildSchema(): GraphQLSchema {
           "Create a scoped key on a shelf. The owner only. The plaintext is in this answer and nowhere else.",
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
-          const created = await shelfStub(context.env, shelf).createKey(
-            context.session,
-            { name: args.name, scopes: args.scopes }
-          );
+          const target = await held(context, shelf);
+          const created = await target.createKey(context.session, {
+            name: args.name,
+            scopes: args.scopes,
+          });
           if (!created.ok) {
             throw context.session.kind === "owner"
               ? badInput(created.errors.join("; "))
@@ -1991,7 +2059,8 @@ export function buildSchema(): GraphQLSchema {
         },
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
-          const created = await shelfStub(context.env, shelf).createShareLink(
+          const target = await held(context, shelf);
+          const created = await target.createShareLink(
             context.session,
             shelf,
             args.profile
@@ -2012,12 +2081,9 @@ export function buildSchema(): GraphQLSchema {
         },
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
           return committed(
-            await shelfStub(context.env, shelf).deleteItem(
-              context.session,
-              shelf,
-              args.id
-            )
+            await target.deleteItem(context.session, shelf, args.id)
           );
         },
         type: Commit,
@@ -2029,12 +2095,9 @@ export function buildSchema(): GraphQLSchema {
         },
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
           return committed(
-            await shelfStub(context.env, shelf).deleteProfile(
-              context.session,
-              shelf,
-              args.id
-            )
+            await target.deleteProfile(context.session, shelf, args.id)
           );
         },
         type: Commit,
@@ -2056,12 +2119,8 @@ export function buildSchema(): GraphQLSchema {
           "Queue indexing a shelf from a GitHub repository through the REST API; the result arrives as a `snapshot` event.",
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
-          if (
-            !(await shelfStub(context.env, shelf).mayUpload(
-              context.session,
-              shelf
-            ))
-          ) {
+          const target = await held(context, shelf);
+          if (!(await target.mayUpload(context.session, shelf))) {
             throw forbidden("this key cannot write to this shelf");
           }
           await sendJob(context, {
@@ -2086,7 +2145,8 @@ export function buildSchema(): GraphQLSchema {
         },
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
-          const job = await shelfStub(context.env, shelf).pickImport(
+          const target = await held(context, shelf);
+          const job = await target.pickImport(
             context.session,
             shelf,
             args.job,
@@ -2106,20 +2166,29 @@ export function buildSchema(): GraphQLSchema {
         args: {
           description: t.arg.string(),
           name: t.arg.string({ required: true }),
+          origin: t.arg.string({
+            description:
+              "The one origin (https://host[:port]) the value may be sent to.",
+            required: true,
+          }),
           shelf: t.arg.id({ required: true }),
         },
+        description:
+          "Create or change a secret name and bind it to the one origin its value may be sent to. The owner only.",
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
           if (
-            !(await shelfStub(context.env, shelf).putSecretName(
+            !(await target.putSecretName(
               context.session,
               shelf,
               args.name,
+              args.origin,
               args.description ?? undefined
             ))
           ) {
             throw forbidden(
-              "only the owner key manages secret names, which are UPPER_SNAKE_CASE"
+              "only the owner key manages secret names, which are UPPER_SNAKE_CASE and bound to an https origin"
             );
           }
           return true;
@@ -2136,6 +2205,7 @@ export function buildSchema(): GraphQLSchema {
         },
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
           const parsed = v.safeParse(SourceInputSchema, args.source);
           if (!parsed.success) {
             throw badInput(
@@ -2143,11 +2213,7 @@ export function buildSchema(): GraphQLSchema {
             );
           }
           return committed(
-            await shelfStub(context.env, shelf).putSource(
-              context.session,
-              shelf,
-              parsed.output
-            )
+            await target.putSource(context.session, shelf, parsed.output)
           );
         },
         type: Commit,
@@ -2159,24 +2225,26 @@ export function buildSchema(): GraphQLSchema {
         },
         description:
           "Record that the viewer used an item (copied it): its recents.",
-        resolve: async (_root, args, context) =>
-          await shelfStub(context.env, shelfArg(args.shelf)).recordUse(
-            context.session,
-            args.shelf,
-            args.item
-          ),
+        resolve: async (_root, args, context) => {
+          const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
+          return await target.recordUse(context.session, args.shelf, args.item);
+        },
       }),
       removeSecretName: t.boolean({
         args: {
           name: t.arg.string({ required: true }),
           shelf: t.arg.id({ required: true }),
         },
-        resolve: async (_root, args, context) =>
-          await shelfStub(context.env, shelfArg(args.shelf)).removeSecretName(
+        resolve: async (_root, args, context) => {
+          const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
+          return await target.removeSecretName(
             context.session,
             args.shelf,
             args.name
-          ),
+          );
+        },
       }),
       removeSource: t.field({
         args: {
@@ -2185,12 +2253,9 @@ export function buildSchema(): GraphQLSchema {
         },
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
           return committed(
-            await shelfStub(context.env, shelf).removeSource(
-              context.session,
-              shelf,
-              args.id
-            )
+            await target.removeSource(context.session, shelf, args.id)
           );
         },
         type: Commit,
@@ -2213,11 +2278,8 @@ export function buildSchema(): GraphQLSchema {
             );
           }
           const { shelf, ...input } = parsed.output;
-          const found = await shelfStub(context.env, shelf).report(
-            context.session,
-            shelf,
-            input
-          );
+          const target = await held(context, shelf);
+          const found = await target.report(context.session, shelf, input);
           if (!found.ok) {
             throw found.failure._tag === "Forbidden"
               ? forbidden(found.failure.message)
@@ -2238,10 +2300,8 @@ export function buildSchema(): GraphQLSchema {
           if (context.session.kind !== "owner") {
             throw forbidden("only the owner key revokes keys");
           }
-          return await shelfStub(context.env, shelfArg(args.shelf)).revokeKey(
-            context.session,
-            args.id
-          );
+          const target = await held(context, shelfArg(args.shelf));
+          return await target.revokeKey(context.session, args.id);
         },
       }),
       revokeShareLink: t.boolean({
@@ -2249,12 +2309,15 @@ export function buildSchema(): GraphQLSchema {
           id: t.arg.id({ required: true }),
           shelf: t.arg.id({ required: true }),
         },
-        resolve: async (_root, args, context) =>
-          await shelfStub(context.env, shelfArg(args.shelf)).revokeShareLink(
+        resolve: async (_root, args, context) => {
+          const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
+          return await target.revokeShareLink(
             context.session,
             args.shelf,
             args.id
-          ),
+          );
+        },
       }),
       saveProfile: t.field({
         args: {
@@ -2266,8 +2329,9 @@ export function buildSchema(): GraphQLSchema {
           "Create or replace a profile (profiles/<id>.json), validated by the engine with the whole shelf.",
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
           return committed(
-            await shelfStub(context.env, shelf).saveProfile(
+            await target.saveProfile(
               context.session,
               shelf,
               args.document,
@@ -2283,13 +2347,16 @@ export function buildSchema(): GraphQLSchema {
           item: t.arg.id({ required: true }),
           shelf: t.arg.id({ required: true }),
         },
-        resolve: async (_root, args, context) =>
-          await shelfStub(context.env, shelfArg(args.shelf)).setFavourite(
+        resolve: async (_root, args, context) => {
+          const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
+          return await target.setFavourite(
             context.session,
             args.shelf,
             args.item,
             args.favourite
-          ),
+          );
+        },
       }),
       setVisibility: t.field({
         args: {
@@ -2300,12 +2367,9 @@ export function buildSchema(): GraphQLSchema {
           "Serve anonymous reads, or stop: shelf.json's `registry.public`. The owner only.",
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
           return committed(
-            await shelfStub(context.env, shelf).setVisibility(
-              context.session,
-              shelf,
-              args.public
-            )
+            await target.setVisibility(context.session, shelf, args.public)
           );
         },
         type: Commit,
@@ -2346,7 +2410,8 @@ export function buildSchema(): GraphQLSchema {
           "Start an import: discovery runs on the job queue, and the job moves to `ready` with its candidates.",
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
-          const job = await shelfStub(context.env, shelf).createImportJob(
+          const target = await held(context, shelf);
+          const job = await target.createImportJob(
             context.session,
             shelf,
             args.source
@@ -2379,11 +2444,8 @@ export function buildSchema(): GraphQLSchema {
           "Edit a prompt in place. The edit is a new revision of the prompt and a new snapshot of the shelf.",
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
-          const found = await shelfStub(context.env, shelf).getItem(
-            context.session,
-            shelf,
-            args.id
-          );
+          const target = await held(context, shelf);
+          const found = await target.getItem(context.session, shelf, args.id);
           if (!found.ok || found.value.item.kind !== "prompt") {
             throw badInput(`there is no prompt \`${args.id}\``);
           }
@@ -2431,15 +2493,11 @@ export function buildSchema(): GraphQLSchema {
             });
           }
           return committed(
-            await shelfStub(context.env, shelf).writeItem(
-              context.session,
-              shelf,
-              {
-                document,
-                files,
-                message: args.message ?? `edit ${found.value.item.id}`,
-              }
-            )
+            await target.writeItem(context.session, shelf, {
+              document,
+              files,
+              message: args.message ?? `edit ${found.value.item.id}`,
+            })
           );
         },
         type: Commit,
@@ -2463,6 +2521,7 @@ export function buildSchema(): GraphQLSchema {
         description: "Create or replace an item.",
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
           const parsed = v.safeParse(ItemSchema, args.document);
           if (!parsed.success) {
             throw badInput(
@@ -2470,19 +2529,15 @@ export function buildSchema(): GraphQLSchema {
             );
           }
           return committed(
-            await shelfStub(context.env, shelf).writeItem(
-              context.session,
-              shelf,
-              {
-                document: parsed.output,
-                files: args.files.map((file) => ({
-                  contents: file.contents,
-                  encoding: encoding(file.encoding),
-                  path: file.path,
-                })),
-                message: args.message ?? undefined,
-              }
-            )
+            await target.writeItem(context.session, shelf, {
+              document: parsed.output,
+              files: args.files.map((file) => ({
+                contents: file.contents,
+                encoding: encoding(file.encoding),
+                path: file.path,
+              })),
+              message: args.message ?? undefined,
+            })
           );
         },
         type: Commit,
@@ -2547,10 +2602,8 @@ async function* shelfEvents(
   context: GraphQLContext,
   shelf: string
 ): AsyncGenerator<ShelfEvent> {
-  const stream = await shelfStub(context.env, shelf).events(
-    context.session,
-    shelf
-  );
+  const target = await held(context, shelf);
+  const stream = await target.events(context.session, shelf);
   if (stream === null) {
     throw new GraphQLError(`there is no shelf \`${shelf}\` this key can read`, {
       extensions: { code: "NOT_FOUND" },

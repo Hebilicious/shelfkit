@@ -297,7 +297,18 @@ type Mutation {
     picks: JSON!
     shelf: ID!
   ): ImportJob!
-  putSecretName(description: String, name: String!, shelf: ID!): Boolean!
+
+  """
+  Create or change a secret name and bind it to the one origin its value may be sent to. The owner only.
+  """
+  putSecretName(
+    description: String
+    name: String!
+
+    """The one origin (https://host[:port]) the value may be sent to."""
+    origin: String!
+    shelf: ID!
+  ): Boolean!
   putSource(
     shelf: ID!
 
@@ -425,6 +436,11 @@ type ProfileRevision {
 }
 
 type Query {
+  """
+  The share links the viewer may manage: every one for a member, else those of the profiles it may edit. A key that may create a profile's link lists it here even when it cannot read the shelf.
+  """
+  shareLinks(shelf: ID!): [ShareLink!]!
+
   """The profile a share link names. Needs no key."""
   sharedProfile(token: String!): SharedProfile
 
@@ -537,13 +553,16 @@ type SearchHit {
 }
 
 """
-A secret name items may reference as `{ "secret": "NAME" }`. Its value is the Worker secret `SHELFKIT_SECRET_<NAME>`, set with Wrangler; `configured` says whether it is set.
+A secret name items and sources may reference as `{ "secret": "NAME" }`. Its value is the Worker secret `SHELFKIT_SECRET_<NAME>`, set with Wrangler, and is sent only to `origin`; `configured` says whether it is set.
 """
 type SecretName {
   configured: Boolean!
   createdAt: DateTime!
   description: String
   name: String!
+
+  """The one origin the value may be sent to; null releases it nowhere."""
+  origin: String
 }
 
 enum Severity {
@@ -618,6 +637,14 @@ type Shelf {
 
   """The shelf's scoped keys. The owner only."""
   keys: [ApiKey!]!
+
+  """
+  Which of these digests a committed snapshot of the shelf has ever referenced: content the service has. `shelfkit fetch` replaces a local file only when its content is known here, so it never discards unpushed work.
+  """
+  knownObjects(
+    """Lowercase hex SHA-256 digests, at most 2000."""
+    sha256: [String!]!
+  ): [String!]!
 
   """shelf.json."""
   manifest: JSON!

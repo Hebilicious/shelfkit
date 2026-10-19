@@ -3,7 +3,7 @@
  * to; it is a plain object, so the Worker passes it to the shelf's Durable Object, which checks it again before it
  * reads or writes anything (`access`).
  */
-import { parseScopes } from "./scopes.ts";
+import { parseScopes, registryScopes } from "./scopes.ts";
 
 export type Session =
   /** No credential was presented. */
@@ -100,4 +100,30 @@ export function mayEditProfile(granted: ShelfAccess, profile: string): boolean {
 /** Whether `granted` may call the relayed tools of the hosted MCP item `item`. */
 export function mayRelay(granted: ShelfAccess, item: string): boolean {
   return granted.relay === "all" || granted.relay.has(item);
+}
+
+/**
+ * The registry's view of a session on this shelf. A key of another shelf is a key the deployment knows: it reads this
+ * shelf if it is public, as any known key does, and otherwise finds no shelf at all, so a key cannot learn that a
+ * private shelf exists.
+ */
+export function registryAccess(session: Session, owner: string) {
+  if (session.kind === "anonymous") {
+    return { credential: "anonymous" } as const;
+  }
+  if (session.kind === "owner" || session.kind === "system") {
+    return {
+      credential: "key",
+      scopes: ["read", `publish:${owner}/*`],
+    } as const;
+  }
+  if (session.kind === "key") {
+    // A scope names its package, so a key's scopes grant nothing on another shelf's packages, except `read`, which
+    // the registry defines as every package; `registryShelf` hides a private shelf from such a key.
+    return {
+      credential: "key",
+      scopes: registryScopes(session.scopes),
+    } as const;
+  }
+  return { credential: "invalid" } as const;
 }

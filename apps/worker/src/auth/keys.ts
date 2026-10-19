@@ -82,9 +82,18 @@ export async function secretHash(text: string): Promise<string> {
   return await sha256Hex(text);
 }
 
-/** Enough of a key to recognise it in a list, and never enough to use it. */
+/** How many characters of a key's secret its stored prefix shows. */
+export const PREFIX_SECRET_CHARACTERS = 4;
+
+/**
+ * Enough of a key to recognise it in a list, and never enough to use it: `sks_<shelf>_` and the first four characters
+ * of the secret. The secret is base64url and may itself contain `_`, so the cut is counted from the shelf's end, which
+ * is the first `_` after the prefix (a shelf id has none).
+ */
 export function displayPrefix(key: string): string {
-  return `${key.slice(0, key.lastIndexOf("_") + 5)}…`;
+  const shelfEnd = key.indexOf("_", KEY_PREFIX.length);
+  const secretStart = shelfEnd === -1 ? KEY_PREFIX.length : shelfEnd + 1;
+  return `${key.slice(0, secretStart + PREFIX_SECRET_CHARACTERS)}…`;
 }
 
 /** Compare two hex hashes in time that does not depend on where they differ. */

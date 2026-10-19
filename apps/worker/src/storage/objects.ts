@@ -1,15 +1,25 @@
 /**
- * Content in R2, keyed by its SHA-256: `objects/<lowercase hex>`. File bytes, snapshot manifests, and registry
- * archives all live here, and no database holds a blob. The prefix is under an R2 bucket lock (`scripts/setup.ts`), so
- * an object, once written, cannot be overwritten or deleted: a write is put-if-absent, and a second write of the same
- * bytes is a no-op.
+ * Content in R2, keyed by its SHA-256, and no database holds a blob. File bytes and snapshot manifests are
+ * `objects/<lowercase hex>`; published registry archives are `archives/<lowercase hex>`, the one prefix under the R2
+ * bucket lock (`scripts/setup.ts`), so a published version cannot be overwritten or deleted. Every write is
+ * put-if-absent: a second write of the same bytes is a no-op.
  */
 
-/** The prefix every content-addressed object lives under, and the one the bucket lock covers. */
+/** The prefix a shelf's content lives under: file bytes and snapshot manifests, by sha256. Not locked. */
 export const OBJECTS_PREFIX = "objects/";
+
+/**
+ * The prefix published registry archives live under, by sha256. The bucket lock retains it indefinitely, so a
+ * published version cannot be overwritten or deleted at the storage layer either.
+ */
+export const ARCHIVES_PREFIX = "archives/";
 
 export function objectKey(sha256: string): string {
   return `${OBJECTS_PREFIX}${sha256}`;
+}
+
+export function archiveKey(sha256: string): string {
+  return `${ARCHIVES_PREFIX}${sha256}`;
 }
 
 /** Lowercase hex SHA-256 of `bytes`. */
@@ -34,10 +44,11 @@ export function isSha256Hex(text: string): boolean {
 export async function putObject(
   bucket: R2Bucket,
   bytes: Uint8Array,
-  contentType = "application/octet-stream"
+  contentType = "application/octet-stream",
+  keyOf: (sha256: string) => string = objectKey
 ): Promise<string> {
   const hash = await sha256Hex(bytes);
-  const key = objectKey(hash);
+  const key = keyOf(hash);
   if ((await bucket.head(key)) !== null) {
     return hash;
   }

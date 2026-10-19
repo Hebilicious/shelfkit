@@ -190,12 +190,9 @@ const scanner: Scanner = {
 function dependencies(): JobDependencies {
   return {
     adapters: [adapter],
-    context: {
-      fetch,
-      now: () => "2026-10-19T12:00:00Z",
-      secret: (): undefined => {},
-    },
+    fetch,
     forge: new GitHubForge(recorded().fetch),
+    now: () => "2026-10-19T12:00:00Z",
     scanners: [scanner],
   };
 }
