@@ -47,6 +47,8 @@ impl System for HostSystem {
         })
     }
 
+    // The seam itself: `clippy.toml` forbids `Command::new` everywhere else.
+    #[allow(clippy::disallowed_methods)]
     fn capture(&self, program: &Path, args: &[&str]) -> io::Result<(i32, String)> {
         let output = std::process::Command::new(program).args(args).output()?;
         Ok((
@@ -55,6 +57,8 @@ impl System for HostSystem {
         ))
     }
 
+    // The seam itself: `clippy.toml` forbids `Command::new` everywhere else.
+    #[allow(clippy::disallowed_methods)]
     fn run(&self, program: &Path, args: &[String], dir: &Path) -> io::Result<i32> {
         let status = std::process::Command::new(program)
             .args(args)

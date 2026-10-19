@@ -1,0 +1,14 @@
+name: edges
+version: "0.0.0"
+dependencies:
+  apm:
+    - ./vendor/edges
+  lsp:
+    - name: precise
+      command: precise-ls
+      extensionToLanguage:
+        ".p": precise
+      initializationOptions:
+        a: 604.0210212384299
+        b: 0.1
+        c: 1e+300

@@ -12,8 +12,12 @@
 //!
 //! One exception, documented in `schemas/README.md`: the schema rejects every
 //! object-form `dependencies.mcp` entry, including APM's own documented forms,
-//! while stating that the spec's prose wins where the two disagree. An error
-//! whose location is exactly such an entry is accepted; anything else fails.
+//! while stating that the spec's prose wins where the two disagree, and the
+//! prose defers MCP objects to APM's manifest reference. So every object-form
+//! MCP entry is validated against APM 0.33.0's own entry rules
+//! (`schemas/apm-mcp-entry.schema.json`, written from APM's source), and only
+//! an entry that passes them has the published schema's error at exactly its
+//! location waived. Anything else fails.
 
 use crate::yaml::Node;
 use std::sync::OnceLock;
@@ -25,54 +29,84 @@ pub const MANIFEST_SCHEMA: &str = include_str!("../schemas/manifest-v0.1.schema.
 pub const MANIFEST_SCHEMA_URL: &str =
     "https://microsoft.github.io/apm/specs/schemas/manifest-v0.1.schema.json";
 
-fn validator() -> Result<&'static jsonschema::Validator, String> {
-    static VALIDATOR: OnceLock<Result<jsonschema::Validator, String>> = OnceLock::new();
+/// APM's own rules for an object-form `dependencies.mcp` entry, written by
+/// ShelfKit from APM 0.33.0's source; see the file's `description`.
+pub const MCP_ENTRY_SCHEMA: &str = include_str!("../schemas/apm-mcp-entry.schema.json");
+
+type Compiled = Result<jsonschema::Validator, String>;
+
+fn compile_schema(text: &str, name: &str) -> Compiled {
+    let schema: serde_json::Value =
+        serde_json::from_str(text).map_err(|error| format!("{name} is not JSON: {error}"))?;
+    jsonschema::draft202012::new(&schema)
+        .map_err(|error| format!("{name} does not compile: {error}"))
+}
+
+fn manifest_validator() -> Result<&'static jsonschema::Validator, String> {
+    static VALIDATOR: OnceLock<Compiled> = OnceLock::new();
     VALIDATOR
-        .get_or_init(|| {
-            let schema: serde_json::Value = serde_json::from_str(MANIFEST_SCHEMA)
-                .map_err(|error| format!("the vendored schema is not JSON: {error}"))?;
-            jsonschema::draft202012::new(&schema)
-                .map_err(|error| format!("the vendored schema does not compile: {error}"))
-        })
+        .get_or_init(|| compile_schema(MANIFEST_SCHEMA, "the vendored manifest schema"))
         .as_ref()
         .map_err(Clone::clone)
 }
 
+fn mcp_validator() -> Result<&'static jsonschema::Validator, String> {
+    static VALIDATOR: OnceLock<Compiled> = OnceLock::new();
+    VALIDATOR
+        .get_or_init(|| compile_schema(MCP_ENTRY_SCHEMA, "the APM MCP entry schema"))
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+fn describe(location: &str, error: &impl std::fmt::Display) -> String {
+    let location = if location.is_empty() { "/" } else { location };
+    format!("{location}: {error}")
+}
+
 /// Validate a manifest. `Err` lists every violation as `<location>: <message>`.
 pub fn validate(manifest: &Node) -> Result<(), Vec<String>> {
-    let validator = validator().map_err(|error| vec![error])?;
+    let manifest_schema = manifest_validator().map_err(|error| vec![error])?;
+    let mcp_schema = mcp_validator().map_err(|error| vec![error])?;
     let instance = manifest.to_json();
-    let problems: Vec<String> = validator
-        .iter_errors(&instance)
-        .filter(|error| !is_mcp_object(&instance, &error.instance_path().to_string()))
-        .map(|error| {
-            let location = error.instance_path().to_string();
-            let location = if location.is_empty() {
-                "/".to_owned()
-            } else {
-                location
-            };
-            format!("{location}: {error}")
-        })
-        .collect();
+
+    // Every object-form MCP entry, checked against APM's rules. Those that
+    // pass are the only locations whose published-schema error is waived.
+    let mut problems = Vec::new();
+    let mut waived = Vec::new();
+    for block in ["dependencies", "devDependencies"] {
+        let Some(entries) = instance
+            .get(block)
+            .and_then(|b| b.get("mcp"))
+            .and_then(|m| m.as_array())
+        else {
+            continue;
+        };
+        for (index, entry) in entries.iter().enumerate() {
+            if !entry.is_object() {
+                continue;
+            }
+            let location = format!("/{block}/mcp/{index}");
+            let before = problems.len();
+            for error in mcp_schema.iter_errors(entry) {
+                let inner = error.instance_path().to_string();
+                problems.push(describe(
+                    &format!("{location}{inner}"),
+                    &format!("APM's MCP entry rules: {error}"),
+                ));
+            }
+            if problems.len() == before {
+                waived.push(location);
+            }
+        }
+    }
+    problems.extend(manifest_schema.iter_errors(&instance).filter_map(|error| {
+        let location = error.instance_path().to_string();
+        (!waived.contains(&location)).then(|| describe(&location, &error))
+    }));
     if problems.is_empty() {
         Ok(())
     } else {
         Err(problems)
-    }
-}
-
-/// Is `location` exactly an object-form entry of `dependencies.mcp` or
-/// `devDependencies.mcp`?
-fn is_mcp_object(instance: &serde_json::Value, location: &str) -> bool {
-    let segments: Vec<&str> = location.trim_start_matches('/').split('/').collect();
-    match segments.as_slice() {
-        [block @ ("dependencies" | "devDependencies"), "mcp", index] => index
-            .parse::<usize>()
-            .ok()
-            .and_then(|index| instance.get(*block)?.get("mcp")?.get(index))
-            .is_some_and(serde_json::Value::is_object),
-        _ => false,
     }
 }
 
@@ -129,6 +163,25 @@ mod tests {
             .collect();
         assert_eq!(locations, vec!["/dependencies/mcp/1"]);
         assert_eq!(validate(&manifest), Ok(()));
+
+        // An MCP object APM itself would refuse keeps failing.
+        for bad in [
+            "    - {}\n",
+            "    - { name: 5, transport: bogus }\n",
+            "    - { git: 5, id: 7 }\n",
+            "    - { name: z, registry: false }\n",
+            "    - { name: z, registry: false, transport: http }\n",
+            "    - { name: z, registry: false, transport: stdio, command: \"a b\" }\n",
+            "    - { name: ../z }\n",
+            "    - { name: z, url: \"ws://x\" }\n",
+            "    - { name: z, command: ../bin/x }\n",
+            "    - { name: z, headers: { A: \"x\\ny\" } }\n",
+        ] {
+            let text = format!("name: x\nversion: 1.0.0\ndependencies:\n  mcp:\n{bad}");
+            assert!(validate(&parse(&text)).is_err(), "{bad}");
+        }
+        let dev = parse("name: x\nversion: 1.0.0\ndevDependencies:\n  mcp:\n    - { foo: bar }\n");
+        assert!(validate(&dev).is_err());
 
         // An `apm` object without an identity key is still an error.
         let apm = parse("name: x\nversion: 1.0.0\ndependencies:\n  apm:\n    - name: z\n");

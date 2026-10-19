@@ -371,6 +371,8 @@ fn install_prefers_apm_on_the_path_and_doctor_reports_the_choice() {
 /// The binary itself, with an empty `PATH`: the acceptance case as a user
 /// meets it.
 #[test]
+// Runs the built binary as a user would; it is not product code spawning APM.
+#[allow(clippy::disallowed_methods)]
 fn the_binary_without_apm_or_uv_on_path_fails_with_the_install_command() {
     let repo = scratch("binary-missing");
     std::fs::write(repo.join("apm.yml"), "name: x\nversion: 1.0.0\n").unwrap();
@@ -533,16 +535,23 @@ fn recommend_reads_a_repositorys_markers() {
 /// The issue's integration check: APM accepts what ShelfKit compiles. It runs
 /// only where an `apm` binary is on PATH, or, with
 /// `SHELFKIT_TEST_APM_UVX=1`, through the pinned `uvx`, and skips otherwise.
+///
+/// It installs ShelfKit's own shelf, then a shelf that exercises what a
+/// manifest can get wrong with APM: an item from a plain-http loopback
+/// registry (served by this test), a Git item while that registry is the
+/// default, an MCP object entry, and a vendored prompt. APM's configuration
+/// (the experimental `registries` flag) goes to a scratch `HOME`.
 #[test]
-fn apm_install_accepts_a_compiled_manifest_when_apm_is_present() {
+// Runs APM itself, which is the point of the test.
+#[allow(clippy::disallowed_methods)]
+fn apm_install_accepts_compiled_manifests_when_apm_is_present() {
+    use shelfkit_compiler::cli::apm::Runner;
     let host = HostSystem;
-    let runner = shelfkit_compiler::cli::apm::Runner::resolve(&host);
+    let runner = Runner::resolve(&host);
     let usable = match &runner {
-        shelfkit_compiler::cli::apm::Runner::Path { .. } => true,
-        shelfkit_compiler::cli::apm::Runner::Uvx { .. } => {
-            std::env::var_os("SHELFKIT_TEST_APM_UVX").is_some()
-        }
-        shelfkit_compiler::cli::apm::Runner::Missing => false,
+        Runner::Path { .. } => true,
+        Runner::Uvx { .. } => std::env::var_os("SHELFKIT_TEST_APM_UVX").is_some(),
+        Runner::Missing => false,
     };
     if !usable {
         eprintln!(
@@ -551,18 +560,460 @@ fn apm_install_accepts_a_compiled_manifest_when_apm_is_present() {
         );
         return;
     }
-    let repo = scratch("apm-install");
+
+    let root = scratch("apm-install");
+    let home = root.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let real_home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+    let cache =
+        std::env::var_os("XDG_CACHE_HOME").map_or_else(|| real_home.join(".cache"), PathBuf::from);
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map_or_else(|| real_home.join(".local/share"), PathBuf::from);
+    let apm = |args: &[&str], dir: &Path| {
+        let (program, full) = runner.command(args).unwrap();
+        std::process::Command::new(program)
+            .args(full)
+            .current_dir(dir)
+            .env("HOME", &home)
+            .env("XDG_CACHE_HOME", &cache)
+            .env("XDG_DATA_HOME", &data)
+            .status()
+            .unwrap()
+    };
+    let install = |repo: &Path| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_shelfkit"))
+            .arg("install")
+            .current_dir(repo)
+            .env("HOME", &home)
+            .env("XDG_CACHE_HOME", &cache)
+            .env("XDG_DATA_HOME", &data)
+            .status()
+            .unwrap()
+    };
+
+    // ShelfKit's own shelf: vendored instructions and a prompt.
+    let own = root.join("own");
+    std::fs::create_dir_all(&own).unwrap();
     let shelf = repository_root().join("shelf");
     let compiled = shelfkit(
-        &repo,
+        &own,
         &NoProcesses,
         &["--shelf", shelf.to_str().unwrap(), "compile"],
     );
     assert_eq!(compiled.code, 0, "{}", compiled.stderr);
-    let installed = shelfkit(&repo, &host, &["install"]);
-    assert_eq!(installed.code, 0, "{}", installed.stderr);
+    assert!(install(&own).success(), "apm install failed on shelf/");
     assert!(
-        repo.join("apm.lock.yaml").is_file(),
-        "APM wrote no lockfile"
+        own.join("apm.lock.yaml").is_file(),
+        "APM wrote no lockfile for shelf/"
     );
+
+    // A registry on loopback, a Git item under its default, an MCP object.
+    let port = registry::serve(&[(
+        "acme/conventions",
+        "1.0.0",
+        &[
+            ("apm.yml", b"name: conventions\nversion: 1.0.0\n".as_slice()),
+            (
+                ".apm/instructions/conventions.instructions.md",
+                b"---\ndescription: Team conventions\n---\n\nWrite tests first.\n".as_slice(),
+            ),
+        ],
+    )]);
+    let mixed = root.join("mixed-shelf");
+    for (path, text) in [
+        (
+            "shelf.json".to_owned(),
+            format!(
+                r#"{{ "name": "mixed", "defaultProfile": "mixed", "sources": [
+                     {{ "id": "local", "kind": "apm-registry", "url": "http://127.0.0.1:{port}" }} ] }}"#
+            ),
+        ),
+        (
+            "items/instructions/conventions/item.json".to_owned(),
+            r#"{ "id": "conventions", "kind": "instructions", "title": "Conventions",
+                 "source": { "id": "local", "path": "acme/conventions", "version": "1.0.0" } }"#
+                .to_owned(),
+        ),
+        (
+            "items/skills/frontend-design/item.json".to_owned(),
+            r#"{ "id": "frontend-design", "kind": "skill", "title": "Frontend design",
+                 "source": { "repo": "https://github.com/anthropics/skills", "path": "skills/frontend-design",
+                             "resolvedCommit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44" } }"#
+                .to_owned(),
+        ),
+        (
+            "items/mcp/echo/item.json".to_owned(),
+            r#"{ "id": "echo", "kind": "mcp", "title": "Echo", "flavour": "stdio", "name": "echo-server",
+                 "command": "echo", "args": ["ready"], "env": { "LOG_LEVEL": "info" } }"#
+                .to_owned(),
+        ),
+        (
+            "items/prompts/hello/item.json".to_owned(),
+            r#"{ "id": "hello", "kind": "prompt", "title": "Hello" }"#.to_owned(),
+        ),
+        ("items/prompts/hello/prompt.md".to_owned(), "Say hello.\n".to_owned()),
+        (
+            "profiles/mixed.json".to_owned(),
+            r#"{ "id": "mixed", "title": "Mixed", "items": ["conventions", "frontend-design", "echo", "hello"],
+                 "compile": { "targets": ["claude"] } }"#
+                .to_owned(),
+        ),
+    ] {
+        let file = mixed.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    let repo = root.join("mixed-repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let compiled = shelfkit(
+        &repo,
+        &NoProcesses,
+        &["--shelf", mixed.to_str().unwrap(), "compile"],
+    );
+    assert_eq!(compiled.code, 0, "{}", compiled.stderr);
+    let manifest = std::fs::read_to_string(repo.join("apm.yml")).unwrap();
+    assert!(manifest.contains("  default: local\n"), "{manifest}");
+    assert!(
+        manifest.contains("- git: anthropics/skills/skills/frontend-design\n"),
+        "{manifest}"
+    );
+    assert!(manifest.contains("registry: false"), "{manifest}");
+
+    assert!(apm(&["experimental", "enable", "registries"], &repo).success());
+    assert!(install(&repo).success(), "apm install failed:\n{manifest}");
+    let lock = std::fs::read_to_string(repo.join("apm.lock.yaml")).expect("APM wrote no lockfile");
+    assert!(lock.contains("acme/conventions"), "{lock}");
+    assert!(
+        lock.contains("dbd4588f9e1033efb41dad4bef2f7947c8993d44"),
+        "{lock}"
+    );
+}
+
+/// A minimal OpenAPM registry on loopback, enough for `apm install`: the
+/// versions list and the `tar.gz` download, with the archive's digest.
+mod registry {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    type Package<'a> = (&'a str, &'a str, &'a [(&'a str, &'a [u8])]);
+
+    pub fn serve(packages: &[Package<'_>]) -> u16 {
+        let routes: Vec<(String, String, Vec<u8>)> = packages
+            .iter()
+            .flat_map(|(id, version, files)| {
+                let archive = tar_gz(files);
+                let digest = shelfkit_compiler::manifest::digest(&archive);
+                let versions = format!(
+                    r#"{{"versions":[{{"version":"{version}","digest":"{digest}","published_at":"2026-10-19T00:00:00Z"}}]}}"#
+                );
+                [
+                    (format!("/v1/packages/{id}/versions"), "application/json".to_owned(), versions.into_bytes()),
+                    (format!("/v1/packages/{id}/versions/{version}/download"), "application/gzip".to_owned(), archive),
+                ]
+            })
+            .collect();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_err() {
+                    continue;
+                }
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).map_or(true, |n| n == 0) || header == "\r\n" {
+                        break;
+                    }
+                }
+                let path = line.split(' ').nth(1).unwrap_or_default().to_owned();
+                let found = routes.iter().find(|(route, _, _)| *route == path);
+                let (status, kind, body) = match found {
+                    Some((_, kind, body)) => ("200 OK", kind.clone(), body.clone()),
+                    None => (
+                        "404 Not Found",
+                        "application/problem+json".to_owned(),
+                        br#"{"title":"not found"}"#.to_vec(),
+                    ),
+                };
+                let mut stream = reader.into_inner();
+                let head = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(&body);
+            }
+        });
+        port
+    }
+
+    /// A `tar.gz` of regular files: ustar headers, and gzip of stored
+    /// (uncompressed) deflate blocks, which any reader accepts.
+    fn tar_gz(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut tar = Vec::new();
+        for (name, bytes) in files {
+            let mut header = [0u8; 512];
+            header[..name.len()].copy_from_slice(name.as_bytes());
+            header[100..108].copy_from_slice(b"0000644\0");
+            header[108..116].copy_from_slice(b"0000000\0");
+            header[116..124].copy_from_slice(b"0000000\0");
+            header[124..136].copy_from_slice(format!("{:011o}\0", bytes.len()).as_bytes());
+            header[136..148].copy_from_slice(b"00000000000\0");
+            header[148..156].copy_from_slice(b"        ");
+            header[156] = b'0';
+            header[257..263].copy_from_slice(b"ustar\0");
+            header[263..265].copy_from_slice(b"00");
+            let sum: u32 = header.iter().map(|b| u32::from(*b)).sum();
+            header[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+            tar.extend_from_slice(&header);
+            tar.extend_from_slice(bytes);
+            tar.resize(tar.len().div_ceil(512) * 512, 0);
+        }
+        tar.resize(tar.len() + 1024, 0);
+
+        let mut gz = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff];
+        let chunks: Vec<&[u8]> = tar.chunks(65_535).collect();
+        for (index, chunk) in chunks.iter().enumerate() {
+            gz.push(u8::from(index + 1 == chunks.len()));
+            let len = u16::try_from(chunk.len()).unwrap();
+            gz.extend_from_slice(&len.to_le_bytes());
+            gz.extend_from_slice(&(!len).to_le_bytes());
+            gz.extend_from_slice(chunk);
+        }
+        gz.extend_from_slice(&crc32(&tar).to_le_bytes());
+        gz.extend_from_slice(&u32::try_from(tar.len()).unwrap().to_le_bytes());
+        gz
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = !0u32;
+        for byte in bytes {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+}
+
+/// The reviewer's case: a package directory named like the profile's, whose
+/// files are symbolic links out of the repository.
+#[cfg(unix)]
+#[test]
+fn compile_never_writes_through_a_symbolic_link() {
+    use std::os::unix::fs::symlink;
+    let root = scratch("symlinks");
+    let repo = root.join("repo");
+    let outside = root.join("outside");
+    std::fs::create_dir_all(repo.join("vendor/minimal")).unwrap();
+    std::fs::create_dir_all(outside.join("dir")).unwrap();
+    std::fs::write(outside.join("precious.txt"), "precious\n").unwrap();
+    symlink(
+        outside.join("precious.txt"),
+        repo.join("vendor/minimal/apm.yml"),
+    )
+    .unwrap();
+    symlink(outside.join("dir"), repo.join("vendor/minimal/.apm")).unwrap();
+    let shelf = all_kinds();
+    let shelf_arg = shelf.to_str().unwrap();
+
+    let ran = shelfkit(
+        &repo,
+        &NoProcesses,
+        &["--shelf", shelf_arg, "compile", "minimal"],
+    );
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    assert!(ran.stderr.contains("vendor/minimal"), "{}", ran.stderr);
+    assert_eq!(
+        std::fs::read_to_string(outside.join("precious.txt")).unwrap(),
+        "precious\n"
+    );
+    assert!(
+        std::fs::read_dir(outside.join("dir"))
+            .unwrap()
+            .next()
+            .is_none(),
+        "wrote outside the repository"
+    );
+    assert!(
+        repo.join("vendor/minimal/apm.yml")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(
+        !repo.join("apm.yml").exists(),
+        "a refused compile wrote apm.yml"
+    );
+
+    // A package ShelfKit did vendor, with a link planted inside it later.
+    let clean = root.join("clean");
+    std::fs::create_dir_all(&clean).unwrap();
+    assert_eq!(
+        shelfkit(
+            &clean,
+            &NoProcesses,
+            &["--shelf", shelf_arg, "compile", "minimal"]
+        )
+        .code,
+        0
+    );
+    std::fs::remove_dir_all(clean.join("vendor/minimal/.apm")).unwrap();
+    symlink(outside.join("dir"), clean.join("vendor/minimal/.apm")).unwrap();
+    let ran = shelfkit(
+        &clean,
+        &NoProcesses,
+        &["--shelf", shelf_arg, "compile", "minimal"],
+    );
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.stderr
+            .contains("vendor/minimal/.apm is a symbolic link"),
+        "{}",
+        ran.stderr
+    );
+    assert!(
+        std::fs::read_dir(outside.join("dir"))
+            .unwrap()
+            .next()
+            .is_none(),
+        "wrote outside the repository"
+    );
+
+    // A linked apm.yml at the root is refused too.
+    let linked = root.join("linked");
+    std::fs::create_dir_all(&linked).unwrap();
+    symlink(outside.join("precious.txt"), linked.join("apm.yml")).unwrap();
+    let ran = shelfkit(
+        &linked,
+        &NoProcesses,
+        &["--shelf", shelf_arg, "compile", "minimal"],
+    );
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.stderr.contains("apm.yml is a symbolic link"),
+        "{}",
+        ran.stderr
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.join("precious.txt")).unwrap(),
+        "precious\n"
+    );
+}
+
+/// The reviewer's case: Composer's `vendor/` holds a directory named like the
+/// profile. ShelfKit never deletes a package it did not mark as its own.
+#[test]
+fn compile_deletes_only_inside_packages_carrying_its_marker() {
+    let repo = scratch("composer");
+    std::fs::create_dir_all(repo.join("vendor/minimal/framework/src")).unwrap();
+    std::fs::write(repo.join("vendor/minimal/framework/src/App.php"), "<?php\n").unwrap();
+    std::fs::create_dir_all(repo.join("vendor/minimal--tools")).unwrap();
+    std::fs::write(repo.join("vendor/minimal--tools/tool.php"), "<?php\n").unwrap();
+    let shelf = all_kinds();
+    let shelf_arg = shelf.to_str().unwrap();
+
+    let ran = shelfkit(
+        &repo,
+        &NoProcesses,
+        &["--shelf", shelf_arg, "compile", "minimal"],
+    );
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.stderr
+            .contains("vendor/minimal exists and is not a package ShelfKit vendored"),
+        "{}",
+        ran.stderr
+    );
+    assert!(repo.join("vendor/minimal/framework/src/App.php").is_file());
+    let frozen = shelfkit(
+        &repo,
+        &NoProcesses,
+        &["--shelf", shelf_arg, "compile", "minimal", "--frozen"],
+    );
+    assert_eq!(frozen.code, 1);
+
+    // Without the clash, the unmarked `minimal--tools` is left alone, and a
+    // stale file inside ShelfKit's own package is removed.
+    std::fs::remove_dir_all(repo.join("vendor/minimal")).unwrap();
+    assert_eq!(
+        shelfkit(
+            &repo,
+            &NoProcesses,
+            &["--shelf", shelf_arg, "compile", "minimal"]
+        )
+        .code,
+        0
+    );
+    std::fs::write(repo.join("vendor/minimal/.apm/stale.md"), "old\n").unwrap();
+    let ran = shelfkit(
+        &repo,
+        &NoProcesses,
+        &["--shelf", shelf_arg, "compile", "minimal"],
+    );
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert!(
+        ran.stdout.contains("remove vendor/minimal/.apm/stale.md"),
+        "{}",
+        ran.stdout
+    );
+    assert!(repo.join("vendor/minimal--tools/tool.php").is_file());
+    assert!(!repo.join("vendor/minimal/.apm/stale.md").exists());
+}
+
+#[test]
+fn install_on_a_registry_manifest_explains_the_flag_and_never_sets_it() {
+    let repo = scratch("install-registry");
+    std::fs::write(
+        repo.join("apm.yml"),
+        "name: x\nversion: 1.0.0\nregistries:\n  a:\n    url: \"http://127.0.0.1:8787\"\n  default: a\n",
+    )
+    .unwrap();
+    let machine = FakeMachine::with(&["uvx"]);
+    let ran = shelfkit(&repo, &machine, &["install"]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let note = ran
+        .stderr
+        .find("uvx --from apm-cli==0.33.0 apm experimental enable registries")
+        .unwrap();
+    let command = ran
+        .stderr
+        .find("$ uvx --from apm-cli==0.33.0 apm install")
+        .unwrap();
+    assert!(note < command, "{}", ran.stderr);
+    let calls = machine.ran.borrow();
+    assert_eq!(
+        calls.len(),
+        1,
+        "install must not change APM's configuration"
+    );
+    assert_eq!(calls[0].1[3], "install");
+
+    let shelf = repository_root().join("crates/compiler/tests/fixtures/registry");
+    let dry = shelfkit(
+        &repo,
+        &NoProcesses,
+        &[
+            "--shelf",
+            shelf.to_str().unwrap(),
+            "compile",
+            "--dry-run",
+            "team",
+        ],
+    );
+    assert!(
+        dry.stderr
+            .contains("run `apm experimental enable registries` once"),
+        "{}",
+        dry.stderr
+    );
+    assert!(!dry.stderr.contains("&& apm install (or"), "{}", dry.stderr);
 }

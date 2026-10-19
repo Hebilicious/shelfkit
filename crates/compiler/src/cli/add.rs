@@ -96,7 +96,6 @@ pub fn import(shelf_root: &Path, target: &Path, source_id: Option<&str>) -> Resu
             path: Some(root_text),
             tier: None,
             profile: None,
-            insecure: false,
         }),
     }
 

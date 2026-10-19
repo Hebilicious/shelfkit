@@ -14,7 +14,7 @@
     },
     {
       "path": "vendor/base/apm.yml",
-      "contents": "name: base\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile base, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\n"
+      "contents": "name: base\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile base, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\nx-shelfkit-vendored-for: base\n"
     }
   ],
   "installCommand": "apm install",

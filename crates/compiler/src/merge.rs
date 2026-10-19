@@ -15,9 +15,10 @@
 //!   declaration.
 //! - Everything else in the repository's manifest (its own dependencies,
 //!   `scripts`, the `executables` that `apm approve` writes, `x-` keys) is
-//!   kept, in its order. The exception is the compile's own vendored
-//!   packages, `./vendor/<profile>` and `./vendor/<profile>--*`: an entry for
-//!   one the compile no longer writes is removed with the package.
+//!   kept, in its order. The exception is a package ShelfKit vendored for
+//!   this profile (its `apm.yml` carries the ownership marker; the caller
+//!   passes those it found): an entry for one the compile no longer writes
+//!   is removed with the package.
 //!
 //! A dependency's identity ignores its ref: `o/r#v1` and `o/r#v2` are one
 //! dependency declared two ways.
@@ -42,12 +43,13 @@ pub enum MergeError {
     Conflicts(Vec<String>),
 }
 
-/// Merge `compiled`, the manifest of `profile`, into `existing`. With
-/// `fail`, any conflict is an error.
+/// Merge `compiled` into `existing`. `owned` names the package directories
+/// (`vendor/<name>`) that carry ShelfKit's marker for the profile compiled.
+/// With `fail`, any conflict is an error.
 pub fn merge(
     existing: &str,
     compiled: &str,
-    profile: &str,
+    owned: &BTreeSet<String>,
     on_conflict: OnConflict,
 ) -> Result<Merged, MergeError> {
     let Node::Map(mut base) = Node::parse(existing).map_err(MergeError::Unreadable)? else {
@@ -63,7 +65,7 @@ pub fn merge(
 
     let mut merger = Merger {
         on_conflict,
-        profile,
+        owned,
         conflicts: Vec::new(),
     };
     for (key, value) in ours {
@@ -93,7 +95,7 @@ pub fn merge(
 
 struct Merger<'a> {
     on_conflict: OnConflict,
-    profile: &'a str,
+    owned: &'a BTreeSet<String>,
     conflicts: Vec<String>,
 }
 
@@ -159,11 +161,10 @@ impl Merger<'_> {
         let Node::Seq(items) = base else { return };
         if location == "dependencies.apm" {
             let compiled: Vec<_> = ours.iter().map(|entry| identity(location, entry)).collect();
-            let owned = format!("{}/{}", crate::manifest::VENDOR_DIR, self.profile);
+            let owned = self.owned;
             items.retain(|item| {
                 let (kind, name) = identity(location, item);
-                let ours_once =
-                    kind == "path" && (name == owned || name.starts_with(&format!("{owned}--")));
+                let ours_once = kind == "path" && owned.contains(&name);
                 !ours_once || compiled.contains(&(kind, name))
             });
         }
@@ -321,6 +322,10 @@ fn local_path(path: &str) -> String {
 mod tests {
     use super::*;
 
+    fn none() -> BTreeSet<String> {
+        BTreeSet::new()
+    }
+
     const COMPILED: &str = "name: shelf\nversion: \"0.0.0\"\ntargets:\n  - claude\ndependencies:\n  apm:\n    \
         - o/r/skills/a#v2\n    - ./vendor/p\n  mcp:\n    - io.github.x/y\n";
 
@@ -329,7 +334,7 @@ mod tests {
         let merged = merge(
             "name: my-app\nversion: 1.2.0\n",
             COMPILED,
-            "p",
+            &none(),
             OnConflict::Fail,
         )
         .unwrap();
@@ -346,14 +351,14 @@ mod tests {
         let once = merge(
             "name: my-app\nversion: 1.2.0\n",
             COMPILED,
-            "p",
+            &none(),
             OnConflict::Fail,
         )
         .unwrap();
-        let twice = merge(&once.text, COMPILED, "p", OnConflict::Fail).unwrap();
+        let twice = merge(&once.text, COMPILED, &none(), OnConflict::Fail).unwrap();
         assert_eq!(once.text, twice.text);
         assert_eq!(
-            merge(COMPILED, COMPILED, "p", OnConflict::Fail)
+            merge(COMPILED, COMPILED, &none(), OnConflict::Fail)
                 .unwrap()
                 .text,
             COMPILED
@@ -364,7 +369,7 @@ mod tests {
     fn local_declarations_and_keys_are_kept_in_order() {
         let existing = "name: my-app\nversion: 1.2.0\nscripts:\n  lint: x\ndependencies:\n  apm:\n    \
             - acme/standards\nexecutables:\n  allow:\n    - ./vendor/p\n";
-        let merged = merge(existing, COMPILED, "p", OnConflict::Fail).unwrap();
+        let merged = merge(existing, COMPILED, &none(), OnConflict::Fail).unwrap();
         assert_eq!(
             merged.text,
             "name: my-app\nversion: \"1.2.0\"\nscripts:\n  lint: x\ndependencies:\n  apm:\n    - acme/standards\n    \
@@ -377,17 +382,17 @@ mod tests {
     fn the_same_dependency_at_another_ref_is_a_conflict() {
         let existing = "name: my-app\nversion: 1.2.0\ndependencies:\n  apm:\n    - https://github.com/O/R/skills/a#v1\n";
         let Err(MergeError::Conflicts(conflicts)) =
-            merge(existing, COMPILED, "p", OnConflict::Fail)
+            merge(existing, COMPILED, &none(), OnConflict::Fail)
         else {
             panic!("fail should stop the merge");
         };
         assert_eq!(conflicts, vec!["`dependencies.apm` entry `o/r/skills/a`"]);
 
-        let shelf = merge(existing, COMPILED, "p", OnConflict::ShelfWins).unwrap();
+        let shelf = merge(existing, COMPILED, &none(), OnConflict::ShelfWins).unwrap();
         assert!(shelf.text.contains("- o/r/skills/a#v2\n"), "{}", shelf.text);
         assert!(!shelf.text.contains("#v1"), "{}", shelf.text);
 
-        let local = merge(existing, COMPILED, "p", OnConflict::LocalWins).unwrap();
+        let local = merge(existing, COMPILED, &none(), OnConflict::LocalWins).unwrap();
         assert!(local.text.contains("#v1"), "{}", local.text);
         assert!(!local.text.contains("#v2"), "{}", local.text);
         assert_eq!(local.conflicts.len(), 1);
@@ -398,7 +403,7 @@ mod tests {
         let existing = "name: a\nversion: 1.0.0\ntarget: claude, copilot\ndependencies:\n  mcp:\n    \
             - name: io.github.x/y\n      tools: [a]\n";
         let Err(MergeError::Conflicts(conflicts)) =
-            merge(existing, COMPILED, "p", OnConflict::Fail)
+            merge(existing, COMPILED, &none(), OnConflict::Fail)
         else {
             panic!("expected conflicts");
         };
@@ -406,7 +411,7 @@ mod tests {
             conflicts,
             vec!["`targets`", "`dependencies.mcp` entry `io.github.x/y`"]
         );
-        let shelf = merge(existing, COMPILED, "p", OnConflict::ShelfWins).unwrap();
+        let shelf = merge(existing, COMPILED, &none(), OnConflict::ShelfWins).unwrap();
         assert!(
             shelf
                 .text
@@ -417,14 +422,24 @@ mod tests {
         assert!(!shelf.text.contains("target:"), "{}", shelf.text);
 
         let same = "name: a\nversion: 1.0.0\ntargets: [claude]\n";
-        assert!(merge(same, COMPILED, "p", OnConflict::Fail).is_ok());
+        assert!(merge(same, COMPILED, &none(), OnConflict::Fail).is_ok());
+    }
+
+    #[test]
+    fn a_dropped_package_leaves_only_when_shelfkit_owns_it() {
+        // Named like the profile's packages but not marked as ShelfKit's: kept.
+        let existing =
+            "name: a\nversion: 1.0.0\ndependencies:\n  apm:\n    - ./vendor/p--plugin-old\n";
+        let kept = merge(existing, COMPILED, &none(), OnConflict::Fail).unwrap();
+        assert!(kept.text.contains("p--plugin-old"), "{}", kept.text);
     }
 
     #[test]
     fn a_vendored_package_the_compile_dropped_leaves_with_it() {
         let existing = "name: a\nversion: 1.0.0\ndependencies:\n  apm:\n    - ./vendor/p--plugin-old\n    \
             - ./vendor/other\n    - ./vendor/p\n";
-        let merged = merge(existing, COMPILED, "p", OnConflict::Fail).unwrap();
+        let owned = BTreeSet::from(["vendor/p--plugin-old".to_owned(), "vendor/p".to_owned()]);
+        let merged = merge(existing, COMPILED, &owned, OnConflict::Fail).unwrap();
         assert!(!merged.text.contains("p--plugin-old"), "{}", merged.text);
         assert!(
             merged.text.contains("- ./vendor/other\n"),
@@ -442,11 +457,11 @@ mod tests {
     #[test]
     fn an_unreadable_manifest_is_refused() {
         assert!(matches!(
-            merge("- a\n", COMPILED, "p", OnConflict::Fail),
+            merge("- a\n", COMPILED, &none(), OnConflict::Fail),
             Err(MergeError::Unreadable(_))
         ));
         assert!(matches!(
-            merge("a: [\n", COMPILED, "p", OnConflict::Fail),
+            merge("a: [\n", COMPILED, &none(), OnConflict::Fail),
             Err(MergeError::Unreadable(_))
         ));
     }

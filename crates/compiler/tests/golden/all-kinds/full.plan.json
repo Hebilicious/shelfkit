@@ -6,7 +6,7 @@
   "files": [
     {
       "path": "vendor/full--plugin-release-tools/apm.yml",
-      "contents": "name: full--plugin-release-tools\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile full, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\n"
+      "contents": "name: full--plugin-release-tools\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile full, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\nx-shelfkit-vendored-for: full\n"
     },
     {
       "path": "vendor/full--plugin-release-tools/plugin.json",
@@ -42,7 +42,7 @@
     },
     {
       "path": "vendor/full/apm.yml",
-      "contents": "name: full\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile full, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\n"
+      "contents": "name: full\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile full, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\nx-shelfkit-vendored-for: full\n"
     }
   ],
   "installCommand": "apm install",
@@ -55,7 +55,7 @@
     {
       "path": "items/mcp/context7/item.json",
       "code": "mcp-schema-mismatch",
-      "message": "`context7` compiles to a `dependencies.mcp` object, the form APM documents, which the published OpenAPM v0.1 JSON Schema rejects for every MCP object; the spec's prose is authoritative, so it is checked against APM's own rules instead"
+      "message": "`context7` compiles to a `dependencies.mcp` object, the form APM documents, which the published OpenAPM v0.1 JSON Schema rejects for every MCP object; the spec's prose is authoritative, so the entry is validated against APM 0.33.0's own MCP entry rules (schemas/apm-mcp-entry.schema.json) instead"
     },
     {
       "path": "items/mcp/linear/item.json",
@@ -65,7 +65,7 @@
     {
       "path": "items/mcp/playwright/item.json",
       "code": "mcp-schema-mismatch",
-      "message": "`playwright` compiles to a `dependencies.mcp` object, the form APM documents, which the published OpenAPM v0.1 JSON Schema rejects for every MCP object; the spec's prose is authoritative, so it is checked against APM's own rules instead"
+      "message": "`playwright` compiles to a `dependencies.mcp` object, the form APM documents, which the published OpenAPM v0.1 JSON Schema rejects for every MCP object; the spec's prose is authoritative, so the entry is validated against APM 0.33.0's own MCP entry rules (schemas/apm-mcp-entry.schema.json) instead"
     },
     {
       "path": "profiles/full.json",

@@ -3,9 +3,10 @@
 //! Two parser rules from `docs/PRD.md` section 3.1 shape everything here. A
 //! Git pin is `#<ref>` and nothing else; `@` is never a ref separator, though
 //! it may appear inside a literal ref. A registry-routed dependency uses the
-//! object form `{ registry, id, version }`, because a version selector is not
-//! a Git ref. Registry URLs are `https://`, or `http://` only for a loopback
-//! or RFC 1918 host or a source that opts into insecure transport.
+//! object form `{ id, version }`, because a version selector is not a Git
+//! ref. Registry URLs follow what APM 0.33.0 accepts: `https://`, or plain
+//! `http://` only for a loopback host, with no credentials, query, or
+//! fragment; APM has no insecure opt-in.
 
 use crate::yaml::Node;
 use shelfkit_core::profile::{ShelfSource, SourceKind};
@@ -39,28 +40,29 @@ pub struct RegistryRef {
     /// The `registries` key: the id of the shelf source.
     pub registry: String,
     pub url: String,
-    pub insecure: bool,
     /// `owner/repo` on the registry.
     pub id: String,
     pub version: String,
 }
 
 impl Upstream {
-    /// The `dependencies.apm` entry.
+    /// The `dependencies.apm` entry. `targets` restricts which of the
+    /// install's targets receive the dependency.
     ///
-    /// `targets` restricts which of the install's targets receive the
-    /// dependency. `explicit_git` writes a Git reference in the object form,
-    /// which APM keeps on Git even when `registries.default` is set; in the
-    /// string form, a `#ref` would route through that registry instead.
+    /// A Git reference is always written in the object form `{ git, ref }`.
+    /// APM keeps that form on Git even when a default registry is active, and
+    /// one can be active without the manifest saying so: the repository's own
+    /// `apm.yml`, or `registry.<name>.default` in `~/.apm/config.json`. In the
+    /// string form, `o/r#ref` would be routed through that registry instead.
     ///
     /// The object forms are the ones the OpenAPM v0.1 schema accepts: its
     /// `depEntry` allows exactly one of `git`, `id`, `path`, and `registry`,
     /// so a Git path rides inside `git` (APM parses it there as in the string
     /// form) and a registry dependency is routed by `registries.default`
     /// rather than a `registry` key.
-    pub fn entry(&self, targets: Option<&[String]>, explicit_git: bool) -> Node {
+    pub fn entry(&self, targets: Option<&[String]>) -> Node {
         let mut entry = match self {
-            Self::Git(git) => git.entry(targets.is_some() || explicit_git),
+            Self::Git(git) => git.entry(),
             Self::Registry(registry) => Node::Map(vec![
                 ("id".to_owned(), Node::string(&registry.id)),
                 ("version".to_owned(), Node::string(&registry.version)),
@@ -90,21 +92,14 @@ impl GitRef {
         text
     }
 
-    /// `coordinate#ref`, or `{ git: coordinate, ref }`.
-    fn entry(&self, object: bool) -> Node {
-        if object {
-            let mut entries = vec![("git".to_owned(), Node::String(self.coordinate()))];
-            if let Some(git_ref) = &self.git_ref {
-                entries.push(("ref".to_owned(), Node::string(git_ref)));
-            }
-            return Node::Map(entries);
-        }
-        let mut text = self.coordinate();
+    /// `{ git: coordinate, ref }`: APM parses the path inside `git` as it
+    /// does in the string form.
+    fn entry(&self) -> Node {
+        let mut entries = vec![("git".to_owned(), Node::String(self.coordinate()))];
         if let Some(git_ref) = &self.git_ref {
-            text.push('#');
-            text.push_str(git_ref);
+            entries.push(("ref".to_owned(), Node::string(git_ref)));
         }
-        Node::String(text)
+        Node::Map(entries)
     }
 }
 
@@ -193,8 +188,7 @@ fn registry_ref(source: &Source, registry: &ShelfSource, pin: Pin) -> Result<Reg
             registry.id
         ));
     };
-    check_registry_url(url, registry.insecure)
-        .map_err(|reason| format!("source `{}`: {reason}", registry.id))?;
+    check_registry_url(url).map_err(|reason| format!("source `{}`: {reason}", registry.id))?;
     let Some(path) = source.path.as_deref() else {
         return Err(
             "a registry item needs `source.path`, the package as `owner/repo[/path]`".to_owned(),
@@ -222,7 +216,6 @@ fn registry_ref(source: &Source, registry: &ShelfSource, pin: Pin) -> Result<Reg
     Ok(RegistryRef {
         registry: registry.id.clone(),
         url: url.trim_end_matches('/').to_owned(),
-        insecure: registry.insecure,
         id: format!("{owner}/{repo}"),
         // `latest` lets the registry pick the newest version; a revision pin
         // names the exact version that was imported.
@@ -322,44 +315,56 @@ fn normalize_repository(repo: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// A registry URL is `https://`; plain `http://` only for loopback, an RFC
-/// 1918 address, or a source that opts in.
-pub fn check_registry_url(url: &str, insecure: bool) -> Result<(), String> {
-    if url.starts_with("https://") {
-        return Ok(());
+/// A registry URL APM 0.33.0 accepts (`apm_cli/deps/registry/client.py`,
+/// `_validate_registry_transport`): `https://`, or `http://` only to a
+/// loopback host (`127.0.0.0/8`, `::1`, `localhost`); no credentials, query,
+/// or fragment. APM has no insecure opt-in, so neither does ShelfKit. A
+/// backslash is refused too: URL parsers disagree on it, and one reading of
+/// `http://evil.example\@127.0.0.1/` sends the request to `evil.example`.
+pub fn check_registry_url(url: &str) -> Result<(), String> {
+    let refuse = |why: &str| Err(format!("registry URL `{url}` {why}"));
+    if url.contains('\\') || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return refuse("must not contain a backslash, whitespace, or a control character");
     }
-    let Some(rest) = url.strip_prefix("http://") else {
-        return Err(format!("registry URL `{url}` must be https"));
+    let (scheme, rest) = if let Some(rest) = url.strip_prefix("https://") {
+        ("https", rest)
+    } else if let Some(rest) = url.strip_prefix("http://") {
+        ("http", rest)
+    } else {
+        return refuse("must start with https://");
     };
-    if insecure {
+    if rest.contains(['?', '#']) {
+        return refuse("must not carry a query string or a fragment, which APM refuses");
+    }
+    let authority = rest.split('/').next().unwrap_or_default();
+    if authority.contains('@') {
+        return refuse(
+            "must not carry credentials, which APM refuses; set them in APM's configuration",
+        );
+    }
+    if authority.is_empty() {
+        return refuse("has no host");
+    }
+    if scheme == "https" || is_loopback(authority) {
         return Ok(());
     }
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let host = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
-    if is_private_host(host) {
-        return Ok(());
-    }
-    Err(format!(
-        "registry URL `{url}` is plain http to a host that is neither loopback nor an RFC 1918 \
-         address; use https, or set `insecure: true` on the source to opt in"
-    ))
+    refuse(
+        "is plain http to a host that is not loopback. APM 0.33.0 allows plain http only for \
+         loopback testing (`_validate_registry_transport`) and has no insecure opt-in: serve the \
+         registry over https, or reach it through a loopback tunnel such as \
+         `ssh -L 8787:<host>:8787` and use `http://127.0.0.1:8787`",
+    )
 }
 
-/// Loopback (`127.0.0.0/8`, `::1`, `localhost`) or RFC 1918 (`10/8`,
-/// `172.16/12`, `192.168/16`), with or without a port.
-fn is_private_host(host: &str) -> bool {
-    if let Some(inner) = host.strip_prefix('[') {
+/// `127.0.0.0/8`, `::1`, or `localhost`, with or without a port.
+fn is_loopback(authority: &str) -> bool {
+    if let Some(inner) = authority.strip_prefix('[') {
         let address = inner.split(']').next().unwrap_or_default();
         return address.parse::<Ipv6Addr>().is_ok_and(|ip| ip.is_loopback());
     }
-    let name = host.split(':').next().unwrap_or_default();
-    if name.eq_ignore_ascii_case("localhost") {
-        return true;
-    }
-    name.parse::<Ipv4Addr>()
-        .is_ok_and(|ip| ip.is_loopback() || ip.is_private())
+    let host = authority.split(':').next().unwrap_or_default();
+    host.eq_ignore_ascii_case("localhost")
+        || host.parse::<Ipv4Addr>().is_ok_and(|ip| ip.is_loopback())
 }
 
 #[cfg(test)]
@@ -384,14 +389,11 @@ mod tests {
 
     fn entry(kind: ItemKind, source: &Source, pin: Pin) -> Result<String, String> {
         let upstream = upstream(kind, source, &[], pin)?.ok_or("no upstream")?;
-        Ok(render(&Node::Map(vec![(
-            "e".into(),
-            upstream.entry(None, false),
-        )])))
+        Ok(render(&Node::Map(vec![("e".into(), upstream.entry(None))])))
     }
 
     #[test]
-    fn a_pin_is_a_hash_ref_never_an_at() {
+    fn a_pin_is_a_ref_never_an_at_and_git_is_always_explicit() {
         let source = git_source(
             "https://github.com/anthropics/skills",
             Some("skills/frontend-design"),
@@ -400,11 +402,12 @@ mod tests {
         );
         assert_eq!(
             entry(ItemKind::Skill, &source, Pin::Revision).unwrap(),
-            "e: anthropics/skills/skills/frontend-design#0123456789abcdef0123456789abcdef01234567\n"
+            "e:\n  git: anthropics/skills/skills/frontend-design\n  \
+             ref: \"0123456789abcdef0123456789abcdef01234567\"\n"
         );
         assert_eq!(
             entry(ItemKind::Skill, &source, Pin::Latest).unwrap(),
-            "e: anthropics/skills/skills/frontend-design#main\n"
+            "e:\n  git: anthropics/skills/skills/frontend-design\n  ref: main\n"
         );
     }
 
@@ -418,12 +421,12 @@ mod tests {
         );
         assert_eq!(
             entry(ItemKind::Prompt, &source, Pin::Revision).unwrap(),
-            "e: o/r/p/x.prompt.md#release@2\n"
+            "e:\n  git: o/r/p/x.prompt.md\n  ref: release@2\n"
         );
     }
 
     #[test]
-    fn other_hosts_keep_their_name_and_nested_groups_use_the_object_form() {
+    fn other_hosts_keep_their_name_and_nested_groups_need_no_path() {
         let source = git_source(
             "git@gitlab.com:acme/repo.git",
             Some("x.agent.md"),
@@ -432,7 +435,7 @@ mod tests {
         );
         assert_eq!(
             entry(ItemKind::Agent, &source, Pin::Revision).unwrap(),
-            "e: gitlab.com/acme/repo/x.agent.md#v1\n"
+            "e:\n  git: gitlab.com/acme/repo/x.agent.md\n  ref: v1\n"
         );
         let nested = git_source(
             "https://gitlab.com/g/sub/repo",
@@ -448,22 +451,19 @@ mod tests {
         let whole = git_source("https://gitlab.com/g/sub/repo", None, Some("v1"), None);
         assert_eq!(
             entry(ItemKind::Plugin, &whole, Pin::Revision).unwrap(),
-            "e: gitlab.com/g/sub/repo#v1\n"
+            "e:\n  git: gitlab.com/g/sub/repo\n  ref: v1\n"
         );
     }
 
     #[test]
-    fn item_targets_need_the_object_form() {
+    fn item_targets_ride_on_the_object_form() {
         let source = git_source("o/r", Some("skills/a"), Some("v1"), None);
         let found = upstream(ItemKind::Skill, &source, &[], Pin::Revision)
             .unwrap()
             .unwrap();
         let targets = ["claude".to_owned()];
         assert_eq!(
-            render(&Node::Map(vec![(
-                "e".into(),
-                found.entry(Some(&targets), false)
-            )])),
+            render(&Node::Map(vec![("e".into(), found.entry(Some(&targets)))])),
             "e:\n  git: o/r/skills/a\n  ref: v1\n  targets:\n    - claude\n"
         );
     }
@@ -478,7 +478,7 @@ mod tests {
         );
         assert_eq!(
             entry(ItemKind::Plugin, &source, Pin::Latest).unwrap(),
-            "e: o/r\n"
+            "e:\n  git: o/r\n"
         );
     }
 
@@ -490,7 +490,7 @@ mod tests {
         let skill = git_source("o/r", Some("skills/a/SKILL.md"), Some("v1"), None);
         assert_eq!(
             entry(ItemKind::Skill, &skill, Pin::Revision).unwrap(),
-            "e: o/r/skills/a#v1\n"
+            "e:\n  git: o/r/skills/a\n  ref: v1\n"
         );
     }
 
@@ -504,7 +504,7 @@ mod tests {
         );
     }
 
-    fn registry(url: &str, insecure: bool) -> ShelfSource {
+    fn registry(url: &str) -> ShelfSource {
         ShelfSource {
             id: "acme".into(),
             kind: SourceKind::ApmRegistry,
@@ -513,7 +513,6 @@ mod tests {
             path: None,
             tier: None,
             profile: None,
-            insecure,
         }
     }
 
@@ -525,41 +524,60 @@ mod tests {
             version: Some("1.2.0".into()),
             ..Source::default()
         };
-        let sources = [registry("https://shelf.acme.dev/apm/", false)];
+        let sources = [registry("https://shelf.acme.dev/apm/")];
         let found = upstream(ItemKind::Instructions, &source, &sources, Pin::Revision)
             .unwrap()
             .unwrap();
         assert_eq!(
-            render(&Node::Map(vec![("e".into(), found.entry(None, true))])),
+            render(&Node::Map(vec![("e".into(), found.entry(None))])),
             "e:\n  id: acme/team-conventions\n  version: \"1.2.0\"\n"
         );
         let Upstream::Registry(r) = found else {
             panic!()
         };
         assert_eq!(r.url, "https://shelf.acme.dev/apm");
+
+        let inner = Source {
+            path: Some("acme/toolkit/skills/deploy".into()),
+            ..source
+        };
+        let error = upstream(ItemKind::Skill, &inner, &sources, Pin::Revision).unwrap_err();
+        assert!(error.contains("whole package"), "{error}");
     }
 
     #[test]
-    fn registry_urls_are_https_unless_private_or_opted_in() {
+    fn registry_urls_are_what_apm_accepts_https_or_loopback_http() {
         for ok in [
             "https://x.example/apm",
+            "https://10.0.0.1/apm",
             "http://127.0.0.1:8787/apm",
+            "http://127.9.9.9/apm",
             "http://localhost:8787",
-            "http://10.1.2.3/apm",
-            "http://172.20.0.1/apm",
-            "http://192.168.1.10:8080/apm",
             "http://[::1]:8787/apm",
         ] {
-            assert_eq!(check_registry_url(ok, false), Ok(()), "{ok}");
+            assert_eq!(check_registry_url(ok), Ok(()), "{ok}");
         }
         for bad in [
+            // RFC 1918 and public hosts over plain http: APM refuses both.
+            "http://192.168.1.20:8787/apm",
+            "http://10.1.2.3/apm",
             "http://shelf.example/apm",
-            "http://172.32.0.1/apm",
+            // A backslash and userinfo, which parsers read differently.
+            "http://evil.com\\@10.0.0.1/apm",
+            "http://evil.com\\@127.0.0.1/apm",
+            "https://user:pass@x.example/apm",
+            "http://evil.com@127.0.0.1/apm",
+            "https://x.example/apm?token=1",
+            "https://x.example/apm#f",
             "ftp://x/apm",
-            "http://8.8.8.8",
+            "https://",
         ] {
-            assert!(check_registry_url(bad, false).is_err(), "{bad}");
+            assert!(check_registry_url(bad).is_err(), "{bad}");
         }
-        assert_eq!(check_registry_url("http://shelf.example/apm", true), Ok(()));
+        let message = check_registry_url("http://192.168.1.20:8787/apm").unwrap_err();
+        assert!(
+            message.contains("loopback") && message.contains("https"),
+            "{message}"
+        );
     }
 }

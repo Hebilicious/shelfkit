@@ -20,6 +20,7 @@ fn shelves() -> Vec<(&'static str, PathBuf)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     vec![
         ("all-kinds", root.join("../core/tests/fixtures/all-kinds")),
+        ("edges", root.join("tests/fixtures/edges")),
         ("registry", root.join("tests/fixtures/registry")),
         ("shelfkit", root.join("../../shelf")),
     ]
@@ -60,4 +61,30 @@ fn every_profile_of_every_fixture_shelf_matches_its_golden_files() {
             golden(&format!("{name}/{id}.plan.json"), &compiled.to_json());
         }
     }
+}
+
+#[test]
+fn the_schema_package_lists_exactly_the_note_codes_the_compiler_writes() {
+    let catalog =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/schema/acidcat.catalog.json");
+    let catalog: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(catalog).unwrap()).unwrap();
+    let listed: std::collections::BTreeSet<String> = catalog["capabilities"]["shelf.compile.plan"]
+        ["output"]["properties"]["notes"]["items"]["properties"]["code"]["enum"]
+        .as_array()
+        .expect("the catalog lists the compile note codes")
+        .iter()
+        .map(|code| code.as_str().unwrap().to_owned())
+        .collect();
+    let written: std::collections::BTreeSet<String> = shelfkit_compiler::NoteCode::ALL
+        .iter()
+        .map(|code| {
+            serde_json::to_value(code)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(listed, written);
 }

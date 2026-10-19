@@ -136,11 +136,9 @@ fn an_item_with_neither_upstream_nor_content_is_refused_at_its_file() {
 }
 
 #[test]
-fn registries_are_one_per_manifest_and_plain_http_needs_a_private_host_or_an_opt_in() {
-    let registry = |id: &str, url: &str, insecure: bool| {
-        format!(
-            r#"{{ "id": "{id}", "kind": "apm-registry", "url": "{url}", "insecure": {insecure} }}"#
-        )
+fn registries_are_what_apm_accepts_one_per_manifest_with_only_a_url() {
+    let registry = |id: &str, url: &str| {
+        format!(r#"{{ "id": "{id}", "kind": "apm-registry", "url": "{url}" }}"#)
     };
     let item = |id: &str, source: &str| {
         (
@@ -168,26 +166,33 @@ fn registries_are_one_per_manifest_and_plain_http_needs_a_private_host_or_an_opt
         source
     };
 
-    let public_http = build(
-        &[registry("a", "http://shelf.example/apm", false)],
-        &[item("x", "a")],
-        &["x"],
-    );
-    let errors = compile(&public_http).unwrap_err().to_string();
-    assert!(errors.contains("`insecure: true`"), "{errors}");
+    // APM 0.33.0 allows plain http only for loopback: RFC 1918 and public hosts are refused.
+    for url in [
+        "http://192.168.1.20:8787/apm",
+        "http://10.0.0.5/apm",
+        "http://shelf.example/apm",
+    ] {
+        let shelf = build(&[registry("a", url)], &[item("x", "a")], &["x"]);
+        let errors = compile(&shelf).unwrap_err().to_string();
+        assert!(
+            errors.contains("loopback") && errors.contains("https"),
+            "{url}: {errors}"
+        );
+    }
 
-    let opted_in = build(
-        &[registry("a", "http://shelf.example/apm", true)],
+    let loopback = build(
+        &[registry("a", "http://127.0.0.1:8787/apm")],
         &[item("x", "a")],
         &["x"],
     );
-    let plan = compile(&opted_in).unwrap();
+    let plan = compile(&loopback).unwrap();
     assert!(
         plan.apm_yml
-            .contains("    url: \"http://shelf.example/apm\"\n    insecure: true\n  default: a\n"),
+            .contains("registries:\n  a:\n    url: \"http://127.0.0.1:8787/apm\"\n  default: a\n"),
         "{}",
         plan.apm_yml
     );
+    assert!(!plan.apm_yml.contains("insecure"), "{}", plan.apm_yml);
     assert_eq!(
         plan.install_command,
         "apm experimental enable registries && apm install"
@@ -195,14 +200,62 @@ fn registries_are_one_per_manifest_and_plain_http_needs_a_private_host_or_an_opt
 
     let two = build(
         &[
-            registry("a", "https://a.example/apm", false),
-            registry("b", "https://b.example/apm", false),
+            registry("a", "https://a.example/apm"),
+            registry("b", "https://b.example/apm"),
         ],
         &[item("x", "a"), item("y", "b")],
         &["x", "y"],
     );
     let errors = compile(&two).unwrap_err().to_string();
     assert!(errors.contains("`a` and `b`"), "{errors}");
+}
+
+#[test]
+fn a_git_reference_is_the_explicit_object_form_so_no_default_registry_can_capture_it() {
+    let source = shelf(&[
+        (
+            "items/prompts/review/item.json",
+            r#"{ "id": "review", "kind": "prompt", "title": "Review",
+                 "source": { "repo": "https://github.com/acme/agent-kit", "path": "prompts/review.prompt.md", "ref": "v3" } }"#,
+        ),
+        (
+            "profiles/p.json",
+            &profile(&["review"], r#""pin": "latest""#),
+        ),
+    ]);
+    let plan = compile(&source).unwrap();
+    // `acme/agent-kit/prompts/review.prompt.md#v3` would be routed through a default registry set
+    // in the repository's apm.yml or in ~/.apm/config.json.
+    assert_eq!(
+        apm_entries(&plan),
+        vec![Node::Map(vec![
+            (
+                "git".into(),
+                Node::string("acme/agent-kit/prompts/review.prompt.md")
+            ),
+            ("ref".into(), Node::string("v3")),
+        ])]
+    );
+    assert!(!plan.apm_yml.contains('#'), "{}", plan.apm_yml);
+}
+
+#[test]
+fn an_mcp_entry_apm_would_refuse_fails_the_compile() {
+    let source = shelf(&[
+        (
+            "items/mcp/bad/item.json",
+            r#"{ "id": "bad", "kind": "mcp", "title": "Bad", "flavour": "remote", "name": "!bad", "url": "https://x.example/mcp" }"#,
+        ),
+        ("profiles/p.json", &profile(&["bad"], "")),
+    ]);
+    // The loader accepts the name; APM's name rule (`^[a-zA-Z0-9@_]...`) does not, and the published schema's
+    // MCP error is not waived for an entry that breaks APM's own rules.
+    let errors = compile(&source).unwrap_err().to_string();
+    assert!(
+        errors.contains("/dependencies/mcp/0/name: APM's MCP entry rules"),
+        "{errors}"
+    );
+    assert!(errors.contains("oneOf"), "{errors}");
 }
 
 #[test]

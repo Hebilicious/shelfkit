@@ -152,6 +152,17 @@ pub enum NoteCode {
     McpSchemaMismatch,
 }
 
+impl NoteCode {
+    /// Every code, for the test that keeps the schema package's list in step.
+    pub const ALL: [Self; 5] = [
+        Self::ProducerNonconformantTarget,
+        Self::UnratifiedLsp,
+        Self::HookApproval,
+        Self::HostedMcp,
+        Self::McpSchemaMismatch,
+    ];
+}
+
 impl From<NoticeCode> for NoteCode {
     fn from(code: NoticeCode) -> Self {
         match code {
@@ -207,8 +218,8 @@ struct Compiler<'a> {
     errors: Errors,
     /// `dependencies.apm` references and their item targets, in item id order.
     upstream: Vec<(Upstream, Option<Vec<String>>)>,
-    /// `registries`, by name: the URL and whether it opted into http.
-    registries: BTreeMap<String, (String, bool)>,
+    /// `registries`, by name: the URL.
+    registries: BTreeMap<String, String>,
     /// Vendored packages by directory name.
     packages: BTreeMap<String, Package>,
     mcp: Vec<Node>,
@@ -273,10 +284,8 @@ impl Compiler<'_> {
 
     fn reference(&mut self, loaded: &LoadedItem, upstream: &Upstream) {
         if let Upstream::Registry(registry) = upstream {
-            self.registries.insert(
-                registry.registry.clone(),
-                (registry.url.clone(), registry.insecure),
-            );
+            self.registries
+                .insert(registry.registry.clone(), registry.url.clone());
         }
         self.upstream.push((upstream.clone(), item_targets(loaded)));
     }
@@ -381,7 +390,8 @@ impl Compiler<'_> {
             message: format!(
                 "`{id}` compiles to a `dependencies.mcp` object, the form APM documents, which the \
                  published OpenAPM v0.1 JSON Schema rejects for every MCP object; the spec's \
-                 prose is authoritative, so it is checked against APM's own rules instead"
+                 prose is authoritative, so the entry is validated against APM 0.33.0's own MCP \
+                 entry rules (schemas/apm-mcp-entry.schema.json) instead"
             ),
         });
         self.mcp.push(entry);
@@ -422,11 +432,10 @@ impl Compiler<'_> {
                 ),
             ));
         }
-        let explicit_git = !self.registries.is_empty();
         let mut apm: Vec<Node> = self
             .upstream
             .iter()
-            .map(|(upstream, targets)| upstream.entry(targets.as_deref(), explicit_git))
+            .map(|(upstream, targets)| upstream.entry(targets.as_deref()))
             .collect();
         let mut files = Vec::new();
         for (directory, package) in &self.packages {
@@ -468,11 +477,9 @@ impl Compiler<'_> {
         if !settings.targets.is_empty() {
             root.push(("targets".to_owned(), Node::strings(&settings.targets)));
         }
-        if let Some((name, (url, insecure))) = self.registries.iter().next() {
-            let mut entry = vec![("url".to_owned(), Node::string(url))];
-            if *insecure {
-                entry.push(("insecure".to_owned(), Node::Bool(true)));
-            }
+        // APM 0.33.0 refuses any key in a registry entry but `url`.
+        if let Some((name, url)) = self.registries.iter().next() {
+            let entry = vec![("url".to_owned(), Node::string(url))];
             root.push((
                 "registries".to_owned(),
                 Node::Map(vec![
@@ -540,8 +547,15 @@ pub fn digest(bytes: &[u8]) -> String {
     text
 }
 
+/// The key in a vendored package's `apm.yml` that says ShelfKit wrote the
+/// package, for which profile. A vendor extension (`x-`), which OpenAPM
+/// reserves for exactly this and APM ignores. `compile` replaces or removes
+/// files only inside a package that carries it for the profile it compiles.
+pub const OWNER_KEY: &str = "x-shelfkit-vendored-for";
+
 /// The `apm.yml` of a vendored package. A local `.apm/` package works
-/// without one, but naming it makes `apm deps` and the lockfile readable.
+/// without one, but naming it makes `apm deps` and the lockfile readable, and
+/// it carries the ownership marker.
 fn package_manifest(directory: &str, profile: &str) -> Node {
     Node::Map(vec![
         ("name".to_owned(), Node::string(directory)),
@@ -552,6 +566,7 @@ fn package_manifest(directory: &str, profile: &str) -> Node {
                 "Shelf items of profile {profile}, vendored by ShelfKit. Generated: edit the shelf, not this package."
             )),
         ),
+        (OWNER_KEY.to_owned(), Node::string(profile)),
     ])
 }
 

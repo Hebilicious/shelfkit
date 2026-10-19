@@ -10,7 +10,7 @@
     },
     {
       "path": "vendor/minimal/apm.yml",
-      "contents": "name: minimal\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile minimal, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\n"
+      "contents": "name: minimal\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile minimal, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\nx-shelfkit-vendored-for: minimal\n"
     }
   ],
   "installCommand": "apm install",

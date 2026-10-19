@@ -16,7 +16,9 @@ shelfkit-compiler = { path = "crates/compiler", version = "0.0.0", default-featu
 
 # Shared
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `float_roundtrip` everywhere: `jsonschema` turns it on in native builds
+# only, and a float must render the same bytes in the CLI and in WASM.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 serde_yaml = "0.9"
 thiserror = "2"
 sha2 = "0.10"

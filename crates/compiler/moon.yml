@@ -29,6 +29,7 @@ tasks:
       - "/crates/core/src/**/*"
       - "/crates/core/tests/fixtures/**/*"
       - "/shelf/**/*"
+      - "/packages/schema/acidcat.catalog.json"
       - "/Cargo.toml"
       - "/Cargo.lock"
   fmt:

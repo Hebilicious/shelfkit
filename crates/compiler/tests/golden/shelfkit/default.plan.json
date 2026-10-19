@@ -18,7 +18,7 @@
     },
     {
       "path": "vendor/default/apm.yml",
-      "contents": "name: default\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile default, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\n"
+      "contents": "name: default\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile default, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\nx-shelfkit-vendored-for: default\n"
     }
   ],
   "installCommand": "apm install",

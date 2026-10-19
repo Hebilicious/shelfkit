@@ -879,7 +879,7 @@ fn compile_command(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &Compile
                 let _ = writeln!(ctx.stderr, "would vendor {}", file.path);
             }
             print_notes(ctx, &plan);
-            let _ = writeln!(ctx.stderr, "then: {}", plan.install_command);
+            let _ = writeln!(ctx.stderr, "then: {}", next_steps(&plan));
         }
         return Ok(());
     }
@@ -929,12 +929,29 @@ fn compile_command(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &Compile
         }
     }
     print_notes(ctx, &plan);
-    let _ = writeln!(
-        ctx.stderr,
-        "next: {} (or `shelfkit install`)",
-        plan.install_command
-    );
+    let _ = writeln!(ctx.stderr, "next: {}", next_steps(&plan));
     Ok(())
+}
+
+/// What to run after compiling. A registry needs APM's experimental flag,
+/// which changes APM's own configuration, so it is a separate, one-time step
+/// that `shelfkit install` never takes for the user.
+fn next_steps(plan: &crate::CompiledManifest) -> String {
+    if declares_registries(&plan.apm_yml) {
+        "run `apm experimental enable registries` once on this machine (APM 0.33.0 reads \
+         registries only behind that flag, and `shelfkit install` does not change APM's \
+         configuration), then `apm install` or `shelfkit install`"
+            .to_owned()
+    } else {
+        "`apm install`, or `shelfkit install`".to_owned()
+    }
+}
+
+fn declares_registries(apm_yml: &str) -> bool {
+    crate::yaml::Node::parse(apm_yml)
+        .ok()
+        .and_then(|manifest| manifest.get("registries").cloned())
+        .is_some_and(|registries| !matches!(registries, crate::yaml::Node::Null))
 }
 
 fn verify(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &VerifyArgs) -> Outcome {
@@ -1106,6 +1123,18 @@ fn install(ctx: &mut Context<'_>, args: &InstallArgs) -> u8 {
     }
     let mut apm_args = vec!["install"];
     apm_args.extend(args.apm_args.iter().map(String::as_str));
+    let manifest = std::fs::read_to_string(repo.join(APM_YML)).unwrap_or_default();
+    if declares_registries(&manifest)
+        && let Some((program, enable)) = runner.command(&["experimental", "enable", "registries"])
+    {
+        let _ = writeln!(
+            ctx.stderr,
+            "note: this apm.yml routes dependencies through a registry, which APM 0.33.0 reads only \
+             behind its experimental `registries` flag. ShelfKit does not change APM's configuration; \
+             if APM refuses the registry, enable it once with:\n    {}",
+            apm::display_command(&program, &enable)
+        );
+    }
     let Some((program, full)) = runner.command(&apm_args) else {
         let _ = writeln!(
             ctx.stderr,

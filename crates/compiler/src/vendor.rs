@@ -159,9 +159,16 @@ fn require<'a>(loaded: &'a LoadedItem, file: &str) -> Result<&'a [u8], String> {
         .ok_or_else(|| format!("`{}` has no {file} to compile", loaded.item.id))
 }
 
+/// Text that ShelfKit renders into a primitive (a prompt, an instructions
+/// fragment): LF line endings, and a leading byte-order mark dropped, since
+/// generated frontmatter must start the file. Files copied whole keep theirs.
 fn text(loaded: &LoadedItem, bytes: &[u8]) -> Result<String, String> {
-    String::from_utf8(normalize_line_endings(bytes))
-        .map_err(|_| format!("`{}`: content must be UTF-8 text", loaded.item.id))
+    let text = String::from_utf8(normalize_line_endings(bytes))
+        .map_err(|_| format!("`{}`: content must be UTF-8 text", loaded.item.id))?;
+    Ok(text
+        .strip_prefix('\u{feff}')
+        .map(str::to_owned)
+        .unwrap_or(text))
 }
 
 /// Split a leading `---` YAML block off a markdown file.
