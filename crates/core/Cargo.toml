@@ -12,8 +12,8 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 sha2.workspace = true
+serde_yaml.workspace = true
 walkdir.workspace = true
-jsonschema.workspace = true
 
 [lints]
 workspace = true

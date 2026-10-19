@@ -1,183 +1,109 @@
-use crate::Result;
-use serde::{Deserialize, Serialize};
+//! A loaded shelf, and the notices `check` reports.
+
+use crate::error::{Error, Errors};
+use crate::item::{Item, ItemKind};
+use crate::profile::{Bundle, Manifest, Profile};
+use crate::resolve::ResolvedProfile;
+use crate::revision::Revision;
+use serde::Serialize;
 use std::collections::BTreeMap;
 
-/// The ten item kinds. Seven map one-to-one onto APM primitives; `lsp` is an
-/// unratified APM surface; `library` and `stack` are the shelf's own
-/// vocabulary and compile into APM instructions. See `docs/PRD.md` section 5.2.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ItemKind {
-    Skill,
-    Prompt,
-    Instructions,
-    Agent,
-    Hook,
-    Plugin,
-    Mcp,
-    Lsp,
-    Library,
-    Stack,
-}
-
-impl ItemKind {
-    /// The directory under `items/` that holds this kind.
-    pub const fn directory(self) -> &'static str {
-        match self {
-            Self::Skill => "skills",
-            Self::Prompt => "prompts",
-            Self::Instructions => "instructions",
-            Self::Agent => "agents",
-            Self::Hook => "hooks",
-            Self::Plugin => "plugins",
-            Self::Mcp => "mcp",
-            Self::Lsp => "lsp",
-            Self::Library => "libraries",
-            Self::Stack => "stacks",
-        }
-    }
-
-    /// `hook` cannot be pinned as an APM virtual-file dependency, because APM
-    /// classifies virtual files only by `.prompt.md`, `.instructions.md`, and
-    /// `.agent.md`. Hooks therefore always compile into the vendored package.
-    pub const fn apm_virtual_extension(self) -> Option<&'static str> {
-        match self {
-            Self::Prompt => Some(".prompt.md"),
-            Self::Instructions => Some(".instructions.md"),
-            Self::Agent => Some(".agent.md"),
-            _ => None,
-        }
-    }
-}
-
-/// One addressable primitive in a shelf.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Item {
-    pub id: String,
-    pub kind: ItemKind,
-    pub title: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(default)]
-    pub targets: Vec<String>,
-    #[serde(default)]
-    pub requires: Vec<String>,
-}
-
-impl Item {
-    /// Item ids are kebab-case and may not contain `__`, which is what makes
-    /// the MCP namespace separator in the PRD's section 8 unambiguous.
-    pub fn validate_id(id: &str) -> Result<()> {
-        let invalid = |message: &str| crate::Error::Invalid {
-            path: "<item>".into(),
-            message: format!("item id `{id}`: {message}"),
-        };
-
-        if id.is_empty() {
-            return Err(invalid("must not be empty"));
-        }
-        if id.contains("__") {
-            return Err(invalid(
-                "must not contain `__` (reserved for MCP namespacing)",
-            ));
-        }
-        if !id
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        {
-            return Err(invalid("must be lowercase kebab-case"));
-        }
-        if id.starts_with('-') || id.ends_with('-') {
-            return Err(invalid("must not start or end with a hyphen"));
-        }
-        Ok(())
-    }
-}
-
-/// Why a profile compiles the way it does when the target already has a
-/// conflicting declaration. Not a merge: a half-applied convention is worse
-/// than either whole one.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum OnConflict {
-    #[default]
-    Fail,
-    ShelfWins,
-    LocalWins,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Pin {
-    #[default]
-    Revision,
-    Latest,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompileOptions {
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub targets: Vec<String>,
-    #[serde(default)]
-    pub pin: Pin,
-    #[serde(default)]
-    pub on_conflict: OnConflict,
-    #[serde(default = "default_true")]
-    pub vendor_authored: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-impl Default for CompileOptions {
-    fn default() -> Self {
-        Self {
-            name: None,
-            targets: Vec::new(),
-            pin: Pin::Revision,
-            on_conflict: OnConflict::Fail,
-            vendor_authored: true,
-        }
-    }
-}
-
-/// A named selection of items. A profile is what a user installs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Profile {
-    pub id: String,
-    pub title: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub items: Vec<String>,
-    /// Named item groups, expanded before `extends`. A bundle has no compile
-    /// settings and is not itself installable.
-    #[serde(default)]
-    pub bundles: Vec<String>,
-    #[serde(default)]
-    pub extends: Vec<String>,
-    #[serde(default)]
-    pub compile: CompileOptions,
-}
-
-/// A loaded shelf: the manifest plus its items and profiles.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A shelf that loaded and validated completely. There is no partially
+/// loaded shelf: [`crate::load`] returns every error instead.
+#[derive(Debug, Clone)]
 pub struct Shelf {
-    pub name: String,
-    #[serde(default)]
-    pub owner: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub default_profile: Option<String>,
-    #[serde(default)]
-    pub items: BTreeMap<String, Item>,
-    #[serde(default)]
+    pub manifest: Manifest,
+    /// Items by id.
+    pub items: BTreeMap<String, LoadedItem>,
+    /// Bundles by id.
+    pub bundles: BTreeMap<String, Bundle>,
+    /// Profiles by id.
     pub profiles: BTreeMap<String, Profile>,
+}
+
+/// An item, with the directory it was loaded from and its revision.
+///
+/// `files` are the bytes the source returned, keyed by path relative to the
+/// item directory, and `revision` is [`Revision::of_files`] over exactly
+/// those bytes. Both are computed once, at load, and everything downstream
+/// (the compiler, `push`, the Worker) uses them rather than re-reading the
+/// directory, so `compile` and `push` cannot disagree about a revision.
+/// Content is stored as found; a consumer that emits it uses
+/// [`crate::revision::normalize_line_endings`] for platform-independent bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedItem {
+    pub item: Item,
+    /// The item directory, relative to the shelf root: `items/prompts/x`.
+    pub path: String,
+    pub revision: Revision,
+    pub files: BTreeMap<String, Vec<u8>>,
+}
+
+impl LoadedItem {
+    /// The path of the item's `item.json`, for messages.
+    pub fn item_json(&self) -> String {
+        format!("{}/item.json", self.path)
+    }
+
+    pub fn kind(&self) -> ItemKind {
+        self.item.kind()
+    }
+}
+
+/// Something `check` reports that does not stop a load or a compile.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Notice {
+    /// The file the notice is about.
+    pub path: String,
+    pub code: NoticeCode,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NoticeCode {
+    /// A profile opted into a CLI-only target, so its manifest is
+    /// Producer-nonconformant under OpenAPM v0.1.
+    ProducerNonconformantTarget,
+    /// A profile includes an `lsp` item, whose `dependencies.lsp` key is
+    /// absent from the published OpenAPM v0.1 schema.
+    UnratifiedLsp,
+    /// A profile pins a revision that is not the item's current one.
+    StalePin,
+}
+
+impl std::fmt::Display for Notice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.path, self.message)
+    }
+}
+
+impl Shelf {
+    /// Resolve one profile. Every profile already resolved once at load, so
+    /// this fails only for an id the shelf does not have.
+    pub fn resolve(&self, profile: &str) -> Result<ResolvedProfile, Errors> {
+        crate::resolve::resolve(self, profile).map_err(|errors| {
+            let mut all = Errors::new();
+            all.extend(errors);
+            all
+        })
+    }
+
+    /// Everything `shelfkit check` reports beyond load errors, sorted.
+    pub fn check(&self) -> Vec<Notice> {
+        let mut notices: Vec<Notice> = self
+            .profiles
+            .keys()
+            .filter_map(|id| crate::resolve::resolve(self, id).ok())
+            .flat_map(|resolved| resolved.notices)
+            .collect();
+        notices.sort();
+        notices.dedup();
+        notices
+    }
+
+    pub(crate) fn unknown_profile(id: &str) -> Error {
+        Error::invalid(format!("profiles/{id}.json"), format!("no profile `{id}`"))
+    }
 }

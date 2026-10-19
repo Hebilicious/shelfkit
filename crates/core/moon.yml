@@ -7,9 +7,29 @@ tasks:
     command: "cargo build --package shelfkit-core"
   check:
     command: "cargo clippy --package shelfkit-core --all-targets -- -D warnings"
+    deps:
+      - "check-wasm"
+  check-wasm:
+    description: "Prove the crate builds for WASM, where the Worker and the browser preview load shelves from memory."
+    command: "cargo clippy --package shelfkit-core --target wasm32-unknown-unknown -- -D warnings"
+    deps:
+      - "wasm-target"
+  wasm-target:
+    description: "Install the WASM target into the pinned toolchain, whose version is read from the rustc on PATH."
+    # Not the `targets` setting in .moon/toolchains.yml: moon 2.5.5 runs `rustup target add` without
+    # `--toolchain`, which installs into rustup's default toolchain rather than the pinned one.
+    script: "rustup target add wasm32-unknown-unknown --toolchain \"$(rustc --version | cut -d ' ' -f 2)\""
+    options:
+      cache: false
   lint:
     command: "cargo fmt --package shelfkit-core --check"
   test:
     command: "cargo test --package shelfkit-core"
+    # The tests load ShelfKit's own shelf as well as the fixtures beside them.
+    inputs:
+      - "**/*"
+      - "/shelf/**/*"
+      - "/Cargo.toml"
+      - "/Cargo.lock"
   fmt:
     command: "cargo fmt --package shelfkit-core"
