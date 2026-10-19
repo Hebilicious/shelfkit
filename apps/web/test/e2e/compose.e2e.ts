@@ -167,3 +167,31 @@ test("a prompt.md that starts with a byte-order mark previews as the CLI compile
   const preview = await settledPreview(page);
   expect(preview.planJson).toBe(dryRun(root, "minimal"));
 });
+
+test("undoing a removal puts back that item only, keeping later edits", async ({
+  page,
+}) => {
+  await page.goto(`/shelves/${SHELF}/compose/full`);
+  await expect(page.locator("[data-profile-item]").first()).toBeVisible();
+  const order = await page
+    .locator("[data-profile-item]")
+    .evaluateAll((items) =>
+      items.map((item) =>
+        item instanceof HTMLElement ? item.dataset.profileItem : null
+      )
+    );
+  await page.getByRole("button", { name: "Remove playwright" }).click();
+  await page.getByTestId("add-format-on-save").click();
+  await page.getByRole("button", { name: "Undo" }).click();
+
+  const items = page.locator("[data-profile-item]");
+  await expect(items.filter({ hasText: "format-on-save" })).toHaveCount(1);
+  await expect(items.filter({ hasText: "playwright" })).toHaveCount(1);
+  // Playwright is back where it was, among the MCP items.
+  const after = await items.evaluateAll((elements) =>
+    elements.map((item) =>
+      item instanceof HTMLElement ? item.dataset.profileItem : null
+    )
+  );
+  expect(after.filter((id) => id !== "format-on-save")).toStrictEqual(order);
+});

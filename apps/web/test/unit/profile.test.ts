@@ -8,6 +8,7 @@ import {
   pinItem,
   placeItem,
   removeItem,
+  restoreItem,
   slugify,
 } from "../../src/lib/profile.ts";
 
@@ -34,6 +35,22 @@ describe("editing a profile in the composer", () => {
     expect(profile.items[0]).toBe("d");
     profile = removeItem(pinItem(profile, "b", null), "b");
     expect(profile.items).toStrictEqual(["d", "a", "c"]);
+  });
+
+  it("undoes one removal, pinned ref and position kept, later edits kept", () => {
+    const start = pinItem(
+      addItems(emptyProfile("p", "P"), ["a", "b", "c"]),
+      "b",
+      revision
+    );
+    const edited = addItems(removeItem(start, "b"), ["d"]);
+    expect(restoreItem(edited, `b@${revision}`, 1).items).toStrictEqual([
+      "a",
+      `b@${revision}`,
+      "c",
+      "d",
+    ]);
+    expect(restoreItem(start, "b", 0)).toBe(start);
   });
 
   it("leaves empty optional fields out of the stored document", () => {

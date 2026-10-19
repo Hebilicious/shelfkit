@@ -23,6 +23,7 @@ import {
   placeItem,
   refId,
   removeItem,
+  restoreItem,
 } from "../lib/profile.ts";
 import { param } from "../router.ts";
 
@@ -118,15 +119,22 @@ function add(id: string, at: number | null): void {
   draft.value = at === null ? addItems(draft.value, [id]) : placeItem(draft.value, id, at);
 }
 
-/** Take an item out of the profile; Undo puts the draft back as it was. */
+/** Take an item out of the profile; Undo puts that item back where it was, keeping any edit made since. */
 function remove(id: string): void {
   const before = draft.value;
   if (before === null) {
     return;
   }
+  const index = before.items.findIndex((itemRef) => refId(itemRef) === id);
+  const removed = before.items[index];
+  if (removed === undefined) {
+    return;
+  }
   draft.value = removeItem(before, id);
   notify(`Removed ${id} from the profile.`, async () => {
-    draft.value = before;
+    if (draft.value !== null) {
+      draft.value = restoreItem(draft.value, removed, index);
+    }
     await Promise.resolve();
   });
 }

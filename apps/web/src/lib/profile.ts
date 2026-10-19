@@ -72,6 +72,26 @@ export function placeItem(
   };
 }
 
+/**
+ * Put a removed item back exactly as it was named (pinned or not) at its old position, leaving every other edit made
+ * since: undo of one removal. Nothing changes when the profile names the item again already.
+ */
+export function restoreItem(
+  profile: Profile,
+  itemRef: string,
+  index: number
+): Profile {
+  const id = refId(itemRef);
+  if (profile.items.some((existing) => refId(existing) === id)) {
+    return profile;
+  }
+  const at = Math.max(0, Math.min(index, profile.items.length));
+  return {
+    ...profile,
+    items: [...profile.items.slice(0, at), itemRef, ...profile.items.slice(at)],
+  };
+}
+
 export function removeItem(profile: Profile, id: string): Profile {
   return {
     ...profile,
