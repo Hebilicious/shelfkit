@@ -85,7 +85,8 @@ function wrangler(
     stdio: [
       options.input === undefined ? "inherit" : "pipe",
       options.quiet === true ? "pipe" : "inherit",
-      "inherit",
+      // A quiet command is a probe whose exit code is the answer, so its error output is not the user's business.
+      options.quiet === true ? "pipe" : "inherit",
     ],
   });
   if (ran.error !== undefined) {

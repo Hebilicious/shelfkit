@@ -150,12 +150,12 @@ async function send(
   const body = new Uint8Array(await response.arrayBuffer());
   const answered = new Headers();
   for (const [name, value] of response.headers) {
-    answered.append(name, value.replaceAll(shelf, owner));
+    answered.append(name, restore(value, shelf, owner));
   }
   const media = response.headers.get("content-type") ?? "";
   const restored = media.includes("json")
     ? new TextEncoder().encode(
-        new TextDecoder().decode(body).replaceAll(shelf, owner)
+        restore(new TextDecoder().decode(body), shelf, owner)
       )
     : body;
   return { body: restored, headers: answered, status: response.status };
@@ -187,6 +187,13 @@ async function main(): Promise<void> {
   }
   console.log(
     `${url}: every registry conformance scenario passes (${suite.scenarios.length} scenarios).`
+  );
+}
+
+/** `text` with the scenario's shelf written back as the suite's owner, in whatever case the answer used. */
+function restore(text: string, shelf: string, owner: string): string {
+  return text.replaceAll(new RegExp(shelf, "giu"), (found) =>
+    sameCase(found, owner)
   );
 }
 
