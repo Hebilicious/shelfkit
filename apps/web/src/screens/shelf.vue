@@ -247,7 +247,7 @@ const SCAN_TONE = { clean: "info", disputed: "warn", flagged: "danger", unscanne
 }
 
 .inventory__about {
-  max-width: var(--shape-measure-prose);
+  max-width: var(--layout-measure-prose);
 }
 
 .kind {

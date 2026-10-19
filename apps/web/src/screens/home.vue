@@ -47,7 +47,7 @@ watch(
 
 <style scoped>
 .home {
-  max-width: calc(var(--shape-measure-prose) * 1.5);
+  max-width: calc(var(--layout-measure-prose) * 1.5);
   margin: 0 auto;
   width: 100%;
 }

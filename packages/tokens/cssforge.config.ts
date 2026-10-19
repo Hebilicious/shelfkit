@@ -164,7 +164,7 @@ export default defineConfig({
         },
       },
     },
-    shape: {
+    layout: {
       value: {
         radius: {
           value: {

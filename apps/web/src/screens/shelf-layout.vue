@@ -91,7 +91,7 @@ function active(name: string): boolean {
 
 .shelf-nav__link {
   padding: var(--spacing-size-1) var(--spacing-size-2);
-  border-radius: var(--shape-radius-s);
+  border-radius: var(--layout-radius-s);
   color: var(--text-muted);
   text-decoration: none;
   font-size: var(--typography_fluid-sans-text-s);

@@ -24,7 +24,7 @@ import { runUndo, toasts } from "../composables/toasts.ts";
   inset-inline-end: var(--spacing-size-4);
   display: grid;
   gap: var(--spacing-size-2);
-  max-width: var(--shape-measure-prose);
+  max-width: var(--layout-measure-prose);
 }
 
 .toast {
@@ -33,7 +33,7 @@ import { runUndo, toasts } from "../composables/toasts.ts";
   gap: var(--spacing-size-3);
   padding: var(--spacing-size-2) var(--spacing-size-3);
   border: var(--hairline);
-  border-radius: var(--shape-radius-m);
+  border-radius: var(--layout-radius-m);
   background: var(--surface-raised);
   font-size: var(--typography_fluid-sans-text-s);
 }

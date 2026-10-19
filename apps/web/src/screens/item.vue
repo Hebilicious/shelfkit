@@ -420,12 +420,12 @@ const PROVENANCE_FIELDS = [
 .content {
   display: grid;
   gap: var(--spacing-size-3);
-  max-width: calc(var(--shape-measure-prose) * 1.4);
+  max-width: calc(var(--layout-measure-prose) * 1.4);
 }
 
 .split {
   display: grid;
-  grid-template-columns: var(--shape-measure-pane) minmax(0, 1fr);
+  grid-template-columns: var(--layout-measure-pane) minmax(0, 1fr);
   gap: var(--spacing-size-4);
   align-items: start;
 }

@@ -81,13 +81,13 @@
 --font-family-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
 --font-leading-tight: 1.25;
 --font-leading-normal: 1.5;
-/* shape */
---shape-radius-s: 0.25rem;
---shape-radius-m: 0.5rem;
---shape-radius-pill: 999rem;
---shape-border-hairline: 0.0625rem;
---shape-border-thick: 0.125rem;
---shape-measure-rail: 18rem;
---shape-measure-pane: 22rem;
---shape-measure-prose: 68ch;
+/* layout */
+--layout-radius-s: 0.25rem;
+--layout-radius-m: 0.5rem;
+--layout-radius-pill: 999rem;
+--layout-border-hairline: 0.0625rem;
+--layout-border-thick: 0.125rem;
+--layout-measure-rail: 18rem;
+--layout-measure-pane: 22rem;
+--layout-measure-prose: 68ch;
 }

@@ -59,7 +59,7 @@ async function submit(): Promise<void> {
 
 <style scoped>
 .sign-in {
-  max-width: var(--shape-measure-prose);
+  max-width: var(--layout-measure-prose);
   margin: 0 auto;
   width: 100%;
 }

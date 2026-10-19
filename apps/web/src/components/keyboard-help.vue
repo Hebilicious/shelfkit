@@ -63,7 +63,7 @@ const emit = defineEmits<{ close: [] }>();
 }
 
 .help {
-  border-width: var(--shape-border-thick);
-  width: min(var(--shape-measure-prose), 100%);
+  border-width: var(--layout-border-thick);
+  width: min(var(--layout-measure-prose), 100%);
 }
 </style>

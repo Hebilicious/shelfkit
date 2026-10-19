@@ -339,51 +339,51 @@ export const cssForge = {
         }
       }
     },
-    "shape": {
+    "layout": {
       "radius": {
         "s": {
-          "key": "--shape-radius-s",
+          "key": "--layout-radius-s",
           "value": "0.25rem",
-          "variable": "--shape-radius-s: 0.25rem;"
+          "variable": "--layout-radius-s: 0.25rem;"
         },
         "m": {
-          "key": "--shape-radius-m",
+          "key": "--layout-radius-m",
           "value": "0.5rem",
-          "variable": "--shape-radius-m: 0.5rem;"
+          "variable": "--layout-radius-m: 0.5rem;"
         },
         "pill": {
-          "key": "--shape-radius-pill",
+          "key": "--layout-radius-pill",
           "value": "999rem",
-          "variable": "--shape-radius-pill: 999rem;"
+          "variable": "--layout-radius-pill: 999rem;"
         }
       },
       "border": {
         "hairline": {
-          "key": "--shape-border-hairline",
+          "key": "--layout-border-hairline",
           "value": "0.0625rem",
-          "variable": "--shape-border-hairline: 0.0625rem;"
+          "variable": "--layout-border-hairline: 0.0625rem;"
         },
         "thick": {
-          "key": "--shape-border-thick",
+          "key": "--layout-border-thick",
           "value": "0.125rem",
-          "variable": "--shape-border-thick: 0.125rem;"
+          "variable": "--layout-border-thick: 0.125rem;"
         }
       },
       "measure": {
         "rail": {
-          "key": "--shape-measure-rail",
+          "key": "--layout-measure-rail",
           "value": "18rem",
-          "variable": "--shape-measure-rail: 18rem;"
+          "variable": "--layout-measure-rail: 18rem;"
         },
         "pane": {
-          "key": "--shape-measure-pane",
+          "key": "--layout-measure-pane",
           "value": "22rem",
-          "variable": "--shape-measure-pane: 22rem;"
+          "variable": "--layout-measure-pane: 22rem;"
         },
         "prose": {
-          "key": "--shape-measure-prose",
+          "key": "--layout-measure-prose",
           "value": "68ch",
-          "variable": "--shape-measure-prose: 68ch;"
+          "variable": "--layout-measure-prose: 68ch;"
         }
       }
     }

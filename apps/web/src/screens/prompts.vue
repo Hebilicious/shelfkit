@@ -225,7 +225,7 @@ async function created(id: string): Promise<void> {
 <style scoped>
 .prompts {
   display: grid;
-  grid-template-columns: var(--shape-measure-pane) 1fr;
+  grid-template-columns: var(--layout-measure-pane) 1fr;
   min-height: 0;
 }
 
