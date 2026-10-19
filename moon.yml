@@ -4,7 +4,7 @@ tags: ["root"]
 
 project:
   title: "ShelfKit"
-  description: "Repository-wide checks. Each project's own tasks live in its moon.yml."
+  description: "Repository-wide checks and the git hooks. Each project's own tasks live in its moon.yml."
 
 fileGroups:
   typescript:
@@ -27,10 +27,11 @@ fileGroups:
 # Binaries are invoked by their path in node_modules/.bin, which moon does not put on PATH.
 tasks:
   lint:
-    description: "Lint every TypeScript file with Ultracite's rules and the anti-slop rules, type-aware, denying warnings; then the formatting check."
+    description: "Lint every TypeScript file with Ultracite's rules and the anti-slop rules, type-aware, denying warnings, after the formatting and authorship checks."
     command: "node_modules/.bin/oxlint --type-aware --deny-warnings"
     deps:
       - "format-check"
+      - "authorship-check"
     inputs:
       - "@group(typescript)"
       - "@group(configs)"
@@ -48,3 +49,20 @@ tasks:
     command: "node_modules/.bin/oxfmt --check ."
     options:
       cache: false
+
+  authorship-check:
+    description: "Refuse AI attribution in the commits this branch adds; pass a range after -- to check another."
+    command: "node_modules/.bin/gommage check"
+    inputs:
+      - ".gommage.yml"
+    options:
+      cache: false
+
+  hooks-install:
+    description: "Install the lefthook git hooks for this clone."
+    command: "node_modules/.bin/lefthook install"
+    inputs:
+      - "lefthook.yml"
+    options:
+      cache: false
+      runInCI: false

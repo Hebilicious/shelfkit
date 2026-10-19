@@ -1,0 +1,16 @@
+version: 1
+
+# Authorship policy: AI assistants stay out of commit authors and messages.
+#
+# `allow-human-coauthors` stays true and `max-authors` stays unset on purpose: with either set, a repair could delete
+# a human collaborator's attribution instead of only AI attribution. The built-in badge patterns already cover every
+# generated-with footer, so the one entry here is scoped to a shape that is attribution and not prose.
+rules:
+  no-ai-coauthor: true
+  allow-human-coauthors: true
+  blocked-patterns:
+    - "/🤖.*(generated|claude|codex|copilot|cursor)/i"
+
+# What a local run checks: the commits a branch adds to the published main.
+scope:
+  range: "origin/main..HEAD"
