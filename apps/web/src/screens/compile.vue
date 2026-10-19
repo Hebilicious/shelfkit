@@ -111,26 +111,39 @@ async function matchStacks(opened: OpenedRepository): Promise<void> {
 }
 
 /** Ask the engine what compiling into the opened repository does, exactly as `shelfkit compile --repo` would. */
-async function plannedOutput(): Promise<void> {
-  output.value = null;
-  outputErrors.value = [];
-  const opened = repository.value;
+/** What compiling into a repository would do, or why it cannot be planned. */
+interface Planned {
+  readonly output: RepositoryOutput | null;
+  readonly errors: string[];
+}
+
+async function planFor(opened: OpenedRepository | null): Promise<Planned> {
   const current = plan.value;
   if (opened === null || current === null || opened.refusal !== null) {
-    return;
+    return { errors: [], output: null };
   }
   const engine = await loadEngine();
   const result = engine.output(current, opened.snapshot, onConflict.value);
-  if (result.ok) {
-    output.value = result.value;
-  } else {
-    outputErrors.value = result.errors.map((error) => `${error.path}: ${error.message}`);
-  }
+  return result.ok
+    ? { errors: [], output: result.value }
+    : { errors: result.errors.map((error) => `${error.path}: ${error.message}`), output: null };
 }
+
+async function plannedOutput(): Promise<void> {
+  output.value = null;
+  outputErrors.value = [];
+  const planned = await planFor(repository.value);
+  output.value = planned.output;
+  outputErrors.value = planned.errors;
+}
+
+/** The repository changed between opening it and writing: the plan shown was replaced, and nothing was written. */
+const changedSinceOpen = ref(false);
 
 async function open(): Promise<void> {
   problem.value = null;
   written.value = false;
+  changedSinceOpen.value = false;
   try {
     const handle = await pickRepository();
     busy.value = true;
@@ -161,7 +174,19 @@ async function write(): Promise<void> {
   }
   busy.value = true;
   problem.value = null;
+  changedSinceOpen.value = false;
   try {
+    // Read the repository again and plan again right before writing: what was planned when it was opened may no
+    // longer fit it. If the plan differs from the one shown, show the new one and write nothing.
+    const fresh = await readRepository(handle);
+    const replanned = await planFor(fresh);
+    repository.value = fresh;
+    if (JSON.stringify(replanned.output) !== JSON.stringify(planned)) {
+      output.value = replanned.output;
+      outputErrors.value = replanned.errors;
+      changedSinceOpen.value = true;
+      return;
+    }
     await applyOutput(handle, planned);
     written.value = true;
     notify(`Wrote ${planned.write.length} files into ${handle.name}.`);
@@ -272,12 +297,30 @@ const cliCommand = computed(() => `shelfkit compile ${profileId.value} --repo .`
               <button type="button" @click="download">Download apm.yml</button>
               <code class="small">{{ cliCommand }}</code>
             </div>
+            <p
+              v-if="plan.files.length > 0"
+              class="small severity-warning"
+              data-testid="download-incomplete"
+            >
+              This manifest installs <code>./vendor/{{ plan.profile }}</code>, whose {{ plan.files.length }} vendored files
+              the download does not include: <code>apm install</code> fails without them. Run the CLI command above to
+              write them too.
+            </p>
           </template>
           <p v-if="problem !== null" class="error-text small" role="alert">{{ problem }}</p>
           <template v-if="repository !== null">
             <p v-if="stacks !== null" class="small" data-testid="repository-stacks">
               <template v-if="stacks.length === 0">No stack of this shelf matches its package.json.</template>
               <template v-else>Matches: <span v-for="stack in stacks" :key="stack" class="chip on">{{ stack }}</span></template>
+            </p>
+            <p
+              v-if="changedSinceOpen"
+              class="severity-warning small"
+              data-testid="output-changed"
+              role="alert"
+            >
+              The repository changed since it was opened, so nothing was written. This is the plan for it as it is now;
+              write again to apply it.
             </p>
             <p v-if="repository.refusal !== null" class="error-text small" role="alert">{{ repository.refusal }}</p>
             <ul

@@ -7,20 +7,22 @@
  * after it (reading the repository, `Engine.output`, writing) is the code a person's browser runs. The result is then
  * compared, file by file, with what `shelfkit compile --repo` writes into a copy of the same repository.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
-import path from "node:path";
-
 import { expect, test } from "@playwright/test";
-import type { Page } from "@playwright/test";
 
+import {
+  browserRepository,
+  stubDirectoryPicker,
+  writeBrowserRepository,
+  writeDiskRepository,
+} from "./repository.ts";
 import {
   FIXTURES,
   clipboard,
   fetchShelf,
-  readTree,
   seedShelf,
   shelfkit,
   signIn,
+  sortedTree,
   temporary,
 } from "./support.ts";
 import type { FileTree } from "./support.ts";
@@ -40,68 +42,14 @@ test.beforeAll(() => {
   seedShelf(FIXTURES.allKinds, SHELF);
 });
 
-async function prepareRepository(page: Page): Promise<void> {
-  await page.evaluate(
-    async ({ files, name }) => {
-      const root = await navigator.storage.getDirectory();
-      await root.removeEntry(name, { recursive: true }).catch(() => null);
-      const repo = await root.getDirectoryHandle(name, { create: true });
-      await Promise.all(
-        Object.entries(files).map(async ([file, contents]) => {
-          const handle = await repo.getFileHandle(file, { create: true });
-          const writable = await handle.createWritable();
-          await writable.write(contents);
-          await writable.close();
-        })
-      );
-    },
-    { files: EXISTING, name: REPOSITORY_NAME }
-  );
-}
-
-async function repositoryTree(page: Page): Promise<FileTree> {
-  return await page.evaluate(async (name) => {
-    const files: FileTree = {};
-    async function walk(
-      directory: FileSystemDirectoryHandle,
-      prefix: string
-    ): Promise<void> {
-      const entries: FileSystemHandle[] = [];
-      for await (const entry of directory.values()) {
-        entries.push(entry);
-      }
-      await Promise.all(
-        entries.map(async (entry) => {
-          const relative =
-            prefix === "" ? entry.name : `${prefix}/${entry.name}`;
-          if (entry instanceof FileSystemDirectoryHandle) {
-            await walk(entry, relative);
-          } else if (entry instanceof FileSystemFileHandle) {
-            const file = await entry.getFile();
-            files[relative] = await file.text();
-          }
-        })
-      );
-    }
-    const root = await navigator.storage.getDirectory();
-    await walk(await root.getDirectoryHandle(name), "");
-    return files;
-  }, REPOSITORY_NAME);
-}
-
 test("finds a prompt, copies it filled in, composes a profile and compiles it into a repository", async ({
   page,
 }) => {
-  await page.addInitScript((name) => {
-    window.showDirectoryPicker = async () => {
-      const root = await navigator.storage.getDirectory();
-      return await root.getDirectoryHandle(name, { create: true });
-    };
-  }, REPOSITORY_NAME);
+  await stubDirectoryPicker(page, REPOSITORY_NAME);
 
   await signIn(page);
   await page.goto(`/shelves/${SHELF}`);
-  await prepareRepository(page);
+  await writeBrowserRepository(page, REPOSITORY_NAME, EXISTING, true);
 
   // 1. Find a prompt by what it says, and copy it with its variables filled in.
   await page.locator("body").press("g");
@@ -155,12 +103,7 @@ test("finds a prompt, copies it filled in, composes a profile and compiles it in
 
   // What the browser wrote is exactly what the CLI writes into the same repository.
   const cliRepository = temporary("m3-repo");
-  for (const [file, contents] of Object.entries(EXISTING)) {
-    mkdirSync(path.dirname(path.join(cliRepository, file)), {
-      recursive: true,
-    });
-    writeFileSync(path.join(cliRepository, file), contents);
-  }
+  writeDiskRepository(cliRepository, EXISTING);
   shelfkit([
     "--shelf",
     fetchShelf(SHELF),
@@ -169,14 +112,9 @@ test("finds a prompt, copies it filled in, composes a profile and compiles it in
     "--repo",
     cliRepository,
   ]);
-  const browserTree = await repositoryTree(page);
-  const sorted = new Map(
-    Object.entries(browserTree).toSorted(([a], [b]) => a.localeCompare(b))
-  );
-  expect([...sorted]).toStrictEqual(
-    [...readTree(cliRepository)].toSorted(([a], [b]) => a.localeCompare(b))
-  );
-  expect(browserTree["apm.yml"]).toContain("acme/house-style");
+  const written = await browserRepository(page, REPOSITORY_NAME);
+  expect(written).toStrictEqual(sortedTree(cliRepository));
+  expect(new Map(written).get("apm.yml")).toContain("acme/house-style");
 
   // 4. Copy the install command.
   await page.getByTestId("copy-install").click();

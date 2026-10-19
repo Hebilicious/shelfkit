@@ -15,7 +15,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { expect } from "@playwright/test";
-import type { Page } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
+import type { Profile } from "@shelfkit/schema";
 
 export const PORT = 8792;
 export const BASE_URL = `http://localhost:${PORT}`;
@@ -110,6 +111,11 @@ export function readTree(root: string, prefix = ""): Map<string, string> {
   return files;
 }
 
+/** Every file under a directory, as `[path, text]` pairs sorted by path, to compare with `browserRepository`. */
+export function sortedTree(root: string): [string, string][] {
+  return [...readTree(root)].toSorted(([a], [b]) => a.localeCompare(b));
+}
+
 /** Sign in through the sign-in screen with the owner key; the browser keeps it in the HttpOnly cookie. */
 export async function signIn(page: Page): Promise<void> {
   await page.goto("/sign-in");
@@ -121,4 +127,24 @@ export async function signIn(page: Page): Promise<void> {
 /** The clipboard's text. */
 export async function clipboard(page: Page): Promise<string> {
   return await page.evaluate(async () => await navigator.clipboard.readText());
+}
+
+/** Save a profile as another client would: over GraphQL, with the owner key in the `Authorization` header. */
+export async function saveProfileAsOwner(
+  request: APIRequestContext,
+  shelf: string,
+  document: Profile
+): Promise<void> {
+  const response = await request.post(`${BASE_URL}/graphql`, {
+    data: {
+      query:
+        "mutation ($shelf: ID!, $document: JSON!) { saveProfile(shelf: $shelf, document: $document) { ok } }",
+      variables: { document, shelf },
+    },
+    headers: { authorization: `Bearer ${OWNER_KEY}` },
+  });
+  expect(response.ok()).toBe(true);
+  expect(await response.json()).toStrictEqual({
+    data: { saveProfile: { ok: true } },
+  });
 }
