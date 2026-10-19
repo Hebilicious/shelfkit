@@ -77,8 +77,9 @@ const shelfInput = { shelf: ShelfIdSchema };
 export const shelfSearch = {
   audience,
   description:
-    "Search one shelf's items by text over titles, descriptions, tags, and prompt bodies. Filter by kind and tag. " +
-    "Returns summaries; read an item with shelf.item.get.",
+    "Search one shelf's items by text over titles, descriptions, tags, and prompt bodies. Filter by kind and tag; " +
+    'with no query, list every item that passes the filters, such as every MCP server with kinds ["mcp"]. ' +
+    "Returns summaries; read an item with shelf.item.get, which gives an MCP server's whole definition.",
   failures: { ShelfNotFound: ShelfNotFoundSchema },
   id: "shelf.search",
   input: v.strictObject({
@@ -88,7 +89,8 @@ export const shelfSearch = {
     limit: v.optional(
       v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(50))
     ),
-    query: v.pipe(v.string(), v.minLength(1), v.maxLength(256)),
+    /** The text to match. Without it, every item passes, so `kinds: ["mcp"]` lists the shelf's MCP servers. */
+    query: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(256))),
     /** Items carrying every one of these tags. */
     tags: v.optional(v.array(v.string())),
   }),
