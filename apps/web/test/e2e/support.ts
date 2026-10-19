@@ -148,3 +148,27 @@ export async function saveProfileAsOwner(
     data: { saveProfile: { ok: true } },
   });
 }
+
+/** Create a prompt as another client would: over GraphQL, with the owner key in the `Authorization` header. */
+export async function writePromptAsOwner(
+  request: APIRequestContext,
+  shelf: string,
+  prompt: { readonly id: string; readonly title: string; readonly body: string }
+): Promise<void> {
+  const response = await request.post(`${BASE_URL}/graphql`, {
+    data: {
+      query:
+        "mutation ($shelf: ID!, $document: JSON!, $files: [ItemFileInput!]!) { writeItem(shelf: $shelf, document: $document, files: $files) { ok } }",
+      variables: {
+        document: { id: prompt.id, kind: "prompt", title: prompt.title },
+        files: [{ contents: prompt.body, path: "prompt.md" }],
+        shelf,
+      },
+    },
+    headers: { authorization: `Bearer ${OWNER_KEY}` },
+  });
+  expect(response.ok()).toBe(true);
+  expect(await response.json()).toStrictEqual({
+    data: { writeItem: { ok: true } },
+  });
+}

@@ -56,27 +56,57 @@ function readEvent(data: unknown): ShelfChange | null {
   }
 }
 
-/** Follow one shelf's changes, replacing any shelf followed before; `null` stops following. */
-export function followShelf(shelf: string | null): void {
-  if (shelf === subscribed) {
-    return;
-  }
+/** The first wait before reconnecting, doubled after each failure up to `RECONNECT_MAX_MS`. */
+const RECONNECT_FIRST_MS = 1000;
+const RECONNECT_MAX_MS = 30_000;
+
+let reconnectDelay = RECONNECT_FIRST_MS;
+let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+
+function disconnect(): void {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = undefined;
   source?.close();
   source = null;
-  subscribed = shelf;
-  if (shelf === null || typeof EventSource === "undefined") {
-    liveState.value = "off";
-    return;
-  }
+}
+
+/** Try again after the current delay, and wait longer the next time. */
+function scheduleReconnect(shelf: string): void {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    if (subscribed === shelf) {
+      connect(shelf);
+    }
+  }, reconnectDelay);
+  reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+}
+
+/**
+ * Open the subscription. `EventSource` retries a dropped connection by itself, but gives up for good on an error
+ * answer (a 503, say): then this reconnects, backing off. A connection that opens after any error refetches every
+ * screen's data, since changes made while it was down sent no event.
+ */
+function connect(shelf: string): void {
+  disconnect();
   liveState.value = "connecting";
+  let missedChanges = reconnectDelay !== RECONNECT_FIRST_MS;
   const next = new EventSource(getUrl(ShelfChangedSubscription, { shelf }), {
     withCredentials: true,
   });
   next.addEventListener("open", () => {
     liveState.value = "live";
+    reconnectDelay = RECONNECT_FIRST_MS;
+    if (missedChanges) {
+      missedChanges = false;
+      shelfChanges.value += 1;
+    }
   });
   next.addEventListener("error", () => {
     liveState.value = "connecting";
+    missedChanges = true;
+    if (next.readyState === EventSource.CLOSED && source === next) {
+      scheduleReconnect(shelf);
+    }
   });
   next.addEventListener("next", (message: MessageEvent<unknown>) => {
     const event = readEvent(message.data);
@@ -85,9 +115,28 @@ export function followShelf(shelf: string | null): void {
       shelfChanges.value += 1;
     }
   });
+  // The server ended the subscription; the shelf is still followed, so subscribe again.
   next.addEventListener("complete", () => {
     next.close();
-    liveState.value = "off";
+    if (source === next) {
+      liveState.value = "connecting";
+      scheduleReconnect(shelf);
+    }
   });
   source = next;
+}
+
+/** Follow one shelf's changes, replacing any shelf followed before; `null` stops following. */
+export function followShelf(shelf: string | null): void {
+  if (shelf === subscribed) {
+    return;
+  }
+  disconnect();
+  subscribed = shelf;
+  reconnectDelay = RECONNECT_FIRST_MS;
+  if (shelf === null || typeof EventSource === "undefined") {
+    liveState.value = "off";
+    return;
+  }
+  connect(shelf);
 }
