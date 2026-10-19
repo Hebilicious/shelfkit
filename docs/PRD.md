@@ -32,7 +32,7 @@ It is deliberately short. Where a decision needs a specific version, a limit, or
 1. **Build on APM, never beside it.** The only manifest in a target repository is `apm.yml`. No ShelfKit-specific repository state, no second lockfile, no parallel format.
 2. **The shelf is a Git repository.** Portable, diffable, reviewable, and readable with nothing installed.
 3. **Pinned by default.** Every compiled reference is a resolved revision. Reproducibility is the point of compiling rather than copying.
-4. **A thin slice.** No organizations, no roles, no policy engine. A shelf has an owner and optional read-only links.
+4. **A thin slice.** No organizations, no roles, no policy engine. A shelf has an owner, the GitHub accounts the owner grants scopes to, and optional read-only links.
 5. **A published contract is a dependency, not a reimplementation.** Manifest validation uses OpenAPM's published JSON Schemas. Registry serving uses OpenAPM's Registry HTTP API.
 6. **Everything is curated or copied, never generated.** ShelfKit assembles; it does not invent conventions.
 
@@ -468,7 +468,9 @@ Vue 3, Vite, Vize, CSSForge. Everything goes through the same API as the CLI.
 | **Compile** | Pick a profile and repository, read the manifest, copy the install command. |
 | **Import** | Paste a repo, registry, catalog, or shelf URL; pick items; set pins. |
 | **Activity** | Which repositories compiled which profile revision, and what is stale. |
-| **Settings** | API keys, sources, secret names, registry visibility. |
+| **Settings** | People (GitHub accounts granted access), API keys for programs, sources, secret names, registry visibility. |
+
+Signing in is one button, "Sign in with GitHub". No key is ever typed into the browser.
 
 ### 9.1 The prompts screen
 
@@ -476,7 +478,7 @@ Prompts are the most-used kind and deserve more than a list, because the actual 
 
 - **Copy, with variables.** A prompt with variables renders a small form in the detail pane; filling it produces the final text and copies it. Variables have defaults and can be marked required.
 - **Copy for a harness.** One click copies the prompt as a skill (`SKILL.md` with frontmatter), as a slash command, or as plain text.
-- **Favourites and recents**, stored per key so the list opens on what is actually used.
+- **Favourites and recents**, stored per key or signed-in account so the list opens on what is actually used.
 - **Full-text search over prompt bodies**, since that is how people find the prompt they half-remember.
 - **Editing in place**, with revision history. A prompt is short enough that the list, the editor, and the preview fit on one screen.
 - **Import from anywhere**, because prompts are collected from chats, docs, and other people's shelves.
@@ -493,7 +495,8 @@ The composer is the profile editor: a three-pane screen with the item inventory 
 Cloudflare Worker  (single deployable)
   /apm/v1/*      registry wire contract
   /mcp           MCP tools
-  /graphql       API for the UI and the CLI, including key management
+  /graphql       API for the UI and the CLI, including key and grant management
+  /auth/github/* sign-in for the browser
   /*             static SPA
 
   Resolver (Rust/WASM)   Importer   Registry
@@ -533,24 +536,32 @@ Subscriptions work: a Durable Object per shelf already exists, so it fans out ch
 
 ### 10.3 Auth
 
-Deliberately minimal. A deployment has an **owner key** and any number of **scoped API keys**. Nothing else: no accounts, no sessions, no passkeys, no device flow, no roles.
+Deliberately minimal. People sign in with GitHub; programs present keys. There are no passwords, no passkeys, no device flow, and no roles.
 
-Keys are managed over GraphQL, not REST. Key management is a UI and CLI concern, so it lives with every other UI and CLI operation:
+**People.** The browser signs in with GitHub, against the deployment's own GitHub App, which setup creates in one click and which asks for no permissions: it only identifies who signs in. `/auth/github/start` and `/auth/github/callback` run the authorization code flow with PKCE, with the state bound to a short-lived `HttpOnly` cookie. The Worker uses GitHub's token once, to read who signed in, and revokes it; it is never stored. The session is an `HttpOnly`, `SameSite=Strict` cookie that names the GitHub account by its numeric id, signed with a Worker secret and expiring after 30 days. Rotating that secret signs every browser out.
+
+- The **owner** is a GitHub account, recorded by id at setup, since a login can change hands and an id cannot. Signing in as it is signing in as the owner.
+- Anyone else holds what the owner **grants** their account on a shelf, with the same scopes a key carries. Grants live in the shelf's Durable Object and are read on every request, so revoking one takes effect at once. An account with no grant is anonymous.
+
+**Programs.** The CLI, agents, CI, and APM's registry client send `Authorization: Bearer <key>`, the header the registry wire contract defines. A deployment has an **owner key** and any number of **scoped API keys**, and a middleware in the Worker resolves a key to a scope set before any resolver runs. The scope vocabulary is shared with the registry, so one key can read, publish, or both.
+
+Keys and grants are managed over GraphQL, not REST, because they are a UI and CLI concern like every other operation:
 
 ```graphql
 type Mutation {
   createKey(input: CreateKeyInput!): KeySecret! # plaintext returned once
   revokeKey(id: ID!): Boolean!
+  grantAccess(shelf: ID!, login: String!, scopes: [String!]!): Grant!
+  revokeAccess(shelf: ID!, githubId: ID!): Boolean!
 }
 ```
 
-There is no `/api/auth` surface. A request is authenticated by an `Authorization: Bearer <key>` header, the same header the registry wire contract defines, and a middleware in the Worker resolves the key to a scope set before any resolver runs. The scope vocabulary is shared with the registry, so one key can read, publish, or both.
-
-- The browser holds a key in an `HttpOnly` cookie so the SPA never sees it, or the owner puts Cloudflare Access in front of the whole deployment for an edge gate.
-- The CLI and agents send the header. `shelfkit login` asks for a key created in the UI and stores it in the OS keychain.
+- A key never goes into a browser. Settings creates one and shows it once, to copy into CI or an agent's configuration.
+- `shelfkit login` asks for a key created in the UI and stores it in the OS keychain.
 - The registry endpoints read the same header, which is why declaring a ShelfKit instance in `apm.yml` needs no separate credential.
+- A request the cookie authenticates must be same-origin: a `POST` is JSON only and carries this origin's `Origin` header, and there is no CORS. `/mcp` reads the header only.
 
-Read-only share links are unguessable URLs to a public profile and require no key at all.
+The owner may still put Cloudflare Access in front of the whole deployment as an edge gate. Read-only share links are unguessable URLs to a public profile and require no sign-in at all.
 
 ### 10.4 Stack
 
@@ -577,6 +588,8 @@ pnpm shelfkit setup      # create resources, write secrets, migrate, deploy
 ```
 
 **Wrangler is the deployment path, and the only one.** Wrangler is the platform's own CLI, has no third-party state to keep in sync, and owns Durable Object migrations directly. ShelfKit keeps `wrangler.jsonc` as the source of truth and drives it from `pnpm shelfkit setup` and `pnpm shelfkit deploy`.
+
+Setup ends with the one step that needs a browser: it creates the deployment's GitHub App for signing in. A page on the operator's loopback posts the app's manifest to github.com, the operator clicks "Create GitHub App", and setup stores the app's client id and secret as Worker secrets and discards its private key. A GitHub OAuth App created by hand, with the same two secrets, works the same way.
 
 The one place Wrangler is weak is Durable Object migration ergonomics, where a first deploy and a class change both need care. ShelfKit handles that by generating the migration entries from the shelf model rather than expecting an operator to hand-write them, and by checking migration state in CI.
 
@@ -641,7 +654,7 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 - [ ] Drift detection between a shelf item and its upstream
 - [ ] MCP surface: stateless ShelfKit tools, plus the relay variant for remote servers whose credential should not be distributed.
 - [ ] Recommendation from stack markers
-- [ ] Per-source licence enforcement and attribution rendering, plus read-only public profile pages. No roles and no organizations: a shelf has an owner and links.
+- [ ] Per-source licence enforcement and attribution rendering, plus read-only public profile pages. No roles and no organizations: a shelf has an owner, granted accounts, and links.
 
 **Exit criterion:** a shelf that consists mostly of curated, pinned imports from three public sources, one of which is another ShelfKit instance, where an agent discovers those MCP servers through `/mcp` and runs them in its own environment.
 
@@ -659,6 +672,6 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 | 6 | APM version tracking. | Pin a supported range and check it in `doctor`. APM is at 0.31.0, ships weekly, and OpenAPM v0.1 is an editor's working draft with no backward-compatibility guarantee before 1.0, though breaking changes carry a 90-day migration window. That cadence is the strongest argument for the golden-file tests in M1 and for never parsing human-oriented output. |
 | 7 | Vize's readiness. | Confined to the Vite config, with both toolchains green in CI. |
 | 8 | APM may absorb registry and curation features. | Stay conformant. If APM ships a hosted registry, ShelfKit's value is curation, the prompts library, MCP hosting, and the UI. |
-| 9 | Cloudflare Access versus nothing. | Nothing by default, since API keys cover the real threat model. Access remains documented as the optional edge gate. |
+| 9 | Cloudflare Access versus nothing. | Nothing by default, since GitHub sign-in and API keys cover the real threat model. Access remains documented as the optional edge gate. |
 | 10 | `lsp` depends on a surface APM has not ratified in the published schema. | Ship the kind and validate leniently, warning in `check` and `doctor`. Drop it to an instructions note if APM removes `dependencies.lsp`. |
 | 11 | How much of the registry to implement before APM's client path leaves experimental. | Serve the read endpoints fully, and the `PUT` publish endpoint too. Publishing into ShelfKit from APM is a smaller win than installing from it. |
