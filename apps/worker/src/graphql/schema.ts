@@ -9,6 +9,8 @@
  * when it is stale.
  */
 import SchemaBuilder from "@pothos/core";
+import { conflictsOf } from "@shelfkit/engine";
+import type { Conflict } from "@shelfkit/engine";
 import { ItemSchema, ShelfIdSchema, shelfReport } from "@shelfkit/schema";
 import type {
   CompilePlan,
@@ -58,13 +60,6 @@ interface ProfileNode {
   readonly resolution: ResolvedProfile;
 }
 
-interface Conflict {
-  readonly severity: "error" | "warning" | "info";
-  readonly code: string;
-  readonly path: string;
-  readonly message: string;
-}
-
 interface ResolutionNode {
   readonly shelf: string;
   readonly resolution: ResolvedProfile;
@@ -83,44 +78,6 @@ interface FileNode {
   readonly path: string;
   readonly sha256: string;
   readonly size: number;
-}
-
-/** How a compile note weighs in the composer's conflict panel. */
-const NOTE_SEVERITY = new Map<string, Conflict["severity"]>([
-  ["hook-approval", "warning"],
-  ["hosted-mcp", "info"],
-  ["mcp-schema-mismatch", "warning"],
-  ["producer-nonconformant-target", "warning"],
-  ["unratified-lsp", "warning"],
-]);
-
-/** Every problem a profile has, by severity: engine errors, then the resolver's notices, then the compiler's notes. */
-export function conflictsOf(
-  resolution: ResolvedProfile | null,
-  plan: PlanResult
-): Conflict[] {
-  const conflicts: Conflict[] = plan.errors.map((error) => ({
-    code: "compile-error",
-    message: error.message,
-    path: error.path,
-    severity: "error",
-  }));
-  const notes = [...(resolution?.notices ?? []), ...(plan.plan?.notes ?? [])];
-  const seen = new Set<string>();
-  for (const note of notes) {
-    const key = `${note.code} ${note.path} ${note.message}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      conflicts.push({
-        code: note.code,
-        message: note.message,
-        path: note.path,
-        severity: NOTE_SEVERITY.get(note.code) ?? "warning",
-      });
-    }
-  }
-  const order = { error: 0, info: 2, warning: 1 } as const;
-  return conflicts.toSorted((a, b) => order[a.severity] - order[b.severity]);
 }
 
 /**

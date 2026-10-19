@@ -35,6 +35,14 @@ export type ProfileDocument = v.InferInput<typeof ProfileSchema>;
 /** The ABI this port speaks; the module reports its own through `shelfkit_abi_version`. */
 export const ABI_VERSION = 5;
 
+export { NOTE_SEVERITY, conflictsOf } from "./conflicts.ts";
+export type {
+  Conflict,
+  ConflictSeverity,
+  Note,
+  PlanOutcome,
+} from "./conflicts.ts";
+
 /** One file of a shelf, by its path relative to the shelf root. Bytes that are not UTF-8 text go as a `Uint8Array`. */
 export type ShelfFile = ShelfContent | ShelfLink;
 
