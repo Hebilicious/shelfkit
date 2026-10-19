@@ -45,7 +45,8 @@ const RULES: readonly Rule[] = [
     id: "hidden-characters",
     message:
       "contains characters a reader cannot see (bidirectional controls, zero-width, or tag characters)",
-    pattern: /[‪-‮⁦-⁩​-‍⁠]|[\u{E0000}-\u{E007F}]/u,
+    pattern:
+      /[\u202A-\u202E\u2066-\u2069\u200B-\u200D\u2060]|[\u{E0000}-\u{E007F}]/u,
     severity: "suspicious",
   },
   {
@@ -76,7 +77,11 @@ function isExecutable(bytes: string): boolean {
   return (
     bytes.startsWith("\u007FELF") ||
     bytes.startsWith("MZ") ||
-    ["Ïúíþ", "Îúíþ", "Êþº¾"].some((magic) => bytes.startsWith(magic))
+    [
+      "\u00CF\u00FA\u00ED\u00FE",
+      "\u00CE\u00FA\u00ED\u00FE",
+      "\u00CA\u00FE\u00BA\u00BE",
+    ].some((magic) => bytes.startsWith(magic))
   );
 }
 
@@ -130,11 +135,12 @@ export const staticScanner: Scanner = {
   id: STATIC_SCANNER_ID,
   scan: async (subject: ScanSubject): Promise<ScanVerdict> => {
     const findings = staticFindings(subject.files);
-    const verdict = findings.some((finding) => finding.severity === "malicious")
-      ? "malicious"
-      : findings.length > 0
-        ? "suspicious"
-        : "clean";
+    let verdict: ScanVerdict["verdict"] = "clean";
+    if (findings.some((finding) => finding.severity === "malicious")) {
+      verdict = "malicious";
+    } else if (findings.length > 0) {
+      verdict = "suspicious";
+    }
     const summary =
       findings.length === 0
         ? `no findings in ${subject.files.length} file(s)`

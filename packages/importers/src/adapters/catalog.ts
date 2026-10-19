@@ -55,20 +55,17 @@ async function checkUpstream(
   item: Item,
   context: AdapterContext
 ): Promise<UpstreamState> {
-  switch (catalogOf(sourceOf(item).url)) {
-    case "clawhub": {
-      return await checkClawHub(item, context);
-    }
-    case "mcp-registry": {
-      return await checkMcpRegistry(item, context);
-    }
-    default: {
-      return {
-        error: "the item's source URL is not a catalog ShelfKit reads",
-        status: "error",
-      };
-    }
+  const catalog = catalogOf(sourceOf(item).url);
+  if (catalog === "clawhub") {
+    return await checkClawHub(item, context);
   }
+  if (catalog === "mcp-registry") {
+    return await checkMcpRegistry(item, context);
+  }
+  return {
+    error: "the item's source URL is not a catalog ShelfKit reads",
+    status: "error",
+  };
 }
 
 export const catalogAdapter: SourceAdapter = {

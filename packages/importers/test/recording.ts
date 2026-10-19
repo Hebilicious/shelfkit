@@ -1,123 +1,142 @@
 /**
  * Recorded HTTP for the adapter tests. Each fixture in `fixtures/http/` holds the answers the real APIs gave to
- * read-only requests, keyed by method and URL (and a POST's body), so the tests run offline and deterministically.
+ * read-only requests, keyed by URL for a GET and by method, URL, and body otherwise, so the tests run offline and
+ * deterministically. `shelfkit doctor`'s tests (`crates/compiler/tests/curation.rs`) replay the same files.
  *
- * To record again, run the tests with `SHELFKIT_RECORD=1`: requests go to the network, and each fixture file is
- * rewritten with what was asked of it. Recording only ever sends what the adapters send, which is GETs and GraphQL
- * queries. Nothing in the gate records. GitHub allows 60 anonymous API requests an hour; set
- * `SHELFKIT_RECORD_GITHUB_TOKEN` (for example to `$(gh auth token)`) to record past that.
+ * To record again, run one test file at a time with `SHELFKIT_RECORD=1` (several files share a fixture): requests
+ * go to the network, and each fixture keeps what it had and gains or refreshes what was asked of it. Recording only
+ * ever sends what the adapters send, which is GETs and GraphQL queries. GitHub allows 60 anonymous API requests an
+ * hour; set `SHELFKIT_RECORD_GITHUB_TOKEN` (for example to `$(gh auth token)`) to record past that. The token goes to
+ * api.github.com only and is never stored. Nothing in the gate records.
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
-interface Answer {
-  readonly status: number;
-  readonly contentType?: string;
-  readonly json?: unknown;
-  readonly text?: string;
-  readonly base64?: string;
-}
+import * as v from "valibot";
 
-interface Fixture {
-  readonly recorded: string;
-  readonly responses: Record<string, Answer>;
-}
+import { byCodePoint, JsonSchema } from "../src/http.ts";
+import type { Json } from "../src/http.ts";
+import type { AdapterContext } from "../src/index.ts";
 
-function byCodePoint(a: string, b: string): number {
-  return a === b ? 0 : a < b ? -1 : 1;
-}
+const AnswerSchema = v.object({
+  base64: v.optional(v.string()),
+  contentType: v.optional(v.string()),
+  json: v.optional(JsonSchema),
+  status: v.number(),
+  text: v.optional(v.string()),
+});
 
-const DIRECTORY = join(import.meta.dirname, "fixtures", "http");
+type Answer = v.InferOutput<typeof AnswerSchema>;
+
+const FixtureSchema = v.object({
+  recorded: v.string(),
+  responses: v.record(v.string(), AnswerSchema),
+});
+
+const DIRECTORY = path.join(import.meta.dirname, "fixtures", "http");
 
 export const recording = process.env.SHELFKIT_RECORD === "1";
 
-function keyOf(input: RequestInfo | URL, init?: RequestInit): string {
-  const url = input instanceof Request ? input.url : String(input);
-  const method = (
-    init?.method ?? (input instanceof Request ? input.method : "GET")
-  ).toUpperCase();
-  return method === "GET"
-    ? url
-    : `${method} ${url} ${typeof init?.body === "string" ? init.body : ""}`;
+function urlOf(input: RequestInfo | URL): string {
+  if (input instanceof Request) {
+    return input.url;
+  }
+  return input instanceof URL ? input.href : input;
 }
 
-function toBase64(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64");
+function keyOf(input: RequestInfo | URL, init?: RequestInit): string {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const body = v.is(v.string(), init?.body) ? init.body : "";
+  return method === "GET" ? urlOf(input) : `${method} ${urlOf(input)} ${body}`;
 }
 
 function respond(answer: Answer): Response {
-  const headers =
-    answer.contentType === undefined
-      ? undefined
-      : { "content-type": answer.contentType };
+  const init: ResponseInit = { status: answer.status };
+  if (answer.contentType !== undefined) {
+    init.headers = { "content-type": answer.contentType };
+  }
   if (answer.json !== undefined) {
-    return new Response(JSON.stringify(answer.json), {
-      headers,
-      status: answer.status,
-    });
+    return Response.json(answer.json, init);
   }
   if (answer.base64 !== undefined) {
-    return new Response(Buffer.from(answer.base64, "base64"), {
-      headers,
-      status: answer.status,
-    });
+    return new Response(Buffer.from(answer.base64, "base64"), init);
   }
-  return new Response(answer.text ?? "", { headers, status: answer.status });
+  return new Response(answer.text ?? "", init);
 }
 
-/** The license of a file name, as `isLicenceFile` reads it. */
 const LICENCE = /^(?:licen[cs]e|copying)(?:[.-][\w.-]*)?$/iu;
+
+const RepoSchema = v.object({
+  default_branch: v.string(),
+  license: v.nullish(v.object({ spdx_id: v.nullish(v.string()) })),
+});
+
+const TreeSchema = v.object({
+  sha: v.string(),
+  tree: v.array(
+    v.object({
+      path: v.string(),
+      sha: v.string(),
+      size: v.optional(v.number()),
+      type: v.string(),
+    })
+  ),
+  truncated: v.optional(v.boolean()),
+});
+
+/** A one-level listing's entries worth keeping: directories, licence files, and files another request named. */
+function kept(
+  json: v.InferOutput<typeof TreeSchema>,
+  recursive: boolean,
+  requested: readonly string[]
+): Json {
+  const tree = json.tree
+    .filter(
+      (entry) =>
+        recursive ||
+        entry.type === "tree" ||
+        LICENCE.test(entry.path) ||
+        requested.some((other) => other.includes(`/${entry.path}`))
+    )
+    .map((entry): Json =>
+      entry.size === undefined
+        ? { path: entry.path, sha: entry.sha, type: entry.type }
+        : {
+            path: entry.path,
+            sha: entry.sha,
+            size: entry.size,
+            type: entry.type,
+          }
+    );
+  return json.truncated === undefined
+    ? { sha: json.sha, tree }
+    : { sha: json.sha, tree, truncated: json.truncated };
+}
 
 /**
  * Keep a recorded GitHub answer to what the adapters read, so fixtures stay small: a repository's default branch
  * and licence, a commit's SHA, and, in a one-level directory listing, its directories, its licence files, and the
  * files some other request named. A recursive listing (one artifact's directory) is kept whole.
  */
-function trim(
-  url: string,
-  json: unknown,
-  requested: readonly string[]
-): unknown {
-  if (
-    !url.startsWith("https://api.github.com/repos/") ||
-    typeof json !== "object" ||
-    json === null
-  ) {
+function trimmed(url: string, json: Json, requested: readonly string[]): Json {
+  if (!url.startsWith("https://api.github.com/repos/")) {
     return json;
   }
-  const value = json as Record<string, unknown>;
-  if (/\/repos\/[^/]+\/[^/]+$/u.test(url)) {
-    const license = value.license as { spdx_id?: unknown } | null | undefined;
+  const repo = v.safeParse(RepoSchema, json);
+  if (/\/repos\/[^/]+\/[^/]+$/u.test(url) && repo.success) {
+    const spdx = repo.output.license?.spdx_id ?? null;
     return {
-      default_branch: value.default_branch,
-      license:
-        license === null || license === undefined
-          ? null
-          : { spdx_id: license.spdx_id },
+      default_branch: repo.output.default_branch,
+      license: repo.output.license ? { spdx_id: spdx } : null,
     };
   }
-  if (url.includes("/commits/")) {
-    return { sha: value.sha };
+  const commit = v.safeParse(v.object({ sha: v.string() }), json);
+  if (url.includes("/commits/") && commit.success) {
+    return { sha: commit.output.sha };
   }
-  if (url.includes("/git/trees/") && Array.isArray(value.tree)) {
-    const recursive = url.endsWith("?recursive=1");
-    const tree = (
-      value.tree as { path: string; sha: string; size?: number; type: string }[]
-    )
-      .filter(
-        (entry) =>
-          recursive ||
-          entry.type === "tree" ||
-          LICENCE.test(entry.path) ||
-          requested.some((other) => other.includes(`/${entry.path}`))
-      )
-      .map((entry) => ({
-        path: entry.path,
-        sha: entry.sha,
-        size: entry.size,
-        type: entry.type,
-      }));
-    return { sha: value.sha, tree, truncated: value.truncated };
+  const tree = v.safeParse(TreeSchema, json);
+  if (url.includes("/git/trees/") && tree.success) {
+    return kept(tree.output, url.endsWith("?recursive=1"), requested);
   }
   return json;
 }
@@ -130,63 +149,73 @@ export interface Recorded {
   readonly save: () => void;
 }
 
+/** The answer to record for a live response. */
+async function answerOf(response: Response): Promise<Answer> {
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const contentType = response.headers.get("content-type") ?? undefined;
+  const text = new TextDecoder("utf-8").decode(bytes);
+  if (contentType?.includes("json") === true) {
+    try {
+      // BOUNDARY: a live answer is untyped until JsonSchema reads it.
+      const json = v.parse(JsonSchema, JSON.parse(text));
+      return { contentType, json, status: response.status };
+    } catch {
+      return { contentType, status: response.status, text };
+    }
+  }
+  const textual =
+    new TextEncoder().encode(text).length === bytes.length &&
+    !text.includes("\uFFFD");
+  return textual
+    ? { contentType, status: response.status, text }
+    : {
+        base64: Buffer.from(bytes).toString("base64"),
+        contentType,
+        status: response.status,
+      };
+}
+
+/** Send a request to the network for recording, with the GitHub token only for api.github.com. */
+async function live(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> {
+  const token = process.env.SHELFKIT_RECORD_GITHUB_TOKEN;
+  if (
+    token === undefined ||
+    !urlOf(input).startsWith("https://api.github.com/")
+  ) {
+    return await fetch(input, init);
+  }
+  const headers = new Headers(init?.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  return await fetch(input, { ...init, headers });
+}
+
 /**
  * A `fetch` over the fixture `name`. A request the fixture does not hold fails the test loudly, naming the request,
  * rather than answering a 404 that would read as "upstream is gone".
  */
 export function recorded(name: string): Recorded {
-  const file = join(DIRECTORY, `${name}.json`);
-  const fixture: Fixture = existsSync(file)
-    ? (JSON.parse(readFileSync(file, "utf8")) as Fixture)
+  const file = path.join(DIRECTORY, `${name}.json`);
+  const fixture = existsSync(file)
+    ? v.parse(FixtureSchema, JSON.parse(readFileSync(file, "utf-8")))
     : { recorded: "", responses: {} };
-  const responses: Record<string, Answer> = recording
-    ? {}
-    : { ...fixture.responses };
+  const responses = new Map(Object.entries(fixture.responses));
   const requests: string[] = [];
 
   const fetcher: typeof fetch = async (input, init) => {
     const key = keyOf(input, init);
     requests.push(key);
     if (!recording) {
-      const answer = responses[key];
+      const answer = responses.get(key);
       if (answer === undefined) {
         throw new Error(`not recorded in ${name}.json: ${key}`);
       }
       return respond(answer);
     }
-    // Recording may borrow a GitHub token for the rate limit; it is sent to api.github.com only and never stored.
-    const token = process.env.SHELFKIT_RECORD_GITHUB_TOKEN;
-    const url = input instanceof Request ? input.url : String(input);
-    const authorized =
-      token !== undefined && url.startsWith("https://api.github.com/")
-        ? {
-            ...init,
-            headers: {
-              ...(init?.headers as Record<string, string>),
-              authorization: `Bearer ${token}`,
-            },
-          }
-        : init;
-    const response = await fetch(input, authorized);
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    const contentType = response.headers.get("content-type") ?? undefined;
-    let answer: Answer = { contentType, status: response.status };
-    const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    if (contentType?.includes("json") === true) {
-      try {
-        answer = { ...answer, json: JSON.parse(text) as unknown };
-      } catch {
-        answer = { ...answer, text };
-      }
-    } else if (
-      new TextEncoder().encode(text).length === bytes.length &&
-      !text.includes("�")
-    ) {
-      answer = { ...answer, text };
-    } else {
-      answer = { ...answer, base64: toBase64(bytes) };
-    }
-    responses[key] = answer;
+    const answer = await answerOf(await live(input, init));
+    responses.set(key, answer);
     return respond(answer);
   };
 
@@ -197,35 +226,30 @@ export function recorded(name: string): Recorded {
       if (!recording) {
         return;
       }
-      mkdirSync(dirname(file), { recursive: true });
-      const keys = Object.keys(responses);
-      const sorted = Object.fromEntries(
-        Object.entries(responses)
-          .toSorted(([a], [b]) => byCodePoint(a, b))
-          .map(([key, answer]) => [
-            key,
-            answer.json === undefined
-              ? answer
-              : { ...answer, json: trim(key, answer.json, keys) },
-          ])
-      );
+      const keys = [...responses.keys()];
+      const sorted = [...responses.entries()]
+        .toSorted(([a], [b]) => byCodePoint(a, b))
+        .map(([key, answer]): [string, Answer] => [
+          key,
+          answer.json === undefined
+            ? answer
+            : { ...answer, json: trimmed(key, answer.json, keys) },
+        ]);
+      mkdirSync(path.dirname(file), { recursive: true });
       writeFileSync(
         file,
-        `${JSON.stringify({ recorded: new Date().toISOString().slice(0, 10), responses: sorted }, null, 2)}\n`
+        `${JSON.stringify({ recorded: new Date().toISOString().slice(0, 10), responses: Object.fromEntries(sorted) }, null, 2)}\n`
       );
     },
   };
 }
 
 /** An adapter context over a recorded `fetch`, with no secrets and a fixed clock. */
-export function contextOf(fetcher: typeof fetch): {
-  fetch: typeof fetch;
-  now: () => string;
-  secret: (name: string) => string | undefined;
-} {
+export function contextOf(fetcher: typeof fetch): AdapterContext {
+  const secrets = new Map<string, string>();
   return {
     fetch: fetcher,
     now: () => "2026-10-19T00:00:00Z",
-    secret: () => undefined,
+    secret: (name) => secrets.get(name),
   };
 }

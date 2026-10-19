@@ -15,29 +15,33 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import path from "node:path";
 
+import type { Profile } from "@shelfkit/schema";
 import { describe, expect, it } from "vitest";
 
+import { byCodePoint } from "../src/http.ts";
 import { adapterFor } from "../src/index.ts";
-import type { ImportedItem, ImportSource } from "../src/index.ts";
+import type { ImportedItem, ImportSource, Item } from "../src/index.ts";
 import { contextOf, recorded } from "./recording.ts";
 
-const GOLDEN = join(import.meta.dirname, "fixtures", "curated-shelf");
+const GOLDEN = path.join(import.meta.dirname, "fixtures", "curated-shelf");
 const update = process.env.SHELFKIT_UPDATE_GOLDEN === "1";
 
-const DIRECTORIES: Readonly<Record<string, string>> = {
-  agent: "agents",
-  hook: "hooks",
-  instructions: "instructions",
-  library: "libraries",
-  lsp: "lsp",
-  mcp: "mcp",
-  plugin: "plugins",
-  prompt: "prompts",
-  skill: "skills",
-  stack: "stacks",
-};
+const DIRECTORIES = new Map<string, string>(
+  Object.entries({
+    agent: "agents",
+    hook: "hooks",
+    instructions: "instructions",
+    library: "libraries",
+    lsp: "lsp",
+    mcp: "mcp",
+    plugin: "plugins",
+    prompt: "prompts",
+    skill: "skills",
+    stack: "stacks",
+  })
+);
 
 const HEAD = "dbd4588f9e1033efb41dad4bef2f7947c8993d44";
 
@@ -149,7 +153,8 @@ const MANIFEST = {
   ],
 };
 
-function json(value: unknown): string {
+/** A document as the shelf writes it: two-space JSON and a final newline. */
+function json(value: Item | Profile | typeof MANIFEST): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
@@ -189,7 +194,7 @@ async function importEverything(): Promise<{
 function shelfFiles(items: readonly ImportedItem[]): Map<string, string> {
   const files = new Map<string, string>([["shelf.json", json(MANIFEST)]]);
   for (const { item, files: content } of items) {
-    const directory = `items/${DIRECTORIES[item.kind] ?? item.kind}/${item.id}`;
+    const directory = `items/${DIRECTORIES.get(item.kind) ?? item.kind}/${item.id}`;
     files.set(`${directory}/item.json`, json(item));
     for (const file of content) {
       files.set(
@@ -205,7 +210,7 @@ function shelfFiles(items: readonly ImportedItem[]): Map<string, string> {
   const compiled = items
     .map(({ item }) => item.id)
     .filter((id) => id !== "doc-coauthoring")
-    .toSorted();
+    .toSorted((a, b) => byCodePoint(a, b));
   files.set(
     "profiles/default.json",
     json({
@@ -232,10 +237,10 @@ function readTree(root: string): Map<string, string> {
     withFileTypes: true,
   })) {
     if (entry.isFile()) {
-      const path = join(entry.parentPath, entry.name);
+      const file = path.join(entry.parentPath, entry.name);
       files.set(
-        relative(root, path).split("\\").join("/"),
-        readFileSync(path, "utf8")
+        path.relative(root, file).split("\\").join("/"),
+        readFileSync(file, "utf-8")
       );
     }
   }
@@ -246,7 +251,9 @@ describe("the curated shelf (M4's exit criterion)", () => {
   it("is built from pinned imports across five sources, with provenance and licence on every item", async () => {
     const { items, warnings } = await importEverything();
     const sources = new Set(items.map(({ item }) => item.source?.id));
-    expect([...sources].toSorted()).toStrictEqual([
+    expect(
+      [...sources].toSorted((a, b) => byCodePoint(a ?? "", b ?? ""))
+    ).toStrictEqual([
       "anthropics",
       "awesome-copilot",
       "clawhub",
@@ -255,11 +262,8 @@ describe("the curated shelf (M4's exit criterion)", () => {
     ]);
     for (const { item } of items) {
       const source = item.source ?? {};
-      expect(source.license, item.id).toBeDefined();
-      expect(
-        source.resolvedCommit ?? source.version ?? source.digest,
-        item.id
-      ).toBeDefined();
+      expect(source.license).toBeTypeOf("string");
+      expect(source.resolvedCommit ?? source.version).toBeTypeOf("string");
     }
     // The one source with no licence contributes a URL, and says so.
     expect(
@@ -269,9 +273,11 @@ describe("the curated shelf (M4's exit criterion)", () => {
     const files = shelfFiles(items);
     if (update) {
       rmSync(GOLDEN, { force: true, recursive: true });
-      for (const [path, contents] of files) {
-        mkdirSync(dirname(join(GOLDEN, path)), { recursive: true });
-        writeFileSync(join(GOLDEN, path), contents);
+      for (const [relative, contents] of files) {
+        mkdirSync(path.dirname(path.join(GOLDEN, relative)), {
+          recursive: true,
+        });
+        writeFileSync(path.join(GOLDEN, relative), contents);
       }
     }
     expect(readTree(GOLDEN)).toStrictEqual(files);

@@ -12,8 +12,9 @@
  * head. A commit that changed other files does not move the item.
  */
 import type { ItemKind } from "@shelfkit/schema";
+import * as v from "valibot";
 
-import { frontmatter, skillProblem, stringField } from "../frontmatter.ts";
+import { frontmatter, skillProblem } from "../frontmatter.ts";
 import { GitHub, parseRepository, repositoryUrl } from "../github.ts";
 import type { TreeEntry } from "../github.ts";
 import { byCodePoint, fileContents } from "../http.ts";
@@ -25,7 +26,7 @@ import {
   sourceOf,
   sourceSecret,
 } from "../imported.ts";
-import type { Artifact, InlineServer } from "../layouts.ts";
+import type { Artifact, ServerDefinition } from "../layouts.ts";
 import {
   ancestry,
   basename,
@@ -33,7 +34,9 @@ import {
   inlineServers,
   isAgentPlugin,
   manifestsToRead,
+  MarketplaceSchema,
   parent,
+  PluginManifestSchema,
 } from "../layouts.ts";
 import type { Licence } from "../licence.ts";
 import {
@@ -61,13 +64,13 @@ const MAX_FILES = 200;
 const MAX_BYTES = 5 * 1024 * 1024;
 
 /** The file a copied artifact's content goes to in its item directory. */
-const CONTENT_FILE: Partial<Record<ItemKind, string>> = {
-  agent: "agent.md",
-  hook: "hook.json",
-  instructions: "AGENTS.fragment.md",
-  plugin: "plugin.json",
-  prompt: "prompt.md",
-};
+const CONTENT_FILE = new Map<ItemKind, string>([
+  ["agent", "agent.md"],
+  ["hook", "hook.json"],
+  ["instructions", "AGENTS.fragment.md"],
+  ["plugin", "plugin.json"],
+  ["prompt", "prompt.md"],
+]);
 
 const COMMIT = /^[0-9a-f]{40}$/u;
 
@@ -81,18 +84,22 @@ export function cleanPath(path: string | undefined): string {
     trimmed.includes("\\") ||
     trimmed.split("/").some((s) => s === "" || s === "." || s === "..")
   ) {
-    throw new Error(`\`${path}\` is not a clean relative path`);
+    throw new Error(`\`${path ?? ""}\` is not a clean relative path`);
   }
   return trimmed;
 }
 
-/** What one discovery read from the repository. */
-interface Snapshot {
+/** A repository, the ref read, and the commit it resolved to. */
+interface Resolved {
   readonly github: GitHub;
-  readonly commit: string;
   readonly ref: string;
+  readonly commit: string;
   /** The licence GitHub detected for the whole repository. */
-  readonly repositoryLicence: string | undefined;
+  readonly licence: string | undefined;
+}
+
+/** What one discovery read from the repository. */
+interface Snapshot extends Resolved {
   /** Every listed file, by its directory. */
   readonly filesByDirectory: Map<string, TreeEntry[]>;
   readonly entries: TreeEntry[];
@@ -104,12 +111,7 @@ async function resolve(
   source: ImportSource,
   context: AdapterContext,
   pinned?: string
-): Promise<{
-  github: GitHub;
-  ref: string;
-  commit: string;
-  licence: string | undefined;
-}> {
+): Promise<Resolved> {
   if (source.repo === undefined) {
     throw new Error("a git source needs `repo`");
   }
@@ -133,47 +135,66 @@ async function resolve(
   return { commit, github, licence: info.licence, ref };
 }
 
+/** Every file a discovery listed, by its directory. */
+function byDirectory(entries: readonly TreeEntry[]): Map<string, TreeEntry[]> {
+  const files = new Map<string, TreeEntry[]>();
+  for (const entry of entries) {
+    if (entry.type === "blob") {
+      const directory = parent(entry.path);
+      const listed = files.get(directory) ?? [];
+      if (!listed.some((file) => file.path === entry.path)) {
+        listed.push(entry);
+      }
+      files.set(directory, listed);
+    }
+  }
+  return files;
+}
+
 async function snapshot(
   source: ImportSource,
   context: AdapterContext
 ): Promise<Snapshot> {
-  const { commit, github, licence, ref } = await resolve(source, context);
-  const repository = github.repository;
+  const resolved = await resolve(source, context);
+  const { commit, github } = resolved;
   const base = cleanPath(source.path);
   const walked = await github.walk(commit, base);
-  if (walked.entry === null) {
+  const { entry } = walked;
+  if (entry === null) {
     throw new Error(
-      `${repositoryUrl(repository)} has no \`${base}\` at ${commit}`
+      `${repositoryUrl(github.repository)} has no \`${base}\` at ${commit}`
     );
   }
   const entries =
-    walked.entry.type === "blob"
-      ? [walked.entry]
-      : await github.tree(walked.entry.sha, base, true);
-  const filesByDirectory = new Map<string, TreeEntry[]>();
-  for (const entry of [
+    entry.type === "blob" ? [entry] : await github.tree(entry.sha, base, true);
+  const filesByDirectory = byDirectory([
     ...walked.ancestors.flatMap((listing) => listing.entries),
     ...entries,
-  ]) {
-    if (entry.type !== "blob") {
-      continue;
+  ]);
+  return { ...resolved, base, entries, filesByDirectory };
+}
+
+async function classifyFile(snap: Resolved, path: string): Promise<Licence> {
+  const bytes = await snap.github.raw(snap.commit, path);
+  return bytes === null
+    ? NO_LICENCE
+    : classifyText(new TextDecoder().decode(bytes));
+}
+
+/** The nearest licence file to `directory`, and the directory it is in. */
+function nearestLicenceFile(
+  snap: Snapshot,
+  directory: string
+): { file: TreeEntry; at: string } | undefined {
+  for (const here of ancestry(directory)) {
+    const file = (snap.filesByDirectory.get(here) ?? []).find((entry) =>
+      isLicenceFile(basename(entry.path))
+    );
+    if (file !== undefined) {
+      return { at: here, file };
     }
-    const directory = parent(entry.path);
-    const files = filesByDirectory.get(directory) ?? [];
-    if (!files.some((file) => file.path === entry.path)) {
-      files.push(entry);
-    }
-    filesByDirectory.set(directory, files);
   }
-  return {
-    base,
-    commit,
-    entries,
-    filesByDirectory,
-    github,
-    ref,
-    repositoryLicence: licence,
-  };
+  return undefined;
 }
 
 /** The licence that applies to an artifact in `directory`: the nearest licence file, else the repository's. */
@@ -182,55 +203,34 @@ async function licenceAt(
   directory: string,
   cache: Map<string, Promise<Licence>>
 ): Promise<Licence> {
-  for (const here of ancestry(directory)) {
-    const file = (snap.filesByDirectory.get(here) ?? []).find((entry) =>
-      isLicenceFile(basename(entry.path))
-    );
-    if (file === undefined) {
-      continue;
-    }
-    if (here === "" && snap.repositoryLicence !== undefined) {
-      const detected = fromSpdx(snap.repositoryLicence);
-      if (detected !== undefined) {
-        return detected;
-      }
-    }
-    let found = cache.get(file.path);
-    if (found === undefined) {
-      found = snap.github
-        .raw(snap.commit, file.path)
-        .then((bytes) =>
-          bytes === null
-            ? NO_LICENCE
-            : classifyText(new TextDecoder().decode(bytes))
-        );
-      cache.set(file.path, found);
-    }
-    return await found;
-  }
   const detected =
-    snap.repositoryLicence === undefined
-      ? undefined
-      : fromSpdx(snap.repositoryLicence);
-  return detected ?? NO_LICENCE;
+    snap.licence === undefined ? undefined : fromSpdx(snap.licence);
+  const nearest = nearestLicenceFile(snap, directory);
+  if (nearest === undefined) {
+    return detected ?? NO_LICENCE;
+  }
+  if (nearest.at === "" && detected !== undefined) {
+    return detected;
+  }
+  const cached =
+    cache.get(nearest.file.path) ?? classifyFile(snap, nearest.file.path);
+  cache.set(nearest.file.path, cached);
+  return await cached;
 }
 
 /** A skill with no licence file may still name an SPDX licence in its SKILL.md. */
 async function skillStatement(
-  snap: Snapshot,
+  snap: Resolved,
   artifact: Artifact
 ): Promise<Licence | undefined> {
   const path = artifact.path === "" ? "SKILL.md" : `${artifact.path}/SKILL.md`;
   const bytes = await snap.github.raw(snap.commit, path);
-  if (bytes === null) {
-    return undefined;
-  }
-  const statement = stringField(
-    frontmatter(new TextDecoder().decode(bytes)),
-    "license"
-  );
+  const statement =
+    bytes === null
+      ? undefined
+      : frontmatter(new TextDecoder().decode(bytes)).license;
   const read = statement === undefined ? undefined : fromStatement(statement);
-  return typeof read === "object" ? read : undefined;
+  return read === "see-file" ? undefined : read;
 }
 
 /** A human title from a file or directory name: `api-architect` is `Api architect`. */
@@ -253,35 +253,32 @@ function recordUrl(
     : `${repo}/${kind}/${commit}/${path}`;
 }
 
-/** An MCP item from a server a marketplace declares inline; `${NAME}` placeholders become secret references. */
-function serverFields(
-  server: InlineServer
-): Record<string, unknown> | undefined {
-  const slot = (value: unknown): unknown => {
-    if (typeof value !== "string") {
-      return undefined;
-    }
-    const reference = /^\$\{([A-Z][A-Z0-9_]*)\}$/u.exec(value);
-    return reference?.[1] === undefined ? value : { secret: reference[1] };
-  };
-  const slots = (record: unknown): Record<string, unknown> | undefined => {
-    if (typeof record !== "object" || record === null) {
-      return undefined;
-    }
-    const out = Object.fromEntries(
-      Object.entries(record).flatMap(([key, value]) => {
-        const converted = slot(value);
-        return converted === undefined ? [] : [[key, converted]];
-      })
-    );
-    return Object.keys(out).length === 0 ? undefined : out;
-  };
-  const { definition } = server;
-  if (typeof definition.url === "string") {
-    const type = definition.type;
+/** A literal value, or a `${NAME}` placeholder as a secret reference. */
+function slot(value: string): string | { secret: string } {
+  const name = /^\$\{(?<name>[A-Z][A-Z0-9_]*)\}$/u.exec(value)?.groups?.name;
+  return name === undefined ? value : { secret: name };
+}
+
+/** A map of literals and `${NAME}` placeholders as item slots; `undefined` when empty. */
+function slots(
+  record: Readonly<Record<string, string>> | undefined
+): Map<string, string | { secret: string }> | undefined {
+  if (record === undefined || Object.keys(record).length === 0) {
+    return undefined;
+  }
+  return new Map(
+    Object.entries(record).map(([key, value]) => [key, slot(value)])
+  );
+}
+
+/** An MCP item's fields from a server a marketplace declares inline. */
+function serverFields(definition: ServerDefinition): object | undefined {
+  if (definition.url !== undefined) {
+    const { type } = definition;
+    const headers = slots(definition.headers);
     return {
       flavour: "remote",
-      headers: slots(definition.headers),
+      headers: headers === undefined ? undefined : Object.fromEntries(headers),
       transport:
         type === "http" || type === "sse" || type === "streamable-http"
           ? type
@@ -289,18 +286,92 @@ function serverFields(
       url: definition.url,
     };
   }
-  if (typeof definition.command === "string") {
-    const args = Array.isArray(definition.args)
-      ? definition.args.filter((arg): arg is string => typeof arg === "string")
-      : undefined;
+  if (definition.command !== undefined) {
+    const env = slots(definition.env);
     return {
-      args: args === undefined || args.length === 0 ? undefined : args,
+      args:
+        definition.args === undefined || definition.args.length === 0
+          ? undefined
+          : definition.args,
       command: definition.command,
-      env: slots(definition.env),
+      env: env === undefined ? undefined : Object.fromEntries(env),
       flavour: "stdio",
     };
   }
   return undefined;
+}
+
+/** A JSON file of the repository, parsed with `schema`, or `undefined` when it is missing or not that shape. */
+async function readJson<const TSchema extends v.GenericSchema>(
+  snap: Resolved,
+  path: string,
+  schema: TSchema
+): Promise<v.InferOutput<TSchema> | undefined> {
+  const bytes = await snap.github.raw(snap.commit, path);
+  if (bytes === null) {
+    return undefined;
+  }
+  try {
+    // BOUNDARY: an upstream JSON file is untyped until `schema` reads it.
+    const parsed = v.safeParse(
+      schema,
+      JSON.parse(new TextDecoder().decode(bytes))
+    );
+    return parsed.success ? parsed.output : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The artifacts a plugin manifest or a marketplace adds to the layouts' own. */
+async function manifestArtifacts(snap: Snapshot): Promise<Artifact[]> {
+  const manifests = manifestsToRead(snap.entries, snap.base);
+  const found: Artifact[] = [];
+  if (manifests.plugin !== undefined) {
+    const plugin = await readJson(snap, manifests.plugin, PluginManifestSchema);
+    if (plugin !== undefined && isAgentPlugin(plugin)) {
+      found.push({
+        directory: snap.base,
+        key: manifests.plugin,
+        kind: "plugin",
+        name: basename(snap.base) || snap.github.repository.name,
+        path: snap.base,
+      });
+    }
+  }
+  if (manifests.marketplace !== undefined) {
+    const { marketplace } = manifests;
+    const document = await readJson(snap, marketplace, MarketplaceSchema);
+    for (const server of document === undefined
+      ? []
+      : inlineServers(document)) {
+      found.push({
+        directory: parent(marketplace),
+        key: `${marketplace}#${server.name}`,
+        kind: "mcp",
+        name: server.name,
+        path: marketplace,
+      });
+    }
+  }
+  return found;
+}
+
+/** The licence of each artifact, in order. */
+async function licences(
+  snap: Snapshot,
+  artifacts: readonly Artifact[]
+): Promise<Licence[]> {
+  const cache = new Map<string, Promise<Licence>>();
+  return await Promise.all(
+    artifacts.map(async (artifact) => {
+      const licence = await licenceAt(snap, artifact.directory, cache);
+      if (licence === NO_LICENCE && artifact.kind === "skill") {
+        return (await skillStatement(snap, artifact)) ?? licence;
+      }
+      return licence;
+    })
+  );
 }
 
 async function discover(
@@ -308,84 +379,43 @@ async function discover(
   context: AdapterContext
 ): Promise<Discovery> {
   const snap = await snapshot(source, context);
-  const artifacts = findArtifacts(snap.entries, snap.base);
-  const manifests = manifestsToRead(snap.entries, snap.base);
-  const warnings: string[] = [];
-
-  const extra: { artifact: Artifact; server?: InlineServer }[] = [];
-  if (manifests.plugin !== undefined) {
-    const bytes = await snap.github.raw(snap.commit, manifests.plugin);
-    const document = parseJson(bytes);
-    if (isAgentPlugin(document)) {
-      extra.push({
-        artifact: {
-          directory: snap.base,
-          key: manifests.plugin,
-          kind: "plugin",
-          name: basename(snap.base) || snap.github.repository.name,
-          path: snap.base,
-        },
-      });
-    }
-  }
-  if (manifests.marketplace !== undefined) {
-    const bytes = await snap.github.raw(snap.commit, manifests.marketplace);
-    for (const server of inlineServers(parseJson(bytes))) {
-      extra.push({
-        artifact: {
-          directory: parent(manifests.marketplace),
-          key: `${manifests.marketplace}#${server.name}`,
-          kind: "mcp",
-          name: server.name,
-          path: manifests.marketplace,
-        },
-        server,
-      });
-    }
-  }
-
-  const all = [...artifacts.map((artifact) => ({ artifact })), ...extra];
+  const artifacts = [
+    ...findArtifacts(snap.entries, snap.base),
+    ...(await manifestArtifacts(snap)),
+  ];
   const ids = uniqueIds(
-    all.map(({ artifact }) => ({
+    artifacts.map((artifact) => ({
       name: artifact.name,
       qualifier: artifact.kind,
     }))
   );
-  const cache = new Map<string, Promise<Licence>>();
+  const found = await licences(snap, artifacts);
   const repo = repositoryUrl(snap.github.repository);
-  const candidates: Candidate[] = [];
-  let linkOnly = 0;
-  for (const [index, { artifact }] of all.entries()) {
-    // oxlint-disable-next-line eslint/no-await-in-loop -- licence files are cached; most artifacts share one.
-    let licence = await licenceAt(snap, artifact.directory, cache);
-    if (
-      !licence.permitsCopy &&
-      licence === NO_LICENCE &&
-      artifact.kind === "skill"
-    ) {
-      // oxlint-disable-next-line eslint/no-await-in-loop -- only skills without a licence file are read.
-      licence = (await skillStatement(snap, artifact)) ?? licence;
-    }
-    if (!licence.permitsCopy) {
-      linkOnly += 1;
-    }
-    candidates.push({
+  const candidates = artifacts.map((artifact, index) => {
+    const licence = found[index] ?? NO_LICENCE;
+    const candidate: Candidate = {
       id: ids[index] ?? "item",
       key: artifact.key,
       kind: artifact.kind,
       license: licence.statement,
-      ...(licence.id === undefined ? {} : { licenseId: licence.id }),
       linkOnly: !licence.permitsCopy,
       path: artifact.path,
       title: titleOf(artifact.name),
       upstream: { ref: snap.ref, resolvedCommit: snap.commit, url: repo },
-    });
-  }
+    };
+    if (licence.id !== undefined) {
+      candidate.licenseId = licence.id;
+    }
+    return candidate;
+  });
+  const warnings: string[] = [];
   if (candidates.length === 0) {
+    const where = snap.base === "" ? repo : `${repo}/${snap.base}`;
     warnings.push(
-      `${repo}${snap.base === "" ? "" : `/${snap.base}`} at ${snap.commit} has none of APM's package layouts`
+      `${where} at ${snap.commit} has none of APM's package layouts`
     );
   }
+  const linkOnly = candidates.filter((candidate) => candidate.linkOnly).length;
   if (linkOnly > 0) {
     warnings.push(
       `${linkOnly} of ${candidates.length} candidates have no licence ShelfKit can identify as permitting copies; they import as links, without content`
@@ -394,20 +424,144 @@ async function discover(
   return { candidates, warnings };
 }
 
-function parseJson(bytes: Uint8Array | null): unknown {
-  if (bytes === null) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-  } catch {
-    return undefined;
-  }
+/** The text of a copied file, when it is text. */
+function textOf(file: ImportedFile | undefined): string {
+  return file?.encoding === "utf-8" ? file.contents : "";
 }
 
-/** The text of a copied file, when it is text. */
-function textOf(file: ImportedFile | undefined): string | undefined {
-  return file?.encoding === "utf-8" ? file.contents : undefined;
+/** A skill's whole directory, or why it cannot be copied. */
+async function copySkill(
+  snap: Resolved,
+  path: string
+): Promise<{ files: ImportedFile[] } | { problem: string }> {
+  const { entry } = await snap.github.walk(snap.commit, path);
+  if (entry === null) {
+    throw new Error(`no \`${path}\` at ${snap.commit}`);
+  }
+  const listed = await snap.github.tree(entry.sha, path, true);
+  const entries = listed.filter(
+    (file) => file.type === "blob" && basename(file.path) !== ".DS_Store"
+  );
+  const size = entries.reduce((sum, file) => sum + file.size, 0);
+  if (entries.length > MAX_FILES || size > MAX_BYTES) {
+    return {
+      problem: `it is ${entries.length} files and ${size} bytes, more than ShelfKit copies`,
+    };
+  }
+  const files = await Promise.all(
+    entries.map(async (file) => {
+      const bytes = await snap.github.raw(snap.commit, file.path);
+      if (bytes === null) {
+        throw new Error(`no \`${file.path}\` at ${snap.commit}`);
+      }
+      return {
+        ...fileContents(bytes),
+        path: path === "" ? file.path : file.path.slice(path.length + 1),
+      };
+    })
+  );
+  if (files.some((file) => file.path === "item.json")) {
+    return {
+      problem:
+        "it has its own item.json, which the shelf's item.json would replace",
+    };
+  }
+  return { files: files.toSorted((a, b) => byCodePoint(a.path, b.path)) };
+}
+
+/** Copy an artifact's content into its item directory, or say why it cannot be copied. */
+async function copy(
+  snap: Resolved,
+  kind: ItemKind,
+  path: string
+): Promise<{ files: ImportedFile[] } | { problem: string }> {
+  if (kind === "skill") {
+    return await copySkill(snap, path);
+  }
+  const target = CONTENT_FILE.get(kind);
+  if (target === undefined) {
+    return { problem: `a ${kind} item has no content file to copy` };
+  }
+  let contentPath = path;
+  if (kind === "plugin") {
+    contentPath = path === "" ? "plugin.json" : `${path}/plugin.json`;
+  }
+  const bytes = await snap.github.raw(snap.commit, contentPath);
+  if (bytes === null) {
+    throw new Error(`no \`${contentPath}\` at ${snap.commit}`);
+  }
+  return { files: [{ ...fileContents(bytes), path: target }] };
+}
+
+/** The fields of an MCP item a marketplace declares. */
+async function mcpFields(
+  snap: Resolved,
+  candidate: Candidate
+): Promise<object> {
+  const [manifest = "", name = ""] = candidate.key.split("#");
+  const document = await readJson(snap, manifest, MarketplaceSchema);
+  const server =
+    document === undefined
+      ? undefined
+      : inlineServers(document).find((found) => found.name === name);
+  const fields =
+    server === undefined ? undefined : serverFields(server.definition);
+  if (fields === undefined) {
+    throw new Error(
+      `${repositoryUrl(snap.github.repository)}/${candidate.key} at ${snap.commit} declares no server \`${name}\` ShelfKit reads`
+    );
+  }
+  return { ...fields, name };
+}
+
+/** What a copy holds, or why the item is a link instead. */
+interface Content {
+  readonly files: ImportedFile[];
+  readonly linkOnly: boolean;
+  readonly reason: string;
+}
+
+/** Copy a licensed artifact; a SKILL.md that declares a restriction, or that the loader would refuse, makes a link. */
+async function content(
+  snap: Resolved,
+  candidate: Candidate,
+  id: string
+): Promise<Content> {
+  const notPermitted = `its licence (${candidate.license ?? "none stated"}) does not permit keeping a copy`;
+  if (candidate.linkOnly || candidate.kind === "mcp") {
+    return { files: [], linkOnly: candidate.linkOnly, reason: notPermitted };
+  }
+  const copied = await copy(snap, candidate.kind, candidate.path ?? "");
+  if ("problem" in copied) {
+    return { files: [], linkOnly: true, reason: copied.problem };
+  }
+  const skill = copied.files.find((file) => file.path === "SKILL.md");
+  if (candidate.kind !== "skill" || skill === undefined) {
+    return { files: copied.files, linkOnly: false, reason: "" };
+  }
+  const declared = frontmatter(textOf(skill)).license;
+  const read = declared === undefined ? undefined : fromStatement(declared);
+  if (read !== undefined && read !== "see-file" && !read.permitsCopy) {
+    return {
+      files: [],
+      linkOnly: true,
+      reason: `its SKILL.md declares the licence \`${declared ?? ""}\``,
+    };
+  }
+  const problem = skillProblem(textOf(skill), id);
+  return problem === undefined
+    ? { files: copied.files, linkOnly: false, reason: "" }
+    : { files: [], linkOnly: true, reason: problem };
+}
+
+/** The commit to fetch at: the pick's, or the candidate's when the pick asks for no other ref. */
+function pinnedCommit(candidate: Candidate, pick: Pick): string | undefined {
+  if (pick.pin?.resolvedCommit !== undefined) {
+    return pick.pin.resolvedCommit;
+  }
+  return pick.pin?.ref === undefined
+    ? candidate.upstream.resolvedCommit
+    : undefined;
 }
 
 async function fetchItem(
@@ -416,182 +570,81 @@ async function fetchItem(
   pick: Pick,
   context: AdapterContext
 ): Promise<ImportedItem> {
-  const pinned =
-    pick.pin?.resolvedCommit ??
-    (pick.pin?.ref === undefined
-      ? candidate.upstream.resolvedCommit
-      : undefined);
+  const ref = pick.pin?.ref ?? source.ref;
   const snap = await resolve(
-    {
-      ...source,
-      ...(pick.pin?.ref === undefined ? {} : { ref: pick.pin.ref }),
-    },
+    { ...source, ref },
     context,
-    pinned
+    pinnedCommit(candidate, pick)
   );
   const repo = repositoryUrl(snap.github.repository);
   const id = pick.id ?? candidate.id;
   const path = candidate.path ?? "";
-  const warnings: string[] = [];
-  let linkOnly = candidate.linkOnly;
-  let reason = `its licence (${candidate.license ?? "none stated"}) does not permit keeping a copy`;
-  const files: ImportedFile[] = [];
-  const fields: Record<string, unknown> = {};
-
-  if (candidate.kind === "mcp") {
-    const [manifest, name] = candidate.key.split("#");
-    const document = parseJson(
-      manifest === undefined
-        ? null
-        : await snap.github.raw(snap.commit, manifest)
-    );
-    const server = inlineServers(document).find((found) => found.name === name);
-    const definition = server === undefined ? undefined : serverFields(server);
-    if (definition === undefined) {
-      throw new Error(
-        `${repo}/${candidate.key} at ${snap.commit} declares no server \`${name ?? ""}\` ShelfKit reads`
-      );
-    }
-    Object.assign(fields, definition, { name });
-  } else if (!linkOnly) {
-    const copied = await copy(snap, candidate.kind, path);
-    if ("problem" in copied) {
-      linkOnly = true;
-      reason = copied.problem;
-    } else {
-      files.push(...copied.files);
-    }
-  }
-
-  const main = files.find(
+  const record = recordUrl(
+    repo,
+    snap.commit,
+    path,
+    candidate.kind === "skill" || path === "" ? "tree" : "blob"
+  );
+  const copied = await content(snap, candidate, id);
+  const fields =
+    candidate.kind === "mcp" ? await mcpFields(snap, candidate) : {};
+  const main = copied.files.find(
     (file) =>
       file.path ===
-      (candidate.kind === "skill" ? "SKILL.md" : CONTENT_FILE[candidate.kind])
+      (candidate.kind === "skill"
+        ? "SKILL.md"
+        : CONTENT_FILE.get(candidate.kind))
   );
-  const meta = frontmatter(textOf(main) ?? "");
-  if (candidate.kind === "skill" && main !== undefined) {
-    const declared = stringField(meta, "license");
-    const read = declared === undefined ? undefined : fromStatement(declared);
-    const problem =
-      typeof read === "object" && !read.permitsCopy
-        ? `its SKILL.md declares the licence \`${declared ?? ""}\``
-        : skillProblem(main.contents, id);
-    if (problem !== undefined) {
-      linkOnly = true;
-      reason = problem;
-    }
-  }
-  if (linkOnly && candidate.kind !== "mcp") {
-    warnings.push(
-      linkOnlyWarning(
-        id,
-        reason,
-        recordUrl(
-          repo,
-          snap.commit,
-          path,
-          candidate.kind === "skill" ? "tree" : "blob"
-        )
-      )
-    );
-  }
-
-  const licence = {
-    license: candidate.license ?? NO_LICENCE.statement,
-    licenseId: candidate.licenseId,
-    shareAlike:
-      candidate.licenseId === undefined
-        ? undefined
-        : (fromSpdx(candidate.licenseId)?.shareAlike ?? false),
-  };
+  const meta = frontmatter(textOf(main));
+  const { licenseId } = candidate;
+  const creditPath = path === "" ? "" : `: ${path}`;
+  const creditLicence = licenseId === undefined ? "" : ` (${licenseId})`;
   const item = {
     ...fields,
-    description: stringField(meta, "description"),
+    description: meta.description,
     id,
     kind: candidate.kind,
     source: provenance({
-      ...licence,
-      creditText: `${snap.github.repository.owner}/${snap.github.repository.name}${path === "" ? "" : `: ${path}`}${
-        candidate.licenseId === undefined ? "" : ` (${candidate.licenseId})`
-      }`,
+      creditText: `${snap.github.repository.owner}/${snap.github.repository.name}${creditPath}${creditLicence}`,
       id: source.sourceId,
+      license: candidate.license ?? NO_LICENCE.statement,
+      licenseId,
       linkTarget: repo,
       path: path === "" ? undefined : path,
-      recordUrl: recordUrl(
-        repo,
-        snap.commit,
-        path,
-        candidate.kind === "skill" || path === "" ? "tree" : "blob"
-      ),
+      recordUrl: record,
       ref: snap.ref,
       repo,
       resolvedCommit: snap.commit,
+      shareAlike:
+        licenseId === undefined
+          ? undefined
+          : (fromSpdx(licenseId)?.shareAlike ?? false),
     }),
     title:
-      stringField(meta, "title") ??
-      (candidate.kind === "skill" ? undefined : stringField(meta, "name")) ??
+      meta.title ??
+      (candidate.kind === "skill" ? undefined : meta.name) ??
       candidate.title,
   };
-  return importedItem({ files, item, linkOnly, warnings });
+  const warnings =
+    copied.linkOnly && candidate.kind !== "mcp"
+      ? [linkOnlyWarning(id, copied.reason, record)]
+      : [];
+  return importedItem({
+    files: copied.files,
+    item,
+    linkOnly: copied.linkOnly,
+    warnings,
+  });
 }
 
-/** Copy an artifact's files into its item directory, or say why it cannot be copied. */
-async function copy(
-  snap: { github: GitHub; commit: string },
-  kind: ItemKind,
+/** The object id at a path in a commit, or `null` when it is not there. */
+async function objectAt(
+  github: GitHub,
+  commit: string,
   path: string
-): Promise<{ files: ImportedFile[] } | { problem: string }> {
-  if (kind === "skill") {
-    const walked = await snap.github.walk(snap.commit, path);
-    if (walked.entry === null) {
-      throw new Error(`no \`${path}\` at ${snap.commit}`);
-    }
-    const entries = (
-      await snap.github.tree(walked.entry.sha, path, true)
-    ).filter(
-      (entry) => entry.type === "blob" && basename(entry.path) !== ".DS_Store"
-    );
-    const size = entries.reduce((sum, entry) => sum + entry.size, 0);
-    if (entries.length > MAX_FILES || size > MAX_BYTES) {
-      return {
-        problem: `it is ${entries.length} files and ${size} bytes, more than ShelfKit copies`,
-      };
-    }
-    const files = await Promise.all(
-      entries.map(async (entry) => {
-        const bytes = await snap.github.raw(snap.commit, entry.path);
-        if (bytes === null) {
-          throw new Error(`no \`${entry.path}\` at ${snap.commit}`);
-        }
-        return {
-          ...fileContents(bytes),
-          path: path === "" ? entry.path : entry.path.slice(path.length + 1),
-        };
-      })
-    );
-    if (files.some((file) => file.path === "item.json")) {
-      return {
-        problem:
-          "it has its own item.json, which the shelf's item.json would replace",
-      };
-    }
-    return { files: files.toSorted((a, b) => byCodePoint(a.path, b.path)) };
-  }
-  const target = CONTENT_FILE[kind];
-  if (target === undefined) {
-    return { problem: `a ${kind} item has no content file to copy` };
-  }
-  const contentPath =
-    kind === "plugin"
-      ? path === ""
-        ? "plugin.json"
-        : `${path}/plugin.json`
-      : path;
-  const bytes = await snap.github.raw(snap.commit, contentPath);
-  if (bytes === null) {
-    throw new Error(`no \`${contentPath}\` at ${snap.commit}`);
-  }
-  return { files: [{ ...fileContents(bytes), path: target }] };
+): Promise<string | null> {
+  const { entry } = await github.walk(commit, path);
+  return entry === null ? null : entry.sha;
 }
 
 async function checkUpstream(
@@ -630,12 +683,12 @@ async function checkUpstream(
   if (path === "") {
     return { latest, status: "moved" };
   }
-  const now = (await github.walk(head, path)).entry;
+  const now = await objectAt(github, head, path);
   if (now === null) {
     return { latest, status: "gone" };
   }
-  const then = (await github.walk(source.resolvedCommit, path)).entry;
-  return { latest, status: then?.sha === now.sha ? "current" : "moved" };
+  const then = await objectAt(github, source.resolvedCommit, path);
+  return { latest, status: then === now ? "current" : "moved" };
 }
 
 export const gitAdapter: SourceAdapter = {

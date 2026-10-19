@@ -16,6 +16,7 @@
  * compiled `apm.yml` pins.
  */
 import type { ItemKind } from "@shelfkit/schema";
+import * as v from "valibot";
 
 import type { TreeEntry } from "./github.ts";
 import { byCodePoint } from "./http.ts";
@@ -133,67 +134,91 @@ export function findArtifacts(
   return artifacts.toSorted((a, b) => byCodePoint(a.key, b.key));
 }
 
+/** The manifests at `base` that a layout needs read to know what they hold. */
+export interface Manifests {
+  plugin?: string;
+  marketplace?: string;
+}
+
 /** The files at `base` that a layout needs read to know what they hold. */
 export function manifestsToRead(
   entries: readonly TreeEntry[],
   base: string
-): { plugin?: string; marketplace?: string } {
+): Manifests {
   const at = (relative: string): string | undefined => {
     const path = base === "" ? relative : `${base}/${relative}`;
     return entries.some((entry) => entry.path === path) ? path : undefined;
   };
+  const found: Manifests = {};
   const plugin = at("plugin.json") ?? at(".claude-plugin/plugin.json");
+  if (plugin !== undefined) {
+    found.plugin = plugin;
+  }
   const marketplace =
     at("marketplace.json") ?? at(".claude-plugin/marketplace.json");
-  return {
-    ...(plugin === undefined ? {} : { plugin }),
-    ...(marketplace === undefined ? {} : { marketplace }),
-  };
+  if (marketplace !== undefined) {
+    found.marketplace = marketplace;
+  }
+  return found;
 }
 
+/** A `plugin.json`, as far as telling its kind needs. */
+export const PluginManifestSchema = v.looseObject({
+  $schema: v.optional(v.string()),
+});
+
 /** Whether a `plugin.json` is an Agent Plugin (one item) rather than a Claude plugin collection (its primitives). */
-export function isAgentPlugin(document: unknown): boolean {
-  if (typeof document !== "object" || document === null) {
-    return false;
-  }
-  const schema = (document as { $schema?: unknown }).$schema;
-  return typeof schema === "string" && /agent-?plugin/iu.test(schema);
+export function isAgentPlugin(
+  document: v.InferOutput<typeof PluginManifestSchema>
+): boolean {
+  return (
+    document.$schema !== undefined && /agent-?plugin/iu.test(document.$schema)
+  );
 }
+
+/** A server a marketplace declares inline, as far as ShelfKit reads it. */
+export const ServerDefinitionSchema = v.looseObject({
+  args: v.optional(v.array(v.string())),
+  command: v.optional(v.string()),
+  env: v.optional(v.record(v.string(), v.string())),
+  headers: v.optional(v.record(v.string(), v.string())),
+  type: v.optional(v.string()),
+  url: v.optional(v.string()),
+});
+
+export type ServerDefinition = v.InferOutput<typeof ServerDefinitionSchema>;
+
+/** A marketplace document: plugins, some declaring MCP servers inline. */
+export const MarketplaceSchema = v.looseObject({
+  plugins: v.fallback(
+    v.array(
+      v.looseObject({
+        mcpServers: v.fallback(
+          v.record(v.string(), ServerDefinitionSchema),
+          {}
+        ),
+      })
+    ),
+    []
+  ),
+});
 
 /** A server a marketplace declares inline. */
 export interface InlineServer {
   readonly name: string;
-  readonly definition: Record<string, unknown>;
+  readonly definition: ServerDefinition;
 }
 
 /** The inline `mcpServers` of every plugin in a marketplace document. */
-export function inlineServers(document: unknown): InlineServer[] {
-  if (typeof document !== "object" || document === null) {
-    return [];
-  }
-  const plugins = (document as { plugins?: unknown }).plugins;
-  if (!Array.isArray(plugins)) {
-    return [];
-  }
-  const servers: InlineServer[] = [];
-  for (const plugin of plugins as unknown[]) {
-    const declared =
-      typeof plugin === "object" && plugin !== null
-        ? (plugin as { mcpServers?: unknown }).mcpServers
-        : undefined;
-    if (typeof declared !== "object" || declared === null) {
-      continue;
-    }
-    for (const [name, definition] of Object.entries(declared)) {
-      if (typeof definition === "object" && definition !== null) {
-        servers.push({
-          definition: definition as Record<string, unknown>,
-          name,
-        });
-      }
-    }
-  }
-  return servers;
+export function inlineServers(
+  document: v.InferOutput<typeof MarketplaceSchema>
+): InlineServer[] {
+  return document.plugins.flatMap((plugin) =>
+    Object.entries(plugin.mcpServers).map(([name, definition]) => ({
+      definition,
+      name,
+    }))
+  );
 }
 
 /** The directories from `directory` up to the root, nearest first. */

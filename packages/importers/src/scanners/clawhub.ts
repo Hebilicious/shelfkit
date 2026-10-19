@@ -6,8 +6,6 @@
  * ShelfKit's revision hash, never ClawHub's timestamp. A revision whose files differ gets an `error` saying so, and an
  * item ClawHub has not scanned, or that did not come from ClawHub, gets no verdict at all.
  */
-import * as v from "valibot";
-
 import {
   clawHubRef,
   listingUrl,
@@ -17,6 +15,7 @@ import {
 import { fileBytes, getJson, sha256Hex } from "../http.ts";
 import type {
   AdapterContext,
+  ImportedFile,
   ScanSubject,
   ScanVerdict,
   Scanner,
@@ -24,11 +23,32 @@ import type {
 
 export const CLAWHUB_SCANNER_ID = "clawhub";
 
-const VERDICTS: Readonly<Record<string, ScanVerdict["verdict"]>> = {
-  clean: "clean",
-  malicious: "malicious",
-  suspicious: "suspicious",
-};
+/** ClawHub's definitive statuses, as verdicts; anything else (pending, an error) is no verdict yet. */
+const VERDICTS = new Map<string, ScanVerdict["verdict"]>([
+  ["clean", "clean"],
+  ["malicious", "malicious"],
+  ["suspicious", "suspicious"],
+]);
+
+/** Whether `files` are exactly the files ClawHub lists, by path and sha256. */
+async function sameFiles(
+  files: readonly ImportedFile[],
+  listed: readonly { path: string; sha256: string }[]
+): Promise<boolean> {
+  const expected = new Map(
+    listed.map((file) => [file.path, file.sha256.toLowerCase()])
+  );
+  const hashes = await Promise.all(
+    files.map(async (file) => ({
+      digest: await sha256Hex(fileBytes(file)),
+      path: file.path,
+    }))
+  );
+  return (
+    hashes.length === expected.size &&
+    hashes.every(({ digest, path }) => expected.get(path) === digest)
+  );
+}
 
 async function scan(
   subject: ScanSubject,
@@ -36,55 +56,40 @@ async function scan(
 ): Promise<ScanVerdict | null> {
   const ref = clawHubRef(subject.item);
   const version = subject.item.source?.version;
-  if (ref === undefined || version === undefined) {
-    return null;
-  }
+  // A link-only item holds no content of ClawHub's to vouch for.
   const ours = subject.files.filter((file) => file.path !== "item.json");
-  if (ours.length === 0) {
-    // A link-only item holds no content of ClawHub's to vouch for.
+  if (ref === undefined || version === undefined || ours.length === 0) {
     return null;
   }
   const found = await getJson(
     context.fetch,
-    versionUrl(ref.owner, ref.slug, version)
+    versionUrl(ref.owner, ref.slug, version),
+    VersionSchema
   );
-  if (found === null) {
-    return null;
-  }
-  const published = v.parse(VersionSchema, found).version;
-  const security = published.security;
+  const security = found?.version.security ?? undefined;
   const verdict =
-    security?.status === undefined ? undefined : VERDICTS[security.status];
+    security?.status === undefined ? undefined : VERDICTS.get(security.status);
   if (
+    found === null ||
     security === undefined ||
-    security === null ||
     security.hasScanResult !== true ||
     verdict === undefined
   ) {
     return null;
   }
   const detailsUrl = `${listingUrl(ref.owner, ref.slug)}/security-audit?version=${encodeURIComponent(version)}`;
-  const listed = new Map(
-    published.files.map((file) => [file.path, file.sha256.toLowerCase()])
-  );
-  const hashes = await Promise.all(
-    ours.map(
-      async (file) => [file.path, await sha256Hex(fileBytes(file))] as const
-    )
-  );
-  const differs =
-    hashes.length !== listed.size ||
-    hashes.some(([path, digest]) => listed.get(path) !== digest);
+  const bundle = security.sha256hash ?? undefined;
   const observed =
-    security.sha256hash === undefined || security.sha256hash === null
+    bundle === undefined
       ? `${ref.owner}/${ref.slug}@${version}`
-      : `sha256:${security.sha256hash.toLowerCase()} (ClawHub's bundle digest of ${ref.owner}/${ref.slug}@${version})`;
-  if (differs) {
+      : `sha256:${bundle.toLowerCase()} (ClawHub's bundle digest of ${ref.owner}/${ref.slug}@${version})`;
+  const status = security.status ?? "";
+  if (!(await sameFiles(ours, found.version.files))) {
     return {
       detailsUrl,
       observed,
       scanner: CLAWHUB_SCANNER_ID,
-      summary: `ClawHub's verdict (${security.status}) is for files that differ from this revision's, so it is not taken`,
+      summary: `ClawHub's verdict (${status}) is for files that differ from this revision's, so it is not taken`,
       verdict: "error",
     };
   }
@@ -92,7 +97,7 @@ async function scan(
     detailsUrl,
     observed,
     scanner: CLAWHUB_SCANNER_ID,
-    summary: `ClawHub: ${security.status}; every file of this revision matches the sha256 ClawHub lists for ${version}`,
+    summary: `ClawHub: ${status}; every file of this revision matches the sha256 ClawHub lists for ${version}`,
     verdict,
   };
 }

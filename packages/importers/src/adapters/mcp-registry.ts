@@ -6,13 +6,15 @@
  * registry's data is CC0 (`../terms.ts`); another registry's terms are unknown, so its items carry no description and
  * a warning, though their definitions (names and URLs) are kept, since a definition is the link.
  *
- * Drift reads the server's latest version: a different version is `moved`, a `deleted` status or a missing server is
- * `gone`.
+ * Drift reads the server's latest version: a different version, or the same version whose document changed, is
+ * `moved`; a `deleted` status or a missing server is `gone`.
  */
 import * as v from "valibot";
 
-import { canonicalJson, getJson, sha256Hex } from "../http.ts";
+import { canonicalJson, getJson, JsonSchema, sha256OfText } from "../http.ts";
+import type { Json } from "../http.ts";
 import { kebab, uniqueIds } from "../ids.ts";
+import type { Wanted } from "../ids.ts";
 import {
   importedItem,
   linkOnlyWarning,
@@ -54,11 +56,11 @@ const ServerSchema = v.object({
       })
     )
   ),
-  repository: v.optional(v.object({ url: v.optional(v.string()) })),
   title: v.optional(v.string()),
   version: v.string(),
 });
 
+/** One version of a server as the registry serves it; `document` is the `server` object exactly as served. */
 const EntrySchema = v.object({
   _meta: v.optional(
     v.object({
@@ -67,7 +69,7 @@ const EntrySchema = v.object({
       ),
     })
   ),
-  server: v.looseObject(ServerSchema.entries),
+  server: JsonSchema,
 });
 
 const ListSchema = v.object({ servers: v.array(EntrySchema) });
@@ -75,7 +77,7 @@ const ListSchema = v.object({ servers: v.array(EntrySchema) });
 type Entry = v.InferOutput<typeof EntrySchema>;
 type Server = v.InferOutput<typeof ServerSchema>;
 
-/** Whether a URL is this kind of catalog: the official registry, or a path under `/v0.1`. */
+/** Whether a URL is this kind of catalog: the official registry, or a path under `/v0`. */
 export function isMcpRegistry(url: string): boolean {
   const parsed = new URL(url);
   return (
@@ -89,27 +91,27 @@ function origin(url: string): string {
 
 /** The registry's terms: CC0 for the official registry, unknown for any other. */
 function licenceOf(url: string): Licence {
-  if (
-    origin(url) === OFFICIAL_REGISTRY &&
-    MCP_REGISTRY_TERMS.licence !== "per-artifact"
-  ) {
-    return MCP_REGISTRY_TERMS.licence;
-  }
-  return NO_LICENCE;
+  const terms = MCP_REGISTRY_TERMS.licence;
+  return origin(url) === OFFICIAL_REGISTRY && terms !== "per-artifact"
+    ? terms
+    : NO_LICENCE;
 }
 
 function versionUrl(url: string, name: string, version: string): string {
   return `${origin(url)}/v0.1/servers/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}`;
 }
 
-/** `sha256:` over the canonical JSON of a version's `server` document, as the registry served it. */
-async function serverDigest(found: unknown): Promise<string> {
-  const server = (found as { server?: unknown }).server;
-  return `sha256:${await sha256Hex(canonicalJson(server))}`;
-}
-
 function statusOf(entry: Entry): string | undefined {
   return entry._meta?.["io.modelcontextprotocol.registry/official"]?.status;
+}
+
+function serverOf(entry: Entry): Server {
+  return v.parse(ServerSchema, entry.server);
+}
+
+/** `sha256:` over the canonical JSON of a version's `server` document, as the registry served it. */
+async function serverDigest(document: Json): Promise<string> {
+  return `sha256:${await sha256OfText(canonicalJson(document))}`;
 }
 
 /** A secret name for a header: `GITHUB_MCP_SERVER_AUTHORIZATION`. */
@@ -117,42 +119,41 @@ function secretName(id: string, header: string): string {
   return `${id}-${header}`
     .toUpperCase()
     .replaceAll(/[^A-Z0-9]+/gu, "_")
-    .replace(/^_+/u, "")
-    .replace(/_+$/u, "");
+    .replaceAll(/^_+|_+$/gu, "");
 }
 
 /** The item fields a server definition becomes. */
-function definition(id: string, server: Server): Record<string, unknown> {
-  const remote = server.remotes?.[0];
+function definition(id: string, server: Server) {
+  const [remote] = server.remotes ?? [];
   if (remote === undefined) {
     return { flavour: "remote", name: server.name };
   }
-  const headers = Object.fromEntries(
-    (remote.headers ?? [])
-      .filter(
-        (header) =>
-          header.isSecret === true ||
-          header.isRequired === true ||
-          header.value !== undefined
-      )
-      .map((header) => [
-        header.name,
-        header.isSecret === true || header.value === undefined
-          ? { secret: secretName(id, header.name) }
-          : header.value,
-      ])
-  );
-  const transport =
-    remote.type === "sse" || remote.type === "http"
-      ? remote.type
-      : "streamable-http";
+  const headers = new Map<string, string | { secret: string }>();
+  for (const header of remote.headers ?? []) {
+    if (header.isSecret === true || header.value === undefined) {
+      if (header.isSecret === true || header.isRequired === true) {
+        headers.set(header.name, { secret: secretName(id, header.name) });
+      }
+    } else {
+      headers.set(header.name, header.value);
+    }
+  }
   return {
     flavour: "remote",
-    ...(Object.keys(headers).length === 0 ? {} : { headers }),
+    headers: headers.size === 0 ? undefined : Object.fromEntries(headers),
     name: server.name,
-    transport,
+    transport:
+      remote.type === "sse" || remote.type === "http"
+        ? remote.type
+        : "streamable-http",
     url: remote.url,
   };
+}
+
+/** The last segment of a registry name (`github-mcp-server`), and its namespace. */
+function nameParts(name: string): Wanted {
+  const [namespace = ""] = name.split("/");
+  return { name: name.split("/").at(-1) ?? name, qualifier: kebab(namespace) };
 }
 
 export async function discoverMcpRegistry(
@@ -162,42 +163,42 @@ export async function discoverMcpRegistry(
   if (source.url === undefined) {
     throw new Error("an MCP registry source needs `url`");
   }
-  const query = source.path?.trim();
-  if (query === undefined || query === "") {
+  const query = source.path?.trim() ?? "";
+  if (query === "") {
     throw new Error(
       "name a server, or a search term, in `path`: the registry holds thousands of servers, and an import lists at most 30"
     );
   }
   const url = `${origin(source.url)}/v0.1/servers?search=${encodeURIComponent(query)}&version=latest&limit=30`;
-  const list = v.parse(ListSchema, await getJson(context.fetch, url));
-  const entries = list.servers.filter((entry) => statusOf(entry) !== "deleted");
-  const licence = licenceOf(source.url);
-  const ids = uniqueIds(
-    entries.map((entry) => ({
-      name: entry.server.name.split("/").at(-1) ?? entry.server.name,
-      qualifier: kebab(entry.server.name.split("/")[0] ?? ""),
-    }))
+  const list = await getJson(context.fetch, url, ListSchema);
+  const entries = (list?.servers ?? []).filter(
+    (entry) => statusOf(entry) !== "deleted"
   );
-  const candidates: Candidate[] = entries.map((entry, index) => ({
-    ...(licence.permitsCopy && entry.server.description !== undefined
-      ? { description: entry.server.description }
-      : {}),
-    id: ids[index] ?? "server",
-    key: entry.server.name,
-    kind: "mcp",
-    license: licence.statement,
-    ...(licence.id === undefined ? {} : { licenseId: licence.id }),
-    linkOnly: !licence.permitsCopy,
-    title: entry.server.title ?? entry.server.name,
-    upstream: {
-      url: versionUrl(
-        source.url ?? "",
-        entry.server.name,
-        entry.server.version
-      ),
-      version: entry.server.version,
-    },
-  }));
+  const servers = entries.map((entry) => serverOf(entry));
+  const licence = licenceOf(source.url);
+  const ids = uniqueIds(servers.map((server) => nameParts(server.name)));
+  const registry = source.url;
+  const candidates = servers.map((server, index) => {
+    const candidate: Candidate = {
+      id: ids[index] ?? "server",
+      key: server.name,
+      kind: "mcp",
+      license: licence.statement,
+      linkOnly: !licence.permitsCopy,
+      title: server.title ?? server.name,
+      upstream: {
+        url: versionUrl(registry, server.name, server.version),
+        version: server.version,
+      },
+    };
+    if (licence.permitsCopy && server.description !== undefined) {
+      candidate.description = server.description;
+    }
+    if (licence.id !== undefined) {
+      candidate.licenseId = licence.id;
+    }
+    return candidate;
+  });
   const warnings =
     licence.permitsCopy || candidates.length === 0
       ? []
@@ -205,6 +206,23 @@ export async function discoverMcpRegistry(
           `${origin(source.url)} states no licence for its data; its servers import as definitions only, without descriptions`,
         ];
   return { candidates, warnings };
+}
+
+/** The credit and link a registry asks for. */
+interface Attribution {
+  creditText?: string;
+  linkTarget: string;
+}
+
+/** The credit and link a registry asks for: the official registry's wording, or a link to any other. */
+function attribution(url: string): Attribution {
+  if (origin(url) !== OFFICIAL_REGISTRY) {
+    return { linkTarget: origin(url) };
+  }
+  return {
+    creditText: MCP_REGISTRY_TERMS.creditText,
+    linkTarget: MCP_REGISTRY_TERMS.linkTarget ?? OFFICIAL_REGISTRY,
+  };
 }
 
 export async function fetchMcpRegistry(
@@ -218,40 +236,29 @@ export async function fetchMcpRegistry(
   }
   const version = pick.pin?.version ?? candidate.upstream.version ?? "latest";
   const url = versionUrl(source.url, candidate.key, version);
-  const found = await getJson(context.fetch, url);
-  if (found === null) {
+  const entry = await getJson(context.fetch, url, EntrySchema);
+  if (entry === null) {
     throw new Error(`${url}: the registry has no such server version`);
   }
-  const entry = v.parse(EntrySchema, found);
-  const digest = await serverDigest(found);
+  const server = serverOf(entry);
   const id = pick.id ?? candidate.id;
   const licence = licenceOf(source.url);
-  const pinnedUrl = versionUrl(
-    source.url,
-    entry.server.name,
-    entry.server.version
-  );
-  const official = origin(source.url) === OFFICIAL_REGISTRY;
+  const pinnedUrl = versionUrl(source.url, server.name, server.version);
   const item = {
-    ...definition(id, entry.server),
-    description: entry.server.description,
+    ...definition(id, server),
+    description: server.description,
     id,
     kind: "mcp",
     source: provenance({
       ...licenceFields(licence),
-      ...(official
-        ? {
-            creditText: MCP_REGISTRY_TERMS.creditText,
-            linkTarget: MCP_REGISTRY_TERMS.linkTarget,
-          }
-        : { linkTarget: origin(source.url) }),
-      digest,
+      ...attribution(source.url),
+      digest: await serverDigest(entry.server),
       id: source.sourceId,
       recordUrl: pinnedUrl,
       url: pinnedUrl,
-      version: entry.server.version,
+      version: server.version,
     }),
-    title: entry.server.title ?? entry.server.name,
+    title: server.title ?? server.name,
   };
   const warnings = licence.permitsCopy
     ? []
@@ -275,21 +282,23 @@ export async function checkMcpRegistry(
   context: AdapterContext
 ): Promise<UpstreamState> {
   const source = sourceOf(item);
-  const name = item.kind === "mcp" && "name" in item ? item.name : undefined;
+  const name =
+    item.kind === "mcp" && item.flavour !== "hosted" ? item.name : undefined;
   if (source.url === undefined || name === undefined) {
     return { error: "the item names no registry server", status: "error" };
   }
-  const found = await getJson(
+  const entry = await getJson(
     context.fetch,
-    versionUrl(source.url, name, "latest")
+    versionUrl(source.url, name, "latest"),
+    EntrySchema
   );
-  if (found === null) {
+  if (entry === null) {
     return { status: "gone" };
   }
-  const entry = v.parse(EntrySchema, found);
+  const server = serverOf(entry);
   const latest = {
-    url: versionUrl(source.url, entry.server.name, entry.server.version),
-    version: entry.server.version,
+    url: versionUrl(source.url, server.name, server.version),
+    version: server.version,
   };
   if (statusOf(entry) === "deleted") {
     return {
@@ -298,15 +307,13 @@ export async function checkMcpRegistry(
       status: "gone",
     };
   }
-  if (entry.server.version !== source.version) {
+  if (server.version !== source.version) {
     return { latest, status: "moved" };
   }
-  const digest = await serverDigest(found);
+  const digest = await serverDigest(entry.server);
+  const unchanged = source.digest === undefined || source.digest === digest;
   return {
     latest: { ...latest, digest },
-    status:
-      source.digest === undefined || source.digest === digest
-        ? "current"
-        : "moved",
+    status: unchanged ? "current" : "moved",
   };
 }

@@ -95,11 +95,15 @@ export class GitHub {
     defaultBranch: string;
     licence: string | undefined;
   } | null> {
-    const found = await getJson(this.fetcher, this.api(""), this.token);
-    if (found === null) {
+    const repo = await getJson(
+      this.fetcher,
+      this.api(""),
+      RepoSchema,
+      this.token
+    );
+    if (repo === null) {
       return null;
     }
-    const repo = v.parse(RepoSchema, found);
     const spdx = repo.license?.spdx_id ?? undefined;
     return {
       defaultBranch: repo.default_branch,
@@ -112,9 +116,10 @@ export class GitHub {
     const found = await getJson(
       this.fetcher,
       this.api(`/commits/${encodeURIComponent(ref)}`),
+      CommitSchema,
       this.token
     );
-    return found === null ? null : v.parse(CommitSchema, found).sha;
+    return found === null ? null : found.sha;
   }
 
   /** One tree, by its SHA (or a commit's). `prefix` is the tree's path, prepended to every entry. */
@@ -124,11 +129,10 @@ export class GitHub {
     recursive: boolean
   ): Promise<TreeEntry[]> {
     const url = this.api(`/git/trees/${sha}${recursive ? "?recursive=1" : ""}`);
-    const found = await getJson(this.fetcher, url, this.token);
-    if (found === null) {
+    const tree = await getJson(this.fetcher, url, TreeSchema, this.token);
+    if (tree === null) {
       throw new HttpError(url, 404, "no such tree");
     }
-    const tree = v.parse(TreeSchema, found);
     if (tree.truncated === true) {
       throw new Error(
         `${url}: GitHub truncated the listing; import a narrower \`path\``
@@ -182,7 +186,7 @@ export class GitHub {
       if (entry.type === "blob") {
         return { ancestors, entry };
       }
-      sha = entry.sha;
+      ({ sha } = entry);
       here = next;
     }
     return { ancestors, entry };

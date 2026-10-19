@@ -2,6 +2,7 @@
  * Turning what an adapter found into an `ImportedItem`: the item's `source` (provenance, pin, licence, attribution)
  * and the one rule every adapter shares, that a link-only import carries no content.
  */
+import { SourceSchema } from "@shelfkit/schema";
 import type { Source } from "@shelfkit/schema";
 import * as v from "valibot";
 
@@ -24,13 +25,16 @@ export function sourceSecret(
     : context.secret(source.secret);
 }
 
-/** A `source` with every unset field left out, so item.json holds only what is known. */
+/** A `source` with every unset or empty field left out, so item.json holds only what is known. */
 export function provenance(fields: Source): Source {
-  return Object.fromEntries(
-    Object.entries(fields).filter(
-      ([, value]) => value !== undefined && value !== ""
+  return v.parse(
+    SourceSchema,
+    Object.fromEntries(
+      Object.entries(fields).filter(
+        ([, value]) => value !== undefined && value !== ""
+      )
     )
-  ) as Source;
+  );
 }
 
 /** The warning a link-only import carries: what was withheld, why, and where the content stays. */
@@ -39,38 +43,44 @@ export function linkOnlyWarning(
   reason: string,
   where: string | undefined
 ): string {
-  return `${id}: ${reason}, so it was imported as a link${where === undefined ? "" : ` to ${where}`}, without its content`;
+  const target = where === undefined ? "" : ` to ${where}`;
+  return `${id}: ${reason}, so it was imported as a link${target}, without its content`;
 }
+
+/** What an adapter assembled, before it is checked. */
+export interface ImportedDraft {
+  /** BOUNDARY: the item.json an adapter built from upstream data; `importedItem` parses it. */
+  readonly item: object;
+  readonly files: readonly ImportedFile[];
+  readonly linkOnly: boolean;
+  readonly warnings: readonly string[];
+}
+
+/** The fields an item may carry from upstream text, which a link-only import leaves out. */
+const LinkOnlySchema = v.pipe(
+  v.looseObject({ description: v.optional(v.unknown()) }),
+  v.transform(({ description: _withheld, ...rest }) => rest)
+);
 
 /**
  * Assemble an imported item and check it against the schemas the Worker parses it with, so an adapter bug fails
  * here, naming the item, rather than as a rejected snapshot. A link-only item drops its files and its description
- * (text copied from the work), whatever the caller passed.
+ * (text copied from the work), whatever the adapter passed. Unset fields are left out, as item.json leaves them.
  */
-export function importedItem(input: {
-  readonly item: Record<string, unknown>;
-  readonly files: readonly ImportedFile[];
-  readonly linkOnly: boolean;
-  readonly warnings: readonly string[];
-}): ImportedItem {
-  const item: Record<string, unknown> = { ...input.item };
-  if (input.linkOnly) {
-    delete item.description;
-  }
-  for (const [key, value] of Object.entries(item)) {
-    if (value === undefined) {
-      delete item[key];
-    }
-  }
+export function importedItem(draft: ImportedDraft): ImportedItem {
+  // BOUNDARY: a JSON round trip drops unset fields, as writing item.json does.
+  // oxlint-disable-next-line unicorn/prefer-structured-clone -- the round trip is the point: it drops `undefined`.
+  const plain: unknown = JSON.parse(JSON.stringify(draft.item));
+  const item = draft.linkOnly ? v.parse(LinkOnlySchema, plain) : plain;
   const parsed = v.safeParse(ImportedItemSchema, {
-    files: input.linkOnly ? [] : [...input.files],
+    files: draft.linkOnly ? [] : [...draft.files],
     item,
-    warnings: [...input.warnings],
+    warnings: [...draft.warnings],
   });
   if (!parsed.success) {
-    const where = String(item.id ?? "an imported item");
+    const id = v.safeParse(v.object({ id: v.string() }), plain);
     throw new Error(
-      `${where}: the importer built an invalid item: ${parsed.issues
+      `${id.success ? id.output.id : "an imported item"}: the importer built an invalid item: ${parsed.issues
         .map((issue) => `${v.getDotPath(issue) ?? "(root)"}: ${issue.message}`)
         .join("; ")}`
     );

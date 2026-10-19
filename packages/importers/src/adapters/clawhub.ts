@@ -10,7 +10,7 @@
  */
 import * as v from "valibot";
 
-import { frontmatter, skillProblem, stringField } from "../frontmatter.ts";
+import { frontmatter, skillProblem } from "../frontmatter.ts";
 import {
   byCodePoint,
   fileContents,
@@ -26,6 +26,7 @@ import {
   sourceOf,
 } from "../imported.ts";
 import { licenceFields } from "../licence.ts";
+import type { LicenceFields } from "../licence.ts";
 import type {
   AdapterContext,
   Candidate,
@@ -41,23 +42,22 @@ import { CLAWHUB_TERMS } from "../terms.ts";
 
 export const CLAWHUB = "https://clawhub.ai";
 
-const ModerationSchema = v.nullish(
-  v.object({
-    isMalwareBlocked: v.optional(v.boolean()),
-    isSuspicious: v.optional(v.boolean()),
-  })
-);
-
 const SkillSchema = v.object({
   latestVersion: v.nullish(v.object({ version: v.string() })),
-  moderation: ModerationSchema,
-  owner: v.nullish(v.object({ handle: v.string() })),
+  moderation: v.nullish(
+    v.object({
+      isMalwareBlocked: v.optional(v.boolean()),
+      isSuspicious: v.optional(v.boolean()),
+    })
+  ),
   skill: v.object({
     displayName: v.optional(v.string()),
     slug: v.string(),
     summary: v.nullish(v.string()),
   }),
 });
+
+type Skill = v.InferOutput<typeof SkillSchema>;
 
 const SearchSchema = v.object({
   results: v.array(
@@ -86,20 +86,34 @@ export const VersionSchema = v.object({
   }),
 });
 
+type Published = v.InferOutput<typeof VersionSchema>["version"];
+
+/** A skill on ClawHub: its publisher and its slug. */
+export interface SkillRef {
+  readonly owner: string;
+  readonly slug: string;
+}
+
 export function isClawHub(url: string): boolean {
-  const host = new URL(url).hostname;
-  return host === "clawhub.ai" || host.endsWith(".clawhub.ai");
+  const { hostname } = new URL(url);
+  return hostname === "clawhub.ai" || hostname.endsWith(".clawhub.ai");
 }
 
 /** `owner/slug` (or `@owner/slug`), or `undefined` for a search term. */
-function skillRef(path: string): { owner: string; slug: string } | undefined {
-  const match = /^@?([\w.-]+)\/([\w.-]+)$/u.exec(path.trim());
-  return match?.[1] === undefined || match[2] === undefined
+function skillRef(path: string): SkillRef | undefined {
+  const groups = /^@?(?<owner>[\w.-]+)\/(?<slug>[\w.-]+)$/u.exec(
+    path.trim()
+  )?.groups;
+  const owner = groups?.owner;
+  const slug = groups?.slug;
+  return owner === undefined || slug === undefined
     ? undefined
-    : { owner: match[1], slug: match[2] };
+    : { owner, slug };
 }
 
-const api = (path: string): string => `${CLAWHUB}/api/v1${path}`;
+function api(path: string): string {
+  return `${CLAWHUB}/api/v1${path}`;
+}
 
 function owned(owner: string): string {
   return `ownerHandle=${encodeURIComponent(owner)}`;
@@ -120,22 +134,35 @@ export function versionUrl(
   );
 }
 
-async function skill(
-  context: AdapterContext,
-  owner: string,
-  slug: string
-): Promise<v.InferOutput<typeof SkillSchema> | null> {
-  const found = await getJson(
-    context.fetch,
-    api(`/skills/${encodeURIComponent(slug)}?${owned(owner)}`)
-  );
-  return found === null ? null : v.parse(SkillSchema, found);
+function fileUrl(ref: SkillRef, version: string, path: string): string {
+  const query = `path=${encodeURIComponent(path)}&version=${encodeURIComponent(version)}&${owned(ref.owner)}`;
+  return api(`/skills/${encodeURIComponent(ref.slug)}/file?${query}`);
 }
 
-export async function discoverClawHub(
+async function skill(
+  context: AdapterContext,
+  ref: SkillRef
+): Promise<Skill | null> {
+  return await getJson(
+    context.fetch,
+    api(`/skills/${encodeURIComponent(ref.slug)}?${owned(ref.owner)}`),
+    SkillSchema
+  );
+}
+
+/** ClawHub's licence for every skill, as `source` fields. */
+function clawHubLicence(): LicenceFields {
+  const terms = CLAWHUB_TERMS.licence;
+  return terms === "per-artifact"
+    ? { license: "MIT-0", licenseId: "MIT-0", shareAlike: false }
+    : licenceFields(terms);
+}
+
+/** The skills a source names: one by `owner/slug`, or the first ten a search finds. */
+async function named(
   source: ImportSource,
   context: AdapterContext
-): Promise<Discovery> {
+): Promise<SkillRef[]> {
   const query = source.path?.trim() ?? "";
   if (query === "") {
     throw new Error(
@@ -143,83 +170,130 @@ export async function discoverClawHub(
     );
   }
   const one = skillRef(query);
-  const refs: { owner: string; slug: string }[] = [];
-  if (one === undefined) {
-    const found = v.parse(
-      SearchSchema,
-      await getJson(
-        context.fetch,
-        api(
-          `/search?q=${encodeURIComponent(query)}&limit=10&nonSuspiciousOnly=true`
-        )
-      )
-    );
-    for (const result of found.results) {
-      if (result.ownerHandle !== undefined && result.ownerHandle !== null) {
-        refs.push({ owner: result.ownerHandle, slug: result.slug });
-      }
-    }
-  } else {
-    refs.push(one);
+  if (one !== undefined) {
+    return [one];
   }
+  const found = await getJson(
+    context.fetch,
+    api(
+      `/search?q=${encodeURIComponent(query)}&limit=10&nonSuspiciousOnly=true`
+    ),
+    SearchSchema
+  );
+  return (found?.results ?? []).flatMap((result) =>
+    result.ownerHandle === undefined || result.ownerHandle === null
+      ? []
+      : [{ owner: result.ownerHandle, slug: result.slug }]
+  );
+}
+
+/** Why a skill is not offered, or `undefined` when it is. */
+function refusal(ref: SkillRef, detail: Skill | null): string | undefined {
+  const listing = listingUrl(ref.owner, ref.slug);
+  if (detail === null) {
+    return `${listing} is not there`;
+  }
+  if (detail.moderation?.isMalwareBlocked === true) {
+    return `${listing} is malware-blocked on ClawHub and is not offered`;
+  }
+  if (detail.latestVersion === undefined || detail.latestVersion === null) {
+    return `${listing} has no public version`;
+  }
+  return undefined;
+}
+
+export async function discoverClawHub(
+  source: ImportSource,
+  context: AdapterContext
+): Promise<Discovery> {
+  const refs = await named(source, context);
+  const details = await Promise.all(
+    refs.map(async (ref) => await skill(context, ref))
+  );
   const warnings: string[] = [];
-  const offered: {
-    owner: string;
-    slug: string;
-    detail: v.InferOutput<typeof SkillSchema>;
-  }[] = [];
-  for (const ref of refs) {
-    // oxlint-disable-next-line eslint/no-await-in-loop -- at most ten, in turn, to respect ClawHub's rate limits.
-    const detail = await skill(context, ref.owner, ref.slug);
-    if (detail === null) {
-      warnings.push(`${listingUrl(ref.owner, ref.slug)} is not there`);
-    } else if (detail.moderation?.isMalwareBlocked === true) {
+  const offered: { ref: SkillRef; detail: Skill; version: string }[] = [];
+  for (const [index, ref] of refs.entries()) {
+    const detail = details[index] ?? null;
+    const refused = refusal(ref, detail);
+    const version = detail?.latestVersion?.version;
+    if (refused !== undefined || detail === null || version === undefined) {
       warnings.push(
-        `${listingUrl(ref.owner, ref.slug)} is malware-blocked on ClawHub and is not offered`
+        refused ?? `${listingUrl(ref.owner, ref.slug)} is not there`
       );
-    } else if (
-      detail.latestVersion === undefined ||
-      detail.latestVersion === null
-    ) {
-      warnings.push(`${listingUrl(ref.owner, ref.slug)} has no public version`);
-    } else {
-      if (detail.moderation?.isSuspicious === true) {
-        warnings.push(
-          `${listingUrl(ref.owner, ref.slug)} is flagged suspicious on ClawHub`
+      continue;
+    }
+    if (detail.moderation?.isSuspicious === true) {
+      warnings.push(
+        `${listingUrl(ref.owner, ref.slug)} is flagged suspicious on ClawHub`
+      );
+    }
+    offered.push({ detail, ref, version });
+  }
+  const licence = clawHubLicence();
+  const ids = uniqueIds(
+    offered.map(({ ref }) => ({ name: ref.slug, qualifier: kebab(ref.owner) }))
+  );
+  const candidates = offered.map(({ detail, ref, version }, index) => {
+    const candidate: Candidate = {
+      id: ids[index] ?? "skill",
+      key: `${ref.owner}/${ref.slug}`,
+      kind: "skill",
+      license: licence.license,
+      licenseId: licence.licenseId ?? "MIT-0",
+      linkOnly: false,
+      path: `${ref.owner}/${ref.slug}`,
+      title: detail.skill.displayName ?? ref.slug,
+      upstream: { url: listingUrl(ref.owner, ref.slug), version },
+    };
+    const { summary } = detail.skill;
+    if (summary !== undefined && summary !== null) {
+      candidate.description = summary;
+    }
+    return candidate;
+  });
+  return { candidates, warnings };
+}
+
+/** Download every file of a published version, refusing any whose bytes are not the sha256 ClawHub lists. */
+async function download(
+  context: AdapterContext,
+  ref: SkillRef,
+  published: Published
+): Promise<ImportedFile[]> {
+  const listed = published.files.toSorted((a, b) =>
+    byCodePoint(a.path, b.path)
+  );
+  return await Promise.all(
+    listed.map(async (file) => {
+      const url = fileUrl(ref, published.version, file.path);
+      const bytes = await getBytes(context.fetch, url);
+      if (bytes === null) {
+        throw new Error(`${url}: listed in the version but not served`);
+      }
+      const digest = await sha256Hex(bytes);
+      if (digest !== file.sha256.toLowerCase()) {
+        throw new Error(
+          `${url}: sha256 ${digest} is not the ${file.sha256} ClawHub lists for it`
         );
       }
-      offered.push({ ...ref, detail });
-    }
-  }
-  const licence =
-    CLAWHUB_TERMS.licence === "per-artifact"
-      ? undefined
-      : CLAWHUB_TERMS.licence;
-  const ids = uniqueIds(
-    offered.map((entry) => ({
-      name: entry.slug,
-      qualifier: kebab(entry.owner),
-    }))
+      return { ...fileContents(bytes), path: file.path };
+    })
   );
-  const candidates: Candidate[] = offered.map((entry, index) => ({
-    ...(entry.detail.skill.summary === undefined ||
-    entry.detail.skill.summary === null
-      ? {}
-      : { description: entry.detail.skill.summary }),
-    id: ids[index] ?? "skill",
-    key: `${entry.owner}/${entry.slug}`,
-    kind: "skill",
-    license: licence?.statement ?? "MIT-0",
-    licenseId: licence?.id ?? "MIT-0",
-    linkOnly: false,
-    path: `${entry.owner}/${entry.slug}`,
-    title: entry.detail.skill.displayName ?? entry.slug,
-    upstream: {
-      url: listingUrl(entry.owner, entry.slug),
-      version: entry.detail.latestVersion?.version ?? "",
-    },
-  }));
-  return { candidates, warnings };
+}
+
+/** Why a downloaded skill cannot be kept as content, or `undefined` when it can. */
+function contentProblem(
+  files: readonly ImportedFile[],
+  id: string
+): string | undefined {
+  const main = files.find((file) => file.path === "SKILL.md");
+  if (main === undefined || main.encoding !== "utf-8") {
+    return "it has no SKILL.md";
+  }
+  if (files.some((file) => file.path === "item.json")) {
+    return "it has its own item.json, which the shelf's item.json would replace";
+  }
+  return skillProblem(main.contents, id);
 }
 
 export async function fetchClawHub(
@@ -234,68 +308,32 @@ export async function fetchClawHub(
       `\`${candidate.key}\` is not a ClawHub skill as owner/slug`
     );
   }
-  const version = pick.pin?.version ?? candidate.upstream.version;
-  if (version === undefined || version === "") {
-    throw new Error(`${listingUrl(ref.owner, ref.slug)}: no version to pin`);
+  const listing = listingUrl(ref.owner, ref.slug);
+  const version = pick.pin?.version ?? candidate.upstream.version ?? "";
+  if (version === "") {
+    throw new Error(`${listing}: no version to pin`);
   }
   const url = versionUrl(ref.owner, ref.slug, version);
-  const found = await getJson(context.fetch, url);
+  const found = await getJson(context.fetch, url, VersionSchema);
   if (found === null) {
     throw new Error(`${url}: ClawHub has no such version`);
   }
-  const published = v.parse(VersionSchema, found).version;
-  const files: ImportedFile[] = [];
-  for (const listed of published.files.toSorted((a, b) =>
-    byCodePoint(a.path, b.path)
-  )) {
-    const fileUrl = api(
-      `/skills/${encodeURIComponent(ref.slug)}/file?path=${encodeURIComponent(listed.path)}&version=${encodeURIComponent(
-        published.version
-      )}&${owned(ref.owner)}`
-    );
-    // oxlint-disable-next-line eslint/no-await-in-loop -- one file at a time, within ClawHub's download limits.
-    const bytes = await getBytes(context.fetch, fileUrl);
-    if (bytes === null) {
-      throw new Error(`${fileUrl}: listed in the version but not served`);
-    }
-    // oxlint-disable-next-line eslint/no-await-in-loop -- hashed as it arrives.
-    const digest = await sha256Hex(bytes);
-    if (digest !== listed.sha256.toLowerCase()) {
-      throw new Error(
-        `${fileUrl}: sha256 ${digest} is not the ${listed.sha256} ClawHub lists for it`
-      );
-    }
-    files.push({ ...fileContents(bytes), path: listed.path });
-  }
+  const published = found.version;
+  const files = await download(context, ref, published);
   const id = pick.id ?? candidate.id;
-  const listing = listingUrl(ref.owner, ref.slug);
+  const problem = contentProblem(files, id);
   const main = files.find((file) => file.path === "SKILL.md");
-  const problem =
-    main === undefined || main.encoding !== "utf-8"
-      ? "it has no SKILL.md"
-      : files.some((file) => file.path === "item.json")
-        ? "it has its own item.json, which the shelf's item.json would replace"
-        : skillProblem(main.contents, id);
-  const meta =
-    main?.encoding === "utf-8" ? frontmatter(main.contents) : undefined;
-  const licence =
-    CLAWHUB_TERMS.licence === "per-artifact"
-      ? undefined
-      : CLAWHUB_TERMS.licence;
+  const meta = frontmatter(main?.encoding === "utf-8" ? main.contents : "");
+  const bundle = published.security?.sha256hash ?? undefined;
   const item = {
-    description: stringField(meta, "description") ?? candidate.description,
+    description: meta.description ?? candidate.description,
     id,
     kind: "skill",
     source: provenance({
-      ...(licence === undefined
-        ? { license: "MIT-0", licenseId: "MIT-0", shareAlike: false }
-        : licenceFields(licence)),
+      ...clawHubLicence(),
       creditText: `${CLAWHUB_TERMS.creditText ?? "Published on ClawHub"} by @${ref.owner}`,
       digest:
-        published.security?.sha256hash === undefined ||
-        published.security.sha256hash === null
-          ? undefined
-          : `sha256:${published.security.sha256hash.toLowerCase()}`,
+        bundle === undefined ? undefined : `sha256:${bundle.toLowerCase()}`,
       id: source.sourceId,
       linkTarget: listing,
       path: `${ref.owner}/${ref.slug}`,
@@ -315,9 +353,7 @@ export async function fetchClawHub(
 }
 
 /** The `owner/slug` of an item imported from ClawHub. */
-export function clawHubRef(
-  item: Item
-): { owner: string; slug: string } | undefined {
+export function clawHubRef(item: Item): SkillRef | undefined {
   const source = sourceOf(item);
   if (
     source.url === undefined ||
@@ -337,15 +373,12 @@ export async function checkClawHub(
   if (ref === undefined) {
     return { error: "the item names no ClawHub skill", status: "error" };
   }
-  const detail = await skill(context, ref.owner, ref.slug);
+  const detail = await skill(context, ref);
   if (detail === null) {
     return { status: "gone" };
   }
   const version = detail.latestVersion?.version;
-  const latest = {
-    url: listingUrl(ref.owner, ref.slug),
-    ...(version === undefined ? {} : { version }),
-  };
+  const latest = { url: listingUrl(ref.owner, ref.slug), version };
   if (detail.moderation?.isMalwareBlocked === true) {
     return {
       error: "ClawHub blocks the skill as malware",

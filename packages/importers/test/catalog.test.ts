@@ -13,14 +13,69 @@ const context = contextOf(http.fetch);
 
 const REGISTRY = "https://registry.modelcontextprotocol.io";
 const GITHUB_SERVER = "io.github.github/github-mcp-server";
+const registrySource: ImportSource = {
+  kind: "catalog",
+  path: GITHUB_SERVER,
+  url: REGISTRY,
+};
+const clawHubSource: ImportSource = {
+  kind: "catalog",
+  path: "steipete/github",
+  url: "https://clawhub.ai",
+};
 
-function first(candidates: readonly Candidate[]): Candidate {
-  const [candidate] = candidates;
+/** The candidate a discovery offers for `key`. */
+async function candidateOf(
+  source: ImportSource,
+  key: string
+): Promise<Candidate> {
+  const found = await catalogAdapter.discover(source, context);
+  const candidate = found.candidates.find((entry) => entry.key === key);
   if (candidate === undefined) {
-    throw new Error("no candidate");
+    throw new Error(`no candidate ${key}`);
   }
   return candidate;
 }
+
+/** The GitHub server, pinned to `version`, under `name`. */
+function registryItem(version: string, name = GITHUB_SERVER): Item {
+  return {
+    flavour: "remote",
+    id: "github-mcp-server",
+    kind: "mcp",
+    name,
+    source: {
+      url: `${REGISTRY}/v0.1/servers/${encodeURIComponent(name)}/versions/${version}`,
+      version,
+    },
+    title: "GitHub",
+  };
+}
+
+/** steipete's GitHub skill on ClawHub, pinned to `version`. */
+function clawHubItem(version: string): Item {
+  return {
+    id: "github",
+    kind: "skill",
+    source: {
+      path: "steipete/github",
+      url: "https://clawhub.ai/steipete/skills/github",
+      version,
+    },
+    title: "Github",
+  };
+}
+
+/** The recording, with one more line appended to SKILL.md: bytes ClawHub never published. */
+const tampered: typeof fetch = async (input, init) => {
+  const response = await http.fetch(input, init);
+  const url = input instanceof Request ? input.url : input.toString();
+  if (!url.includes("/file?path=SKILL.md")) {
+    return response;
+  }
+  const text = await response.text();
+  return new Response(`${text}\nextra`);
+};
 
 describe("the catalog adapter", () => {
   afterAll(() => {
@@ -28,17 +83,9 @@ describe("the catalog adapter", () => {
   });
 
   describe("the official MCP Registry", () => {
-    const source: ImportSource = {
-      kind: "catalog",
-      path: GITHUB_SERVER,
-      url: REGISTRY,
-    };
-
     it("offers a server pinned to its latest version, under the registry's CC0 terms", async () => {
-      const found = await catalogAdapter.discover(source, context);
-      const candidate = first(
-        found.candidates.filter((entry) => entry.key === GITHUB_SERVER)
-      );
+      const found = await catalogAdapter.discover(registrySource, context);
+      const candidate = await candidateOf(registrySource, GITHUB_SERVER);
       expect(candidate).toMatchObject({
         id: "github-mcp-server",
         kind: "mcp",
@@ -50,13 +97,9 @@ describe("the catalog adapter", () => {
     });
 
     it("imports the definition with its pin, digest, and the registry's credit, and a secret header by reference", async () => {
-      const candidate = first(
-        (await catalogAdapter.discover(source, context)).candidates.filter(
-          (entry) => entry.key === GITHUB_SERVER
-        )
-      );
+      const candidate = await candidateOf(registrySource, GITHUB_SERVER);
       const imported = await catalogAdapter.fetch(
-        source,
+        registrySource,
         candidate,
         { candidate: candidate.key },
         context
@@ -83,32 +126,22 @@ describe("the catalog adapter", () => {
     });
 
     it("reports drift by version, and a server that is not there as gone", async () => {
-      const pinned = (version: string, name = GITHUB_SERVER): Item => ({
-        flavour: "remote",
-        id: "github-mcp-server",
-        kind: "mcp",
-        name,
-        source: {
-          url: `${REGISTRY}/v0.1/servers/${encodeURIComponent(name)}/versions/${version}`,
-          version,
-        },
-        title: "GitHub",
+      const candidate = await candidateOf(registrySource, GITHUB_SERVER);
+      const latest = candidate.upstream.version ?? "";
+      await expect(
+        catalogAdapter.checkUpstream(registryItem(latest), context)
+      ).resolves.toMatchObject({
+        status: "current",
       });
-      const latest =
-        first((await catalogAdapter.discover(source, context)).candidates)
-          .upstream.version ?? "";
       await expect(
-        catalogAdapter.checkUpstream(pinned(latest), context)
-      ).resolves.toMatchObject({ status: "current" });
-      await expect(
-        catalogAdapter.checkUpstream(pinned("0.0.1"), context)
+        catalogAdapter.checkUpstream(registryItem("0.0.1"), context)
       ).resolves.toMatchObject({
         latest: { version: latest },
         status: "moved",
       });
       await expect(
         catalogAdapter.checkUpstream(
-          pinned("1.0.0", "io.github.shelfkit-test/no-such-server"),
+          registryItem("1.0.0", "io.github.shelfkit-test/no-such-server"),
           context
         )
       ).resolves.toStrictEqual({ status: "gone" });
@@ -116,16 +149,10 @@ describe("the catalog adapter", () => {
   });
 
   describe("ClawHub", () => {
-    const source: ImportSource = {
-      kind: "catalog",
-      path: "steipete/github",
-      url: "https://clawhub.ai",
-    };
-
     it("offers a skill under ClawHub's MIT-0 terms, pinned to its version", async () => {
-      const found = await catalogAdapter.discover(source, context);
+      const found = await catalogAdapter.discover(clawHubSource, context);
       expect(found.candidates).toHaveLength(1);
-      expect(first(found.candidates)).toMatchObject({
+      expect(found.candidates[0]).toMatchObject({
         id: "github",
         key: "steipete/github",
         kind: "skill",
@@ -139,11 +166,9 @@ describe("the catalog adapter", () => {
     });
 
     it("copies the files after checking each against the sha256 ClawHub lists, and links back to the listing", async () => {
-      const candidate = first(
-        (await catalogAdapter.discover(source, context)).candidates
-      );
+      const candidate = await candidateOf(clawHubSource, "steipete/github");
       const imported = await catalogAdapter.fetch(
-        source,
+        clawHubSource,
         candidate,
         { candidate: candidate.key },
         context
@@ -153,11 +178,13 @@ describe("the catalog adapter", () => {
         "SKILL.md",
         "skill-card.md",
       ]);
-      expect(imported.item.source).toStrictEqual({
+      expect(imported.item.source?.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+      expect({
+        ...imported.item.source,
+        digest: "checked above",
+      }).toStrictEqual({
         creditText: "Published on ClawHub by @steipete",
-        digest: expect.stringMatching(
-          /^sha256:[0-9a-f]{64}$/u
-        ) as unknown as string,
+        digest: "checked above",
         license:
           "MIT-0: every skill published on ClawHub (ClawHub skill format, License)",
         licenseId: "MIT-0",
@@ -171,18 +198,10 @@ describe("the catalog adapter", () => {
     });
 
     it("refuses bytes that are not the ones ClawHub lists", async () => {
-      const tampered: typeof fetch = async (input, init) => {
-        const response = await http.fetch(input, init);
-        return String(input).includes("/file?path=SKILL.md")
-          ? new Response(`${await response.text()}\nextra`)
-          : response;
-      };
-      const candidate = first(
-        (await catalogAdapter.discover(source, context)).candidates
-      );
+      const candidate = await candidateOf(clawHubSource, "steipete/github");
       await expect(
         catalogAdapter.fetch(
-          source,
+          clawHubSource,
           candidate,
           { candidate: candidate.key },
           contextOf(tampered)
@@ -191,21 +210,13 @@ describe("the catalog adapter", () => {
     });
 
     it("reports drift by version", async () => {
-      const pinned = (version: string): Item => ({
-        id: "github",
-        kind: "skill",
-        source: {
-          path: "steipete/github",
-          url: "https://clawhub.ai/steipete/skills/github",
-          version,
-        },
-        title: "Github",
+      await expect(
+        catalogAdapter.checkUpstream(clawHubItem("1.0.0"), context)
+      ).resolves.toMatchObject({
+        status: "current",
       });
       await expect(
-        catalogAdapter.checkUpstream(pinned("1.0.0"), context)
-      ).resolves.toMatchObject({ status: "current" });
-      await expect(
-        catalogAdapter.checkUpstream(pinned("0.9.0"), context)
+        catalogAdapter.checkUpstream(clawHubItem("0.9.0"), context)
       ).resolves.toMatchObject({
         latest: { version: "1.0.0" },
         status: "moved",

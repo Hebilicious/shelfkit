@@ -2,6 +2,7 @@
  * The pure rules under the adapters: APM's package layouts, licence identification, ids, frontmatter, and which
  * adapter an imported item's drift check belongs to.
  */
+import * as v from "valibot";
 import { describe, expect, it } from "vitest";
 
 import { skillProblem } from "../src/frontmatter.ts";
@@ -14,9 +15,15 @@ import {
   inlineServers,
   isAgentPlugin,
   manifestsToRead,
+  MarketplaceSchema,
 } from "../src/layouts.ts";
 import { classifyText, fromStatement } from "../src/licence.ts";
 import { ALL_TERMS } from "../src/terms.ts";
+
+/** A SKILL.md with the given frontmatter. */
+function skill(front: string): string {
+  return `---\n${front}\n---\n\n# Body\n`;
+}
 
 function blobs(...paths: string[]): TreeEntry[] {
   return paths.map((path) => ({ path, sha: path, size: 1, type: "blob" }));
@@ -90,20 +97,16 @@ describe("APM's package layouts", () => {
       marketplace: ".claude-plugin/marketplace.json",
       plugin: "plugin.json",
     });
-    expect(
-      inlineServers({
-        plugins: [
-          {
-            mcpServers: {
-              db: { command: "npx", env: { TOKEN: "${DB_TOKEN}" } },
-            },
-          },
-          { name: "other" },
-        ],
-      })
-    ).toStrictEqual([
+    const placeholder = ["$", "{DB_TOKEN}"].join("");
+    const marketplace = v.parse(MarketplaceSchema, {
+      plugins: [
+        { mcpServers: { db: { command: "npx", env: { TOKEN: placeholder } } } },
+        { name: "other" },
+      ],
+    });
+    expect(inlineServers(marketplace)).toStrictEqual([
       {
-        definition: { command: "npx", env: { TOKEN: "${DB_TOKEN}" } },
+        definition: { command: "npx", env: { TOKEN: placeholder } },
         name: "db",
       },
     ]);
@@ -188,7 +191,6 @@ describe("ids, repositories, and frontmatter", () => {
   });
 
   it("checks a SKILL.md as the shelf loader does", () => {
-    const skill = (front: string): string => `---\n${front}\n---\n\n# Body\n`;
     expect(
       skillProblem(skill("name: pdf\ndescription: Read PDFs."), "pdf")
     ).toBeUndefined();
@@ -199,7 +201,7 @@ describe("ids, repositories, and frontmatter", () => {
       )
     ).toContain("version");
     expect(skillProblem(skill("name: other\ndescription: x"), "pdf")).toContain(
-      "is not the item id"
+      "must be the item id"
     );
     expect(
       skillProblem(

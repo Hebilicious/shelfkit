@@ -19,6 +19,26 @@ const source: ImportSource = {
   url: INSTANCE,
 };
 
+/** The instance's default profile, imported as a reference pinned to `version`. */
+function reference(version: string): Item {
+  return {
+    id: "hebilicious-default",
+    kind: "instructions",
+    source: { path: "hebilicious/default", url: INSTANCE, version },
+    title: "ShelfKit development",
+  };
+}
+
+/** An item of the instance, imported as a link pinned to `digest`. */
+function link(digest: string, name = "commit-style"): Item {
+  return {
+    id: "commit-style",
+    kind: "prompt",
+    source: { digest, path: `hebilicious/${name}`, url: INSTANCE },
+    title: "Commit message",
+  };
+}
+
 function byKey(candidates: readonly Candidate[], key: string): Candidate {
   const found = candidates.find((candidate) => candidate.key === key);
   if (found === undefined) {
@@ -106,47 +126,29 @@ describe("the shelfkit adapter", () => {
   it("reports drift for a profile by its published version, and for an item by its revision", async () => {
     const found = await shelfkitAdapter.discover(source, context);
     const profile = byKey(found.candidates, "profile:default");
-    const reference = (version: string): Item => ({
-      id: "hebilicious-default",
-      kind: "instructions",
-      source: { path: "hebilicious/default", url: INSTANCE, version },
-      title: "ShelfKit development",
-    });
+    const prompt = byKey(found.candidates, "item:commit-style");
+    const zeros = `sha256:${"0".repeat(64)}`;
     await expect(
       shelfkitAdapter.checkUpstream(
         reference(profile.upstream.version ?? ""),
         context
       )
-    ).resolves.toMatchObject({
-      status: "current",
-    });
+    ).resolves.toMatchObject({ status: "current" });
     await expect(
       shelfkitAdapter.checkUpstream(reference("0.0.0-old"), context)
     ).resolves.toMatchObject({
       status: "moved",
     });
-    const link = (digest: string, name = "commit-style"): Item => ({
-      id: "commit-style",
-      kind: "prompt",
-      source: { digest, path: `hebilicious/${name}`, url: INSTANCE },
-      title: "Commit message",
-    });
-    const prompt = byKey(found.candidates, "item:commit-style");
     await expect(
       shelfkitAdapter.checkUpstream(link(prompt.upstream.digest ?? ""), context)
-    ).resolves.toMatchObject({
-      status: "current",
-    });
+    ).resolves.toMatchObject({ status: "current" });
     await expect(
-      shelfkitAdapter.checkUpstream(link(`sha256:${"0".repeat(64)}`), context)
-    ).resolves.toMatchObject({
-      status: "moved",
-    });
+      shelfkitAdapter.checkUpstream(link(zeros), context)
+    ).resolves.toMatchObject({ status: "moved" });
     await expect(
-      shelfkitAdapter.checkUpstream(
-        link(`sha256:${"0".repeat(64)}`, "no-such-item"),
-        context
-      )
-    ).resolves.toStrictEqual({ status: "gone" });
+      shelfkitAdapter.checkUpstream(link(zeros, "no-such-item"), context)
+    ).resolves.toStrictEqual({
+      status: "gone",
+    });
   });
 });

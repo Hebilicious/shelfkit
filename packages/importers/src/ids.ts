@@ -6,8 +6,8 @@ const MAX = 64;
 export function kebab(name: string): string {
   return name
     .normalize("NFKD")
-    .replaceAll(/[̀-ͯ]/gu, "")
-    .replaceAll(/([a-z0-9])([A-Z])/gu, "$1-$2")
+    .replaceAll(/[\u0300-\u036F]/gu, "")
+    .replaceAll(/(?<lower>[a-z0-9])(?<upper>[A-Z])/gu, "$<lower>-$<upper>")
     .toLowerCase()
     .replaceAll(/[^a-z0-9]+/gu, "-")
     .replaceAll(/^-+|-+$/gu, "")
@@ -15,10 +15,14 @@ export function kebab(name: string): string {
     .replace(/-+$/u, "");
 }
 
+/** A name to make an id from, and what distinguishes it from another of the same name. */
+export interface Wanted {
+  readonly name: string;
+  readonly qualifier: string;
+}
+
 /** Ids for a list of names, unique among themselves: a repeat gets its `qualifier`, then a number. */
-export function uniqueIds(
-  wanted: readonly { name: string; qualifier: string }[]
-): string[] {
+export function uniqueIds(wanted: readonly Wanted[]): string[] {
   const taken = new Set<string>();
   return wanted.map(({ name, qualifier }) => {
     const base = kebab(name) || "item";

@@ -27,44 +27,44 @@ interface Known {
 }
 
 /** SPDX licences that permit keeping and serving a copy. */
-const PERMISSIVE: Readonly<Record<string, Known>> = {
-  "0BSD": { attribution: false, shareAlike: false },
-  "AGPL-3.0": { attribution: true, shareAlike: true },
-  "AGPL-3.0-only": { attribution: true, shareAlike: true },
-  "AGPL-3.0-or-later": { attribution: true, shareAlike: true },
-  "Apache-2.0": { attribution: true, shareAlike: false },
-  "BSD-2-Clause": { attribution: true, shareAlike: false },
-  "BSD-3-Clause": { attribution: true, shareAlike: false },
-  "CC-BY-4.0": { attribution: true, shareAlike: false },
-  "CC-BY-SA-4.0": { attribution: true, shareAlike: true },
-  "CC0-1.0": { attribution: false, shareAlike: false },
-  "GPL-2.0": { attribution: true, shareAlike: true },
-  "GPL-2.0-only": { attribution: true, shareAlike: true },
-  "GPL-2.0-or-later": { attribution: true, shareAlike: true },
-  "GPL-3.0": { attribution: true, shareAlike: true },
-  "GPL-3.0-only": { attribution: true, shareAlike: true },
-  "GPL-3.0-or-later": { attribution: true, shareAlike: true },
-  ISC: { attribution: true, shareAlike: false },
-  "LGPL-3.0": { attribution: true, shareAlike: true },
-  MIT: { attribution: true, shareAlike: false },
-  "MIT-0": { attribution: false, shareAlike: false },
-  "MPL-2.0": { attribution: true, shareAlike: true },
-  Unlicense: { attribution: false, shareAlike: false },
-  Zlib: { attribution: true, shareAlike: false },
-};
+const PERMISSIVE = new Map<string, Known>([
+  ["0BSD", { attribution: false, shareAlike: false }],
+  ["AGPL-3.0", { attribution: true, shareAlike: true }],
+  ["AGPL-3.0-only", { attribution: true, shareAlike: true }],
+  ["AGPL-3.0-or-later", { attribution: true, shareAlike: true }],
+  ["Apache-2.0", { attribution: true, shareAlike: false }],
+  ["BSD-2-Clause", { attribution: true, shareAlike: false }],
+  ["BSD-3-Clause", { attribution: true, shareAlike: false }],
+  ["CC-BY-4.0", { attribution: true, shareAlike: false }],
+  ["CC-BY-SA-4.0", { attribution: true, shareAlike: true }],
+  ["CC0-1.0", { attribution: false, shareAlike: false }],
+  ["GPL-2.0", { attribution: true, shareAlike: true }],
+  ["GPL-2.0-only", { attribution: true, shareAlike: true }],
+  ["GPL-2.0-or-later", { attribution: true, shareAlike: true }],
+  ["GPL-3.0", { attribution: true, shareAlike: true }],
+  ["GPL-3.0-only", { attribution: true, shareAlike: true }],
+  ["GPL-3.0-or-later", { attribution: true, shareAlike: true }],
+  ["ISC", { attribution: true, shareAlike: false }],
+  ["LGPL-3.0", { attribution: true, shareAlike: true }],
+  ["MIT", { attribution: true, shareAlike: false }],
+  ["MIT-0", { attribution: false, shareAlike: false }],
+  ["MPL-2.0", { attribution: true, shareAlike: true }],
+  ["Unlicense", { attribution: false, shareAlike: false }],
+  ["Zlib", { attribution: true, shareAlike: false }],
+]);
 
 /** The licence of an SPDX identifier, or `undefined` for one this table does not know. */
 export function fromSpdx(
   id: string,
   statement: string = id
 ): Licence | undefined {
-  const exact = Object.keys(PERMISSIVE).find(
+  const exact = [...PERMISSIVE.keys()].find(
     (known) => known.toLowerCase() === id.trim().toLowerCase()
   );
   if (exact === undefined) {
     return undefined;
   }
-  const known = PERMISSIVE[exact];
+  const known = PERMISSIVE.get(exact);
   return known === undefined
     ? undefined
     : { ...known, id: exact, permitsCopy: true, statement };
@@ -84,6 +84,14 @@ export function restrictive(statement: string, id?: string): Licence {
 /** No licence at all. */
 export const NO_LICENCE: Licence = restrictive("none stated");
 
+/** Which restrictive Creative Commons licence a text names. */
+function creativeCommonsRestriction(flat: string): string {
+  if (/NonCommercial-NoDerivatives|BY-NC-ND/iu.test(flat)) {
+    return "CC-BY-NC-ND-4.0";
+  }
+  return /NoDerivatives|BY-ND/iu.test(flat) ? "CC-BY-ND-4.0" : "CC-BY-NC-4.0";
+}
+
 /**
  * Identify a licence file's text. The patterns are the licences' own fixed wording, so the answer is deterministic;
  * anything unrecognised is restrictive, because guessing "permissive" is the expensive mistake.
@@ -96,11 +104,7 @@ export function classifyText(text: string): Licence {
   if (
     says(/Attribution-NonCommercial|Attribution-NoDerivatives|BY-NC|BY-ND/iu)
   ) {
-    const id = /NonCommercial-NoDerivatives|BY-NC-ND/iu.test(flat)
-      ? "CC-BY-NC-ND-4.0"
-      : /NoDerivatives|BY-ND/iu.test(flat)
-        ? "CC-BY-ND-4.0"
-        : "CC-BY-NC-4.0";
+    const id = creativeCommonsRestriction(flat);
     return restrictive(`${id}: no derivatives or no commercial use`, id);
   }
   const permissive: [RegExp, string][] = [
@@ -114,12 +118,15 @@ export function classifyText(text: string): Licence {
       /Permission is hereby granted, free of charge.*without restriction/iu,
       "MIT-0",
     ],
-    [/Creative Commons (Legal Code )?CC0 1\.0 Universal|CC0 1\.0/iu, "CC0-1.0"],
+    [
+      /Creative Commons (?:Legal Code )?CC0 1\.0 Universal|CC0 1\.0/iu,
+      "CC0-1.0",
+    ],
     [
       /This is free and unencumbered software released into the public domain/iu,
       "Unlicense",
     ],
-    [/Mozilla Public License,? (Version )?2\.0/iu, "MPL-2.0"],
+    [/Mozilla Public License,? (?:Version )?2\.0/iu, "MPL-2.0"],
     [/GNU AFFERO GENERAL PUBLIC LICENSE Version 3/iu, "AGPL-3.0"],
     [/GNU LESSER GENERAL PUBLIC LICENSE Version 3/iu, "LGPL-3.0"],
     [/GNU GENERAL PUBLIC LICENSE Version 3/iu, "GPL-3.0"],
@@ -163,7 +170,7 @@ export function fromStatement(
   if (/proprietary|all rights reserved/iu.test(trimmed)) {
     return restrictive(trimmed);
   }
-  if (/licen[cs]e(\.txt|\.md)?|terms in/iu.test(trimmed)) {
+  if (/licen[cs]e(?:\.txt|\.md)?|terms in/iu.test(trimmed)) {
     return "see-file";
   }
   return undefined;
@@ -175,14 +182,20 @@ export function isLicenceFile(name: string): boolean {
 }
 
 /** The fields a licence contributes to an item's `source`. */
-export function licenceFields(licence: Licence): {
+export interface LicenceFields {
   license: string;
   licenseId?: string;
   shareAlike: boolean;
-} {
-  return {
+}
+
+/** The fields a licence contributes to an item's `source`. */
+export function licenceFields(licence: Licence): LicenceFields {
+  const fields: LicenceFields = {
     license: licence.statement,
-    ...(licence.id === undefined ? {} : { licenseId: licence.id }),
     shareAlike: licence.shareAlike,
   };
+  if (licence.id !== undefined) {
+    fields.licenseId = licence.id;
+  }
+  return fields;
 }

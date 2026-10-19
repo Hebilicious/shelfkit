@@ -69,7 +69,7 @@ function verdictOf(status: string): ScanVerdict["verdict"] | undefined {
 
 /** The skills.sh id of a skill imported from GitHub: `owner/repo/skill`. */
 export function skillsShId(item: Item): string | undefined {
-  const source = item.source;
+  const { source } = item;
   if (item.kind !== "skill" || source?.repo === undefined) {
     return undefined;
   }
@@ -80,23 +80,6 @@ export function skillsShId(item: Item): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-/** One fetch per audit URL per `fetch` (one queue batch), however many partner scanners ask. */
-const cache = new WeakMap<typeof fetch, Map<string, Promise<unknown>>>();
-
-async function audits(context: AdapterContext, url: string): Promise<unknown> {
-  let byUrl = cache.get(context.fetch);
-  if (byUrl === undefined) {
-    byUrl = new Map();
-    cache.set(context.fetch, byUrl);
-  }
-  let found = byUrl.get(url);
-  if (found === undefined) {
-    found = getJson(context.fetch, url);
-    byUrl.set(url, found);
-  }
-  return await found;
 }
 
 function partnerScanner(partner: string): Scanner {
@@ -111,21 +94,21 @@ function partnerScanner(partner: string): Scanner {
       if (skill === undefined) {
         return null;
       }
-      const found = await audits(
-        context,
-        `${SKILLS_SH}/api/v1/skills/audit/${skill}`
+      const found = await getJson(
+        context.fetch,
+        `${SKILLS_SH}/api/v1/skills/audit/${skill}`,
+        AuditSchema
       );
-      const parsed = v.safeParse(AuditSchema, found);
-      const audit = parsed.success
-        ? parsed.output.audits.find((entry) => entry.slug === partner)
-        : undefined;
+      const audit = found?.audits.find((entry) => entry.slug === partner);
       const verdict = audit === undefined ? undefined : verdictOf(audit.status);
       if (audit === undefined || verdict === undefined) {
         return null;
       }
+      const when =
+        audit.auditedAt === undefined ? "" : ` at ${audit.auditedAt}`;
       return {
         detailsUrl: `${SKILLS_SH}/${skill}`,
-        observed: `${audit.provider} audited ${skill}${audit.auditedAt === undefined ? "" : ` at ${audit.auditedAt}`}; skills.sh publishes no hash of what it audited`,
+        observed: `${audit.provider} audited ${skill}${when}; skills.sh publishes no hash of what it audited`,
         scanner: id,
         summary: [
           `${audit.provider}: ${audit.status}`,
@@ -133,7 +116,7 @@ function partnerScanner(partner: string): Scanner {
           audit.summary,
         ]
           .filter((part) => part !== undefined && part !== "")
-          .join(" · "),
+          .join(" \u00B7 "),
         verdict,
       };
     },
