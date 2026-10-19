@@ -24,7 +24,11 @@ export async function loadEngine(
 /** The directories a shelf keeps its files in, besides shelf.json. */
 const SHELF_DIRECTORIES = ["items", "bundles", "profiles"];
 
-/** Every file of the shelf at `root`: text as strings, anything that is not UTF-8 as bytes. Symbolic links are left out. */
+/**
+ * Every file of the shelf at `root`, as the native loader (`DirSource`) reads it: text as strings, with a byte-order mark
+ * kept, anything that is not UTF-8 as bytes, and each symbolic link under `items/`, `bundles/`, or `profiles/` passed on
+ * as a link, which the loader then refuses, naming it.
+ */
 export async function readShelf(root: string): Promise<ShelfFile[]> {
   const listings = await Promise.all(
     SHELF_DIRECTORIES.map(async (directory) => {
@@ -39,21 +43,24 @@ export async function readShelf(root: string): Promise<ShelfFile[]> {
       }
     })
   );
-  const paths = listings
-    .flat()
+  const entries = listings.flat();
+  const relative = (entry: (typeof entries)[number]) =>
+    path
+      .relative(root, path.join(entry.parentPath, entry.name))
+      .split(path.sep)
+      .join("/");
+  const links: ShelfFile[] = entries
+    .filter((entry) => entry.isSymbolicLink())
+    .map((entry) => ({ path: relative(entry), symlink: true }));
+  const paths = entries
     .filter((entry) => entry.isFile())
-    .map((entry) =>
-      path
-        .relative(root, path.join(entry.parentPath, entry.name))
-        .split(path.sep)
-        .join("/")
-    );
+    .map((entry) => relative(entry));
   const files = await Promise.all(
     ["shelf.json", ...paths].map(
-      async (relative) => await readShelfFile(root, relative)
+      async (file) => await readShelfFile(root, file)
     )
   );
-  return files.toSorted((a, b) =>
+  return [...files, ...links].toSorted((a, b) =>
     a.path < b.path ? -1 : Number(a.path > b.path)
   );
 }
@@ -64,8 +71,12 @@ async function readShelfFile(
 ): Promise<ShelfFile> {
   const bytes = new Uint8Array(await readFile(path.join(root, relative)));
   try {
+    // `ignoreBOM` keeps a byte-order mark in the text, as the native loader keeps it in the bytes.
     return {
-      contents: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+      contents: new TextDecoder("utf-8", {
+        fatal: true,
+        ignoreBOM: true,
+      }).decode(bytes),
       path: relative,
     };
   } catch {

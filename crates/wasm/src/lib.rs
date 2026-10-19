@@ -16,9 +16,19 @@
 //!    the output buffer.
 //! 3. `shelfkit_output_ptr()` and `shelfkit_output_len()` locate the answer.
 //!
-//! A pointer is good until the next call into the module. The request is
-//! `{ "files": [{ "path", "contents", "encoding"? }], "profile"?,
-//! "overrideProfile"? }`, with `encoding` `utf-8` (the default) or `base64`.
+//! A pointer is good until the next call into the module; a null one means
+//! the input is larger than [`MAX_INPUT`] or memory ran out. The request is
+//! `{ "files": [{ "path", "contents", "encoding"? } | { "path", "symlink":
+//! true }], "profile"?, "overrideProfile"? }`, with `encoding` `utf-8` (the
+//! default) or `base64`. A `symlink` entry is a symbolic link the host found
+//! while reading the shelf: the loader reports it exactly as it does when it
+//! reads a directory itself.
+//!
+//! No `RefCell` borrow is held while the module allocates or computes: each
+//! buffer is taken out, used, and put back. A trap in the middle (memory
+//! exhaustion) therefore leaves no borrow behind to poison the next call.
+//! A host should still treat a trapped instance as spent and instantiate
+//! again, as `@shelfkit/engine` does.
 //! The status is [`Status`]: on success the output is the plan exactly as
 //! `compile --dry-run --json` prints it; otherwise it is `{ "errors": [{
 //! "path", "message" }] }`.
@@ -27,7 +37,7 @@
 
 use serde::{Deserialize, Serialize};
 use shelfkit_compiler::engine::{Request, plan};
-use shelfkit_core::{Errors, MemorySource};
+use shelfkit_core::{Error, ErrorKind, Errors, FileSource, Listing, MemorySource};
 use std::cell::RefCell;
 
 /// What `shelfkit_plan` returns.
@@ -43,7 +53,10 @@ pub enum Status {
 }
 
 /// The ABI's version, for a host to check before it calls anything else.
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
+
+/// The largest request the module accepts, in bytes.
+pub const MAX_INPUT: u32 = 512 * 1024 * 1024;
 
 thread_local! {
     static INPUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
@@ -56,23 +69,35 @@ pub extern "C" fn shelfkit_abi_version() -> u32 {
     ABI_VERSION
 }
 
-/// Size the input buffer to `len` bytes, zeroed, and return its address.
+/// Size the input buffer to `len` bytes, zeroed, and return its address, or
+/// null when `len` is over [`MAX_INPUT`] or the memory cannot be reserved.
 #[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
 #[unsafe(no_mangle)]
 pub extern "C" fn shelfkit_input(len: u32) -> *mut u8 {
-    INPUT.with_borrow_mut(|input| {
-        input.clear();
-        input.resize(len as usize, 0);
-        input.as_mut_ptr()
-    })
+    // Release the old buffer first, then build the new one outside any borrow.
+    drop(INPUT.take());
+    if len > MAX_INPUT {
+        return std::ptr::null_mut();
+    }
+    let mut input = Vec::new();
+    if input.try_reserve_exact(len as usize).is_err() {
+        return std::ptr::null_mut();
+    }
+    input.resize(len as usize, 0);
+    let pointer = input.as_mut_ptr();
+    INPUT.set(input);
+    pointer
 }
 
 /// Plan the request in the input buffer; see the crate documentation.
 #[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
 #[unsafe(no_mangle)]
 pub extern "C" fn shelfkit_plan() -> u32 {
-    let (status, output) = INPUT.with_borrow(|input| respond(input));
-    OUTPUT.with_borrow_mut(|buffer| *buffer = output);
+    drop(OUTPUT.take());
+    let input = INPUT.take();
+    let (status, output) = respond(&input);
+    drop(input);
+    OUTPUT.set(output);
     status as u32
 }
 
@@ -102,9 +127,38 @@ struct PlanInput {
 #[serde(deny_unknown_fields)]
 struct FileInput {
     path: String,
-    contents: String,
+    #[serde(default)]
+    contents: Option<String>,
     #[serde(default)]
     encoding: Encoding,
+    /// A symbolic link the host found, which the shelf refuses.
+    #[serde(default)]
+    symlink: bool,
+}
+
+/// A shelf in memory, plus the symbolic links its host found. Listing a
+/// directory reports each link under it as the loader's `DirSource` does.
+struct HostShelf {
+    files: MemorySource,
+    links: Vec<String>,
+}
+
+impl FileSource for HostShelf {
+    fn list(&self, dir: &str) -> Listing {
+        let mut listing = self.files.list(dir);
+        let prefix = format!("{}/", dir.trim_end_matches('/'));
+        for link in self.links.iter().filter(|link| link.starts_with(&prefix)) {
+            listing.errors.push(Error::new(
+                link.clone(),
+                ErrorKind::Path("symbolic links are not allowed in a shelf".into()),
+            ));
+        }
+        listing
+    }
+
+    fn read(&self, path: &str) -> shelfkit_core::Result<Vec<u8>> {
+        self.files.read(path)
+    }
 }
 
 #[derive(Deserialize, Default, PartialEq, Eq)]
@@ -134,18 +188,28 @@ pub fn respond(input: &[u8]) -> (Status, Vec<u8>) {
         Ok(request) => request,
         Err(error) => return bad_request(format!("not a plan request: {error}")),
     };
-    let mut source = MemorySource::new();
+    let mut source = HostShelf {
+        files: MemorySource::new(),
+        links: Vec::new(),
+    };
     for file in request.files {
+        if file.symlink {
+            source.links.push(file.path);
+            continue;
+        }
+        let Some(contents) = file.contents else {
+            return bad_request(format!("{}: a file needs `contents`", file.path));
+        };
         let bytes = match file.encoding {
-            Encoding::Utf8 => file.contents.into_bytes(),
-            Encoding::Base64 => match shelfkit_compiler::base64::decode(&file.contents) {
+            Encoding::Utf8 => contents.into_bytes(),
+            Encoding::Base64 => match shelfkit_compiler::base64::decode(&contents) {
                 Some(bytes) => bytes,
                 None => {
                     return bad_request(format!("{}: contents are not valid base64", file.path));
                 }
             },
         };
-        source.insert(file.path, bytes);
+        source.files.insert(file.path, bytes);
     }
     let plan_request = Request {
         profile: request.profile,
@@ -231,6 +295,57 @@ mod tests {
             .collect();
         assert!(paths.contains(&"shelf.json"), "{paths:?}");
         assert!(paths.contains(&"profiles/p.json"), "{paths:?}");
+    }
+
+    #[test]
+    fn an_oversized_input_is_refused_and_the_next_call_still_works() {
+        assert!(shelfkit_input(u32::MAX).is_null());
+        assert!(shelfkit_input(MAX_INPUT + 1).is_null());
+        let body = request(
+            &[
+                ("shelf.json", r#"{ "name": "t" }"#),
+                (
+                    "profiles/p.json",
+                    r#"{ "id": "p", "title": "P", "items": [] }"#,
+                ),
+            ],
+            Some("p"),
+        );
+        let ptr = shelfkit_input(u32::try_from(body.len()).unwrap());
+        assert!(!ptr.is_null());
+        INPUT.with_borrow_mut(|input| input.copy_from_slice(&body));
+        assert_eq!(shelfkit_plan(), Status::Planned as u32);
+        // No borrow is left behind by either call.
+        assert!(
+            INPUT
+                .try_with(|cell| cell.try_borrow_mut().is_ok())
+                .unwrap()
+        );
+        assert!(
+            OUTPUT
+                .try_with(|cell| cell.try_borrow_mut().is_ok())
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn a_symlink_the_host_found_fails_the_load_as_on_disk() {
+        let body = serde_json::json!({
+            "files": [
+                { "path": "shelf.json", "contents": "{ \"name\": \"t\" }" },
+                { "path": "profiles/p.json", "contents": "{ \"id\": \"p\", \"title\": \"P\", \"items\": [] }" },
+                { "path": "items/prompts/x/link.md", "symlink": true }
+            ],
+            "profile": "p"
+        });
+        let (status, output) = respond(&serde_json::to_vec(&body).unwrap());
+        assert_eq!(status, Status::Failed);
+        let body: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(body["errors"][0]["path"], "items/prompts/x/link.md");
+        assert_eq!(
+            body["errors"][0]["message"],
+            "invalid path: symbolic links are not allowed in a shelf"
+        );
     }
 
     #[test]

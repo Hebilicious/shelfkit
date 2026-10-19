@@ -1,13 +1,21 @@
-import { execFileSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  cpSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { CompilePlanSchema } from "@shelfkit/schema";
 import * as v from "valibot";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { createEngine } from "../src/index.ts";
 import type { Engine } from "../src/index.ts";
-import { loadEngine, readShelf } from "../src/node.ts";
+import { WASM_PATH, loadEngine, readShelf } from "../src/node.ts";
 
 const repository = path.resolve(import.meta.dirname, "../../..");
 const binary = path.join(
@@ -19,9 +27,23 @@ const binary = path.join(
 /** Every fixture shelf, and ShelfKit's own. */
 const shelves = {
   "all-kinds": path.join(repository, "crates/core/tests/fixtures/all-kinds"),
+  edges: path.join(repository, "crates/compiler/tests/fixtures/edges"),
   registry: path.join(repository, "crates/compiler/tests/fixtures/registry"),
   shelfkit: path.join(repository, "shelf"),
 };
+
+// BOUNDARY: a raw instance's exports are untyped until this guard has checked the two the test calls.
+function hasInputAndPlan(
+  exports: WebAssembly.Exports
+): exports is WebAssembly.Exports & {
+  readonly shelfkit_input: (length: number) => number;
+  readonly shelfkit_plan: () => number;
+} {
+  return (
+    typeof exports.shelfkit_input === "function" &&
+    typeof exports.shelfkit_plan === "function"
+  );
+}
 
 function profilesOf(root: string): string[] {
   return readdirSync(path.join(root, "profiles"))
@@ -135,5 +157,86 @@ describe("the engine", () => {
       ? result.plan.files.find((file) => file.path.endsWith("logo.png"))
       : undefined;
     expect(logo?.encoding).toBe("base64");
+  });
+});
+
+describe("the engine after a trap", () => {
+  it("throws for the call that trapped and plans again on a fresh instance", async () => {
+    const module = await WebAssembly.compile(readFileSync(WASM_PATH));
+    let made = 0;
+    const engine = await createEngine(module, (wasm) => {
+      made += 1;
+      const instance = new WebAssembly.Instance(wasm, {});
+      if (made > 1) {
+        return instance;
+      }
+      // The first instance traps on its first plan, as one out of memory would.
+      return {
+        exports: {
+          ...instance.exports,
+          shelfkit_plan: () => {
+            throw new WebAssembly.RuntimeError("unreachable");
+          },
+        },
+      };
+    });
+    const files = await readShelf(shelves.shelfkit);
+    expect(() => engine.planCompile(files)).toThrow(/trapped/u);
+    expect(made).toBe(2);
+    expect(engine.planCompile(files).ok).toBeTruthy();
+  });
+
+  it("refuses an input the module cannot hold, and plans on the same instance after", async () => {
+    const instance = await WebAssembly.instantiate(
+      await WebAssembly.compile(readFileSync(WASM_PATH)),
+      {}
+    );
+    const { exports } = instance;
+    if (!hasInputAndPlan(exports)) {
+      throw new TypeError("not the engine module");
+    }
+    expect(exports.shelfkit_input(0xff_ff_ff_ff)).toBe(0);
+    // The module is still usable: an empty request is answered, not trapped on.
+    expect(exports.shelfkit_input(2)).not.toBe(0);
+    expect(() => exports.shelfkit_plan()).not.toThrow();
+  });
+});
+
+describe("readShelf and the native loader", () => {
+  it("fail a shelf with a symbolic link with the same error", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "shelfkit-engine-"));
+    cpSync(shelves.shelfkit, root, { recursive: true });
+    symlinkSync(
+      path.join(root, "items/prompts/commit-style/prompt.md"),
+      path.join(root, "items/prompts/commit-style/link.md")
+    );
+    const engine = await loadEngine();
+    const result = engine.planCompile(await readShelf(root));
+    const native = spawnSync(
+      binary,
+      ["--shelf", root, "compile", "--dry-run", "--json"],
+      {
+        encoding: "utf-8",
+      }
+    );
+    expect(native.status).toBe(1);
+    expect(result.ok).toBeFalsy();
+    const lines = result.ok
+      ? []
+      : result.errors.map((error) => `${error.path}: ${error.message}`);
+    expect(lines).toStrictEqual([
+      "items/prompts/commit-style/link.md: invalid path: symbolic links are not allowed in a shelf",
+    ]);
+    expect(native.stderr.startsWith(`${lines.join("\n")}\n`)).toBeTruthy();
+  });
+
+  it("keep a byte-order mark", async () => {
+    const files = await readShelf(shelves.edges);
+    const agent = files.find(
+      (file) => file.path === "items/agents/bom-agent/agent.md"
+    );
+    expect(
+      agent !== undefined && "contents" in agent && agent.contents.slice(0, 1)
+    ).toBe("\uFEFF");
   });
 });

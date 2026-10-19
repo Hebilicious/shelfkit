@@ -16,13 +16,27 @@ import * as v from "valibot";
 export type ProfileDocument = v.InferInput<typeof ProfileSchema>;
 
 /** The ABI this port speaks; the module reports its own through `shelfkit_abi_version`. */
-export const ABI_VERSION = 1;
+export const ABI_VERSION = 2;
 
 /** One file of a shelf, by its path relative to the shelf root. Bytes that are not UTF-8 text go as a `Uint8Array`. */
-export interface ShelfFile {
+export type ShelfFile = ShelfContent | ShelfLink;
+
+/** One file of a shelf, by its path relative to the shelf root. Bytes that are not UTF-8 text go as a `Uint8Array`. */
+export interface ShelfContent {
   readonly path: string;
   readonly contents: string | Uint8Array;
 }
+
+/** A symbolic link found while reading a shelf. The loader refuses it, as it does reading the directory itself. */
+export interface ShelfLink {
+  readonly path: string;
+  readonly symlink: true;
+}
+
+/** How to make an instance of the module. The default needs no imports; tests pass one that traps. */
+export type Instantiate = (
+  module: WebAssembly.Module
+) => Pick<WebAssembly.Instance, "exports">;
 
 /** A problem with the shelf or the profile, in the file it came from. */
 export interface CompileError {
@@ -74,11 +88,13 @@ interface Abi {
 }
 
 /** One file as the ABI's request carries it. */
-interface FileRequest {
-  readonly contents: string;
-  readonly encoding: "utf-8" | "base64";
-  readonly path: string;
-}
+type FileRequest =
+  | {
+      readonly contents: string;
+      readonly encoding: "utf-8" | "base64";
+      readonly path: string;
+    }
+  | { readonly path: string; readonly symlink: true };
 
 const FUNCTIONS = [
   "shelfkit_abi_version",
@@ -106,18 +122,8 @@ const FailureSchema = v.strictObject({
   errors: v.array(v.strictObject({ message: v.string(), path: v.string() })),
 });
 
-/**
- * Instantiate the engine from a compiled module (the Worker, the browser) or from the module's bytes (Node). The module
- * needs no imports.
- */
-export async function createEngine(
-  source: WebAssembly.Module | BufferSource
-): Promise<Engine> {
-  const module =
-    source instanceof WebAssembly.Module
-      ? source
-      : await WebAssembly.compile(source);
-  const instance = await WebAssembly.instantiate(module, {});
+/** An instance's exports, checked against the ABI. */
+function open(instance: Pick<WebAssembly.Instance, "exports">): Abi {
   const { exports } = instance;
   if (!isAbi(exports)) {
     throw new Error(
@@ -130,8 +136,48 @@ export async function createEngine(
       `the engine module speaks ABI ${version}, and this port speaks ${ABI_VERSION}`
     );
   }
+  return exports;
+}
+
+const instantiateSync: Instantiate = (module) =>
+  new WebAssembly.Instance(module, {});
+
+/**
+ * Instantiate the engine from a compiled module (the Worker, the browser) or from the module's bytes (Node). The module
+ * needs no imports.
+ *
+ * A trap (a `WebAssembly.RuntimeError`, such as running out of memory) leaves an instance in no state to trust, so the
+ * call that trapped throws, and the engine makes a fresh instance from the same module for the next call.
+ */
+export async function createEngine(
+  source: WebAssembly.Module | BufferSource,
+  instantiate?: Instantiate
+): Promise<Engine> {
+  const module =
+    source instanceof WebAssembly.Module
+      ? source
+      : await WebAssembly.compile(source);
+  const make = instantiate ?? instantiateSync;
+  let abi = open(
+    instantiate === undefined
+      ? await WebAssembly.instantiate(module, {})
+      : make(module)
+  );
   return {
-    planCompile: (files, options = {}) => planCompile(exports, files, options),
+    planCompile: (files, options = {}) => {
+      try {
+        return planCompile(abi, files, options);
+      } catch (error) {
+        if (error instanceof WebAssembly.RuntimeError) {
+          abi = open(make(module));
+          throw new Error(
+            `the engine trapped (${error.message}) and was restarted; this plan was not made`,
+            { cause: error }
+          );
+        }
+        throw error;
+      }
+    },
   };
 }
 
@@ -164,6 +210,9 @@ function planCompile(
 }
 
 function encodeFile(file: ShelfFile): FileRequest {
+  if ("symlink" in file) {
+    return { path: file.path, symlink: true };
+  }
   if (file.contents instanceof Uint8Array) {
     return {
       contents: toBase64(file.contents),
@@ -178,6 +227,11 @@ function encodeFile(file: ShelfFile): FileRequest {
 function call(abi: Abi, request: string): number {
   const bytes = new TextEncoder().encode(request);
   const pointer = abi.shelfkit_input(bytes.length);
+  if (pointer === 0) {
+    throw new Error(
+      `the shelf is too large for the engine: a ${bytes.length}-byte request`
+    );
+  }
   // A view is taken after the call that may have grown memory, never before.
   new Uint8Array(abi.memory.buffer, pointer, bytes.length).set(bytes);
   return abi.shelfkit_plan();
