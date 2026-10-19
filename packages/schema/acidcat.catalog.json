@@ -10,6 +10,44 @@
     }
   },
   "$defs": {
+    "CompileOptions": {
+      "additionalProperties": false,
+      "properties": {
+        "allowNonconformantTargets": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "onConflict": {
+          "enum": [
+            "fail",
+            "shelf-wins",
+            "local-wins"
+          ],
+          "type": "string"
+        },
+        "pin": {
+          "enum": [
+            "revision",
+            "latest"
+          ],
+          "type": "string"
+        },
+        "targets": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "vendorAuthored": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
     "CompileSettings": {
       "additionalProperties": false,
       "properties": {
@@ -63,6 +101,9 @@
             "$schema": {
               "type": "string"
             },
+            "allowNonconformantTargets": {
+              "type": "boolean"
+            },
             "description": {
               "type": "string"
             },
@@ -115,6 +156,9 @@
           "properties": {
             "$schema": {
               "type": "string"
+            },
+            "allowNonconformantTargets": {
+              "type": "boolean"
             },
             "asCommand": {
               "type": "boolean"
@@ -196,6 +240,9 @@
             "$schema": {
               "type": "string"
             },
+            "allowNonconformantTargets": {
+              "type": "boolean"
+            },
             "description": {
               "type": "string"
             },
@@ -271,6 +318,9 @@
             "$schema": {
               "type": "string"
             },
+            "allowNonconformantTargets": {
+              "type": "boolean"
+            },
             "description": {
               "type": "string"
             },
@@ -324,6 +374,9 @@
             "$schema": {
               "type": "string"
             },
+            "allowNonconformantTargets": {
+              "type": "boolean"
+            },
             "description": {
               "type": "string"
             },
@@ -376,6 +429,9 @@
           "properties": {
             "$schema": {
               "type": "string"
+            },
+            "allowNonconformantTargets": {
+              "type": "boolean"
             },
             "description": {
               "type": "string"
@@ -431,6 +487,9 @@
               "properties": {
                 "$schema": {
                   "type": "string"
+                },
+                "allowNonconformantTargets": {
+                  "type": "boolean"
                 },
                 "description": {
                   "type": "string"
@@ -534,6 +593,9 @@
               "properties": {
                 "$schema": {
                   "type": "string"
+                },
+                "allowNonconformantTargets": {
+                  "type": "boolean"
                 },
                 "args": {
                   "items": {
@@ -640,6 +702,9 @@
                 "$schema": {
                   "type": "string"
                 },
+                "allowNonconformantTargets": {
+                  "type": "boolean"
+                },
                 "description": {
                   "type": "string"
                 },
@@ -742,6 +807,9 @@
           "properties": {
             "$schema": {
               "type": "string"
+            },
+            "allowNonconformantTargets": {
+              "type": "boolean"
             },
             "args": {
               "items": {
@@ -873,6 +941,9 @@
             "$schema": {
               "type": "string"
             },
+            "allowNonconformantTargets": {
+              "type": "boolean"
+            },
             "description": {
               "type": "string"
             },
@@ -937,6 +1008,9 @@
           "properties": {
             "$schema": {
               "type": "string"
+            },
+            "allowNonconformantTargets": {
+              "type": "boolean"
             },
             "conventions": {
               "items": {
@@ -1112,6 +1186,60 @@
         "code",
         "message",
         "path"
+      ],
+      "type": "object"
+    },
+    "Profile": {
+      "additionalProperties": false,
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "bundles": {
+          "items": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "compile": {
+          "$ref": "#/$defs/CompileOptions"
+        },
+        "description": {
+          "type": "string"
+        },
+        "extends": {
+          "items": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "pattern": "^(?=[^@]{1,64}(?:@|$))[a-z0-9]+(?:-[a-z0-9]+)*(?:@sha256-[0-9a-f]{64})?$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "bundles",
+        "compile",
+        "extends",
+        "id",
+        "items",
+        "title"
       ],
       "type": "object"
     },
@@ -1543,7 +1671,7 @@
         "additionalProperties": false,
         "properties": {
           "item": {
-            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:@sha256-[0-9a-f]{64})?$",
+            "pattern": "^(?=[^@]{1,64}(?:@|$))[a-z0-9]+(?:-[a-z0-9]+)*(?:@sha256-[0-9a-f]{64})?$",
             "type": "string"
           },
           "shelf": {
@@ -1711,52 +1839,7 @@
         "additionalProperties": false,
         "properties": {
           "profile": {
-            "additionalProperties": false,
-            "properties": {
-              "bundles": {
-                "items": {
-                  "maxLength": 64,
-                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "description": {
-                "type": "string"
-              },
-              "extends": {
-                "items": {
-                  "maxLength": 64,
-                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "id": {
-                "maxLength": 64,
-                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
-                "type": "string"
-              },
-              "items": {
-                "items": {
-                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:@sha256-[0-9a-f]{64})?$",
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "title": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "bundles",
-              "description",
-              "extends",
-              "id",
-              "items",
-              "title"
-            ],
-            "type": "object"
+            "$ref": "#/$defs/Profile"
           },
           "resolution": {
             "$ref": "#/$defs/ResolvedProfile"

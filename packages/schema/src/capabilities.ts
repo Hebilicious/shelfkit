@@ -24,6 +24,7 @@ import {
   MarkersSchema,
   NoticeSchema,
   ProfileIdSchema,
+  ProfileSchema,
   ProfileSummarySchema,
   ResolvedProfileSchema,
   RevisionSchema,
@@ -147,15 +148,8 @@ export const shelfProfileGet = {
   id: "shelf.profile.get",
   input: v.strictObject({ ...shelfInput, profile: ProfileIdSchema }),
   output: v.strictObject({
-    /** The profile as written in `profiles/<id>.json`. */
-    profile: v.strictObject({
-      bundles: v.array(ProfileIdSchema),
-      description: v.string(),
-      extends: v.array(ProfileIdSchema),
-      id: ProfileIdSchema,
-      items: v.array(ItemRefSchema),
-      title: v.string(),
-    }),
+    /** The profile as written in `profiles/<id>.json`, as the Rust model serializes it. */
+    profile: ProfileSchema,
     resolution: ResolvedProfileSchema,
   }),
   readOnly: true,
@@ -193,7 +187,7 @@ export const shelfItemGet = {
 } as const;
 
 /**
- * Something the user must be told about a compile. The first three codes are the resolver's notices; `hook-approval`
+ * Something the user must be told about a compile. The first two codes are the resolver's notices; `hook-approval`
  * says the profile vendors hooks, which APM runs only after the user approves them.
  */
 export const CompileNoteSchema = v.strictObject({

@@ -61,12 +61,15 @@ export const ShelfIdSchema = v.pipe(
   )
 );
 
-/** `id` (latest) or `id@sha256-…` (pinned to a revision), as in a profile's `items`. */
+/**
+ * `id` (latest) or `id@sha256-…` (pinned to a revision), as in a profile's `items`. The lookahead holds the id to the
+ * same 64 characters as `ItemIdSchema`.
+ */
 export const ItemRefSchema = v.pipe(
   v.string(),
   v.regex(
-    /^[a-z0-9]+(?:-[a-z0-9]+)*(?:@sha256-[0-9a-f]{64})?$/u,
-    "must be an item id, optionally pinned as id@sha256-<64 hex>"
+    /^(?=[^@]{1,64}(?:@|$))[a-z0-9]+(?:-[a-z0-9]+)*(?:@sha256-[0-9a-f]{64})?$/u,
+    "must be an item id of at most 64 characters, optionally pinned as id@sha256-<64 hex>"
   )
 );
 
@@ -141,6 +144,8 @@ const RemoteTransportSchema = v.picklist(["http", "sse", "streamable-http"]);
 /** The fields every item has, beside its kind's own. */
 const common = {
   $schema: v.optional(v.string()),
+  /** The opt-in for CLI-only slugs in `targets`, which `shelfkit check` reports. */
+  allowNonconformantTargets: v.optional(v.boolean()),
   description: v.optional(v.string()),
   id: ItemIdSchema,
   requires: v.optional(v.array(ItemIdSchema)),
@@ -282,7 +287,10 @@ export const CompileSettingsSchema = v.strictObject({
 
 /** One item in a resolved profile: the Rust `ResolvedItem`. */
 export const ResolvedItemSchema = v.strictObject({
-  /** The item's revision in the shelf now. */
+  /**
+   * The item's revision in the shelf now. A pin must name the revision the shelf holds, so this equals `revision`
+   * today; it differs only if a later source serves older snapshots.
+   */
   current: RevisionSchema,
   id: ItemIdSchema,
   kind: ItemKindSchema,
@@ -297,7 +305,7 @@ export const ResolvedItemSchema = v.strictObject({
     v.strictObject({ item: ItemIdSchema, via: v.literal("requires") }),
   ]),
   pinned: v.boolean(),
-  /** The revision this profile uses: the pin, or the current revision when unpinned. */
+  /** The revision this profile compiles, pinned or not. The profile revision covers it. */
   revision: RevisionSchema,
 });
 
@@ -314,6 +322,29 @@ export const ResolvedProfileSchema = v.strictObject({
   revision: RevisionSchema,
 });
 
+/** A profile's `compile` settings as written: every field optional, so `extends` can tell what a child set. */
+export const CompileOptionsSchema = v.strictObject({
+  allowNonconformantTargets: v.optional(v.boolean()),
+  name: v.optional(v.string()),
+  onConflict: v.optional(v.picklist(["fail", "shelf-wins", "local-wins"])),
+  pin: v.optional(v.picklist(["revision", "latest"])),
+  targets: v.optional(v.array(TargetSlugSchema)),
+  vendorAuthored: v.optional(v.boolean()),
+});
+
+/** A profile exactly as `profiles/<id>.json` holds it, and as the Rust `Profile` serializes it. */
+export const ProfileSchema = v.strictObject({
+  $schema: v.optional(v.string()),
+  bundles: v.array(ProfileIdSchema),
+  compile: CompileOptionsSchema,
+  /** Left out when empty. */
+  description: v.optional(v.string()),
+  extends: v.array(ProfileIdSchema),
+  id: ProfileIdSchema,
+  items: v.array(ItemRefSchema),
+  title: v.string(),
+});
+
 export const ProfileSummarySchema = v.strictObject({
   description: v.string(),
   id: ProfileIdSchema,
@@ -325,6 +356,7 @@ export type ItemKind = v.InferOutput<typeof ItemKindSchema>;
 export type Item = v.InferOutput<typeof ItemSchema>;
 export type ItemSummary = v.InferOutput<typeof ItemSummarySchema>;
 export type Markers = v.InferOutput<typeof MarkersSchema>;
+export type Profile = v.InferOutput<typeof ProfileSchema>;
 export type Notice = v.InferOutput<typeof NoticeSchema>;
 export type ResolvedProfile = v.InferOutput<typeof ResolvedProfileSchema>;
 export type Source = v.InferOutput<typeof SourceSchema>;

@@ -9,11 +9,13 @@ import type { OverrideActionContext } from "@valibot/to-json-schema";
 import type { GenericSchema } from "valibot";
 
 import {
+  CompileOptionsSchema,
   CompileSettingsSchema,
   ItemSchema,
   ItemSummarySchema,
   MarkersSchema,
   NoticeSchema,
+  ProfileSchema,
   ProfileSummarySchema,
   ResolvedItemSchema,
   ResolvedProfileSchema,
@@ -22,11 +24,13 @@ import {
 
 /** The shared types, by the name the catalog gives them. */
 export const definitions = {
+  CompileOptions: CompileOptionsSchema,
   CompileSettings: CompileSettingsSchema,
   Item: ItemSchema,
   ItemSummary: ItemSummarySchema,
   Markers: MarkersSchema,
   Notice: NoticeSchema,
+  Profile: ProfileSchema,
   ProfileSummary: ProfileSummarySchema,
   ResolvedItem: ResolvedItemSchema,
   ResolvedProfile: ResolvedProfileSchema,

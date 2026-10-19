@@ -15,8 +15,10 @@ import { catalogApp } from "../src/catalog.ts";
 import { toCatalogJsonSchema } from "../src/json-schema.ts";
 import {
   ItemIdSchema,
+  ItemRefSchema,
   ItemSchema,
   NoticeSchema,
+  ProfileSchema,
   ResolvedProfileSchema,
 } from "../src/shelf.ts";
 
@@ -131,6 +133,7 @@ describe("the Rust model and these schemas agree", () => {
     const golden = v.parse(
       v.object({
         check: v.array(NoticeSchema),
+        declared: v.record(v.string(), ProfileSchema),
         profiles: v.record(v.string(), ResolvedProfileSchema),
       }),
       readJson(path.join(coreTests, "golden/all-kinds.json"))
@@ -140,6 +143,21 @@ describe("the Rust model and these schemas agree", () => {
       "full",
       "minimal",
     ]);
+  });
+
+  it("on how long an id may be, pinned or not", () => {
+    const pin = `@sha256-${"0".repeat(64)}`;
+    for (const [ref, valid] of [
+      ["a".repeat(64), true],
+      [`${"a".repeat(64)}${pin}`, true],
+      ["a".repeat(65), false],
+      [`${"a".repeat(65)}${pin}`, false],
+    ] as const) {
+      expect({
+        ref,
+        valid: v.safeParse(ItemRefSchema, ref).success,
+      }).toStrictEqual({ ref, valid });
+    }
   });
 
   it("on what an item id is", () => {
