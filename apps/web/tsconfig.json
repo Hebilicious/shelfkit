@@ -2,7 +2,14 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "plugins": [
+      {
+        "name": "gql.tada/ts-plugin",
+        "schema": "../worker/schema.graphql",
+        "tadaOutputLocation": "./src/api/graphql-env.d.ts"
+      }
+    ]
   },
   "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts"]
 }

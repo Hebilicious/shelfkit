@@ -6,6 +6,18 @@ tags: ["web", "vue"]
 dependsOn:
   - "tokens"
   - "schema"
+  - "engine"
+
+fileGroups:
+  sources:
+    - "src/**/*"
+    - "index.html"
+    - "vite.config.ts"
+    - "tsconfig.json"
+  graphql:
+    - "src/**/*"
+    - "tsconfig.json"
+    - "/apps/worker/schema.graphql"
 
 # Binaries are invoked by their path in node_modules/.bin. moon puts toolchain
 # binaries on PATH but not a project's own, and going through a package manager
@@ -13,26 +25,62 @@ dependsOn:
 tasks:
   build:
     command: "node_modules/.bin/vite build"
+    # The composer runs the WASM engine in the browser, so the module is bundled as an asset.
     deps:
       - "tokens:build"
+      - "engine:build"
+      - "graphql-types"
     inputs:
-      - "src/**/*"
-      - "index.html"
-      - "vite.config.ts"
+      - "@group(sources)"
     outputs:
       - "dist/**/*"
+
+  # Every GraphQL operation is typed against the Worker's committed SDL. The introspection types are generated, not
+  # committed, so they cannot go stale; the check fails when an operation no longer validates against the SDL.
+  graphql-types:
+    description: "Write src/api/graphql-env.d.ts, the types gql.tada reads, from apps/worker/schema.graphql."
+    command: "node_modules/.bin/gql.tada generate output"
+    inputs:
+      - "/apps/worker/schema.graphql"
+      - "tsconfig.json"
+    outputs:
+      - "src/api/graphql-env.d.ts"
+  graphql-check:
+    description: "Fail when an operation does not validate against apps/worker/schema.graphql."
+    command: "node_modules/.bin/gql.tada check --fail-on-warn"
+    deps:
+      - "graphql-types"
+    inputs:
+      - "@group(graphql)"
+
+  # vize is the primary checker; vue-tsc is the PRD's fallback path, and both stay green.
   check:
     command: "node_modules/.bin/vize check"
     deps:
       - "tokens:build"
+      - "graphql-check"
+      - "types"
+      - "types-test"
     inputs:
-      - "src/**/*"
+      - "@group(sources)"
   types:
     command: "node_modules/.bin/vue-tsc --noEmit"
     deps:
       - "tokens:build"
+      - "graphql-types"
     inputs:
-      - "src/**/*"
+      - "@group(sources)"
+      - "test/unit/**/*"
+  types-test:
+    description: "Typecheck the unit tests and the Playwright specs, which run in Node."
+    command: "node_modules/.bin/tsc --noEmit -p test/tsconfig.json"
+    deps:
+      - "graphql-types"
+    inputs:
+      - "test/**/*"
+      - "src/**/*.ts"
+      - "playwright.config.ts"
+      - "vitest.config.ts"
   # vize formats and lints the Vue components; oxfmt and oxlint, from the root
   # project, own the TypeScript.
   lint:
@@ -49,10 +97,44 @@ tasks:
     command: "node_modules/.bin/vize fmt --write 'src/**/*.vue'"
     options:
       runInCI: false
+
+  test:
+    description: "Unit tests for the SPA's pure modules, after the Playwright specs."
+    command: "node_modules/.bin/vitest run"
+    deps:
+      - "e2e"
+    inputs:
+      - "src/**/*"
+      - "test/unit/**/*"
+      - "vitest.config.ts"
+  e2e:
+    description: "Playwright against `wrangler dev` serving the built SPA: the prompt copy flow, the composer's preview against `shelfkit compile --dry-run`, and compiling into a repository."
+    command: "node_modules/.bin/playwright test"
+    deps:
+      - "build"
+      - "playwright-install"
+      - "compiler:build"
+    inputs:
+      - "@group(sources)"
+      - "test/e2e/**/*"
+      - "playwright.config.ts"
+      - "/apps/worker/src/**/*"
+      - "/apps/worker/wrangler.jsonc"
+      - "/target/debug/shelfkit"
+      - "/shelf/**/*"
+      - "/crates/core/tests/fixtures/all-kinds/**/*"
+  playwright-install:
+    description: "Download Playwright's Chromium into its cache. A no-op once it is there."
+    command: "node_modules/.bin/playwright install chromium"
+    inputs:
+      - "package.json"
+
   dev:
     command: "node_modules/.bin/vite"
     deps:
       - "tokens:build"
+      - "engine:build"
+      - "graphql-types"
     options:
       persistent: true
       runInCI: false

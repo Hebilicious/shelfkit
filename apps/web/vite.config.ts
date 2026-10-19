@@ -1,6 +1,9 @@
 import { vize } from "@vizejs/vite-plugin";
 import { defineConfig } from "vite";
 
+/** The Worker `vite dev` forwards the API to: `wrangler dev`, on 8787 unless SHELFKIT_WORKER_PORT says otherwise. */
+const worker = `http://127.0.0.1:${process.env.SHELFKIT_WORKER_PORT ?? "8787"}`;
+
 /**
  * Vize compiles SFCs natively, as a drop-in for @vitejs/plugin-vue.
  *
@@ -18,9 +21,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/apm": "http://127.0.0.1:8787",
-      "/graphql": "http://127.0.0.1:8787",
-      "/mcp": "http://127.0.0.1:8787",
+      "/apm": worker,
+      "/graphql": worker,
+      "/mcp": worker,
+      "/raw": worker,
     },
   },
 });
