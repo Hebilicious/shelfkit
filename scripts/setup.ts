@@ -9,22 +9,35 @@
  *    version cannot be overwritten or deleted at the storage layer either;
  * 2. the queue `shelfkit-jobs` and its dead-letter queue `shelfkit-jobs-dlq`;
  * 3. the owner key, unless the Worker already has one: 32 random bytes, of which the Worker keeps only the SHA-256 as
- *    the secret `OWNER_KEY_HASH`;
- * 4. the deploy, which creates the Durable Object namespace and applies its migrations (`wrangler.jsonc`);
- * 5. a check that `/health` answers.
+ *    the secret `OWNER_KEY_HASH`. Programs use it; people sign in with GitHub;
+ * 4. the session secret `SESSION_SECRET`, unless the Worker has one: the HMAC key of the browser's session cookie;
+ * 5. the owner's GitHub account, `OWNER_GITHUB_ID`, unless the Worker has one: by default the account `gh api user`
+ *    reports on this machine, by numeric id, since a login can change hands and an id cannot;
+ * 6. the deploy, which creates the Durable Object namespace and applies its migrations (`wrangler.jsonc`);
+ * 7. a check that `/health` answers;
+ * 8. the deployment's own GitHub App, for "Sign in with GitHub", unless the Worker has `GITHUB_CLIENT_ID` and
+ *    `GITHUB_CLIENT_SECRET`. It is made with GitHub's app-manifest flow: a page served on this machine's loopback
+ *    posts the manifest to github.com, you click "Create GitHub App", and GitHub sends the browser back to that page
+ *    with a code that setup converts into the app's client id and secret, set as Worker secrets. The app asks for no
+ *    permissions; its private key and webhook secret are never written anywhere. It is public so that accounts the
+ *    owner grants access can authorize it; installing it grants nothing.
  *
  * A new owner key is shown once, here, and stored nowhere else. With `--keychain`, it is handed to `shelfkit login`
  * instead, which keeps it in the OS keychain, and it is never printed. Pass the account as `CLOUDFLARE_ACCOUNT_ID` when
  * Wrangler can reach more than one.
  *
  * Options: `--dry-run` (say what would happen), `--keychain` (store a new owner key with `shelfkit login`; the binary
- * is `--shelfkit <path>`, else `shelfkit` on PATH, else `target/debug/shelfkit`), `--rotate-owner-key` (replace it).
+ * is `--shelfkit <path>`, else `shelfkit` on PATH, else `target/debug/shelfkit`), `--rotate-owner-key` (replace it),
+ * `--github-owner <login>` (the owner's GitHub account, replacing the one recorded), `--github-org <org>` (create the
+ * GitHub App under an organization), `--recreate-github-app` (make a new app and replace its secrets),
+ * `--rotate-session-secret` (sign every browser out).
  *
  * This is a moon task, not `pnpm setup`: `pnpm setup` is pnpm's own built-in command, and the repository has no npm
  * scripts.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import { once } from "node:events";
 import {
   existsSync,
   mkdtempSync,
@@ -32,6 +45,9 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -44,6 +60,12 @@ const BUCKET = "shelfkit-blobs";
 const QUEUE = "shelfkit-jobs";
 const DEAD_LETTERS = "shelfkit-jobs-dlq";
 const OWNER_SECRET = "OWNER_KEY_HASH";
+const SESSION_SECRET = "SESSION_SECRET";
+const OWNER_GITHUB = "OWNER_GITHUB_ID";
+const CLIENT_ID = "GITHUB_CLIENT_ID";
+const CLIENT_SECRET = "GITHUB_CLIENT_SECRET";
+/** How long setup waits for you to create the GitHub App on github.com. */
+const GITHUB_APP_WAIT_MS = 15 * 60 * 1000;
 /**
  * The bucket lock: published registry archives (`archives/`), retained indefinitely. Uploaded content (`objects/`) is
  * not locked: an upload no commit takes must stay removable. Setting the configuration replaces any earlier rule, so
@@ -64,8 +86,18 @@ const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
 const keychain = args.includes("--keychain");
 const rotate = args.includes("--rotate-owner-key");
-const shelfkitFlag = args.indexOf("--shelfkit");
-const shelfkitPath = shelfkitFlag === -1 ? undefined : args[shelfkitFlag + 1];
+const rotateSession = args.includes("--rotate-session-secret");
+const recreateApp = args.includes("--recreate-github-app");
+
+/** The value after `flag`, when it was given. */
+function option(flag: string): string | undefined {
+  const at = args.indexOf(flag);
+  return at === -1 ? undefined : args[at + 1];
+}
+
+const shelfkitPath = option("--shelfkit");
+const githubOwner = option("--github-owner");
+const githubOrg = option("--github-org");
 
 interface Ran {
   readonly status: number;
@@ -164,27 +196,29 @@ function ensureQueue(name: string): void {
   must(wrangler(["queues", "create", name]), `creating the queue ${name}`);
 }
 
-/** Whether the deployed Worker already has the owner key's hash. A Worker that does not exist yet has none. */
-function hasOwnerKey(): boolean {
+/** The names of the deployed Worker's secrets. A Worker that does not exist yet has none. */
+function workerSecrets(): ReadonlySet<string> {
   const listed = wrangler(["secret", "list", "--format", "json"], {
     quiet: true,
   });
   if (listed.status !== 0) {
-    return false;
+    return new Set();
   }
   try {
     const secrets: unknown = JSON.parse(listed.stdout);
-    return (
-      isSecretList(secrets) &&
-      secrets.some((secret) => secret.name === OWNER_SECRET)
-    );
+    return isSecretList(secrets)
+      ? new Set(secrets.map((secret) => secret.name))
+      : new Set();
   } catch {
-    return false;
+    return new Set();
   }
 }
 
-/** Deploy, with the owner key's hash when there is a new one, and return the Worker's URLs from Wrangler's output file. */
-function deploy(directory: string, ownerKeyHash: string | undefined): string[] {
+/** Deploy, with the secrets that are new, and return the Worker's URLs from Wrangler's output file. */
+function deploy(
+  directory: string,
+  secrets: Readonly<Record<string, string>>
+): string[] {
   step(
     "Deploy the Worker, creating the Durable Object namespace and applying its migrations"
   );
@@ -194,12 +228,11 @@ function deploy(directory: string, ownerKeyHash: string | undefined): string[] {
   }
   const output = path.join(directory, "wrangler-output.ndjson");
   const command = ["deploy"];
-  if (ownerKeyHash !== undefined) {
-    const secrets = path.join(directory, "secrets.json");
-    writeFileSync(secrets, JSON.stringify({ [OWNER_SECRET]: ownerKeyHash }), {
-      mode: 0o600,
-    });
-    command.push("--secrets-file", secrets);
+  if (Object.keys(secrets).length > 0) {
+    // Removed with the temporary directory when setup ends.
+    const file = path.join(directory, "secrets.json");
+    writeFileSync(file, JSON.stringify(secrets), { mode: 0o600 });
+    command.push("--secrets-file", file);
   }
   must(
     wrangler(command, { env: { WRANGLER_OUTPUT_FILE_PATH: output } }),
@@ -272,6 +305,331 @@ function storeInKeychain(url: string, key: string): void {
   }
 }
 
+/** A GitHub account, as the REST API reports it. */
+interface GitHubAccount {
+  readonly id: number;
+  readonly login: string;
+}
+
+// BOUNDARY: a GitHub REST answer is unknown until this guard has found an account's numeric id and login.
+function isAccount(value: unknown): value is GitHubAccount {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    typeof value.id === "number" &&
+    "login" in value &&
+    typeof value.login === "string"
+  );
+}
+
+/** The account `--github-owner` names, from GitHub's public API, or the one `gh` is signed in as on this machine. */
+async function ownerAccount(): Promise<GitHubAccount> {
+  if (githubOwner !== undefined) {
+    const login = githubOwner.replace(/^@/u, "");
+    const answer = await fetch(
+      `https://api.github.com/users/${encodeURIComponent(login)}`,
+      {
+        headers: {
+          accept: "application/vnd.github+json",
+          "user-agent": "shelfkit-setup",
+        },
+      }
+    );
+    const account: unknown = answer.ok ? await answer.json() : null;
+    if (!isAccount(account)) {
+      throw new Error(
+        `GitHub has no account \`${login}\` (it answered ${answer.status})`
+      );
+    }
+    return account;
+  }
+  const ran = spawnSync("gh", ["api", "user"], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const account: unknown =
+    ran.status === 0 ? JSON.parse(ran.stdout || "null") : null;
+  if (!isAccount(account)) {
+    throw new Error(
+      "could not ask `gh api user` who you are: sign in with `gh auth login`, or pass --github-owner <login>"
+    );
+  }
+  return account;
+}
+
+/** The app GitHub made from the manifest: what setup keeps of it. */
+interface CreatedApp {
+  readonly clientId: string;
+  readonly clientSecret: string;
+  readonly slug: string;
+  readonly htmlUrl: string;
+}
+
+// BOUNDARY: the manifest conversion's answer is unknown until this guard has found the fields setup keeps. The rest of
+// it, the private key and the webhook secret included, is never read.
+function isConversion(value: unknown): value is {
+  readonly client_id: string;
+  readonly client_secret: string;
+  readonly slug: string;
+  readonly html_url: string;
+} {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "client_id" in value &&
+    typeof value.client_id === "string" &&
+    "client_secret" in value &&
+    typeof value.client_secret === "string" &&
+    "slug" in value &&
+    typeof value.slug === "string" &&
+    "html_url" in value &&
+    typeof value.html_url === "string"
+  );
+}
+
+// BOUNDARY: `server.address()` is a string for a pipe and null before listening; a TCP listener's is its address.
+function isAddressInfo(value: unknown): value is AddressInfo {
+  return typeof value === "object" && value !== null && "port" in value;
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+/** Open a URL in the default browser, if this machine has one; the URL is printed either way. */
+function openBrowser(url: string): void {
+  let command = "xdg-open";
+  let rest = [url];
+  if (process.platform === "darwin") {
+    command = "open";
+  } else if (process.platform === "win32") {
+    command = "cmd";
+    rest = ["/c", "start", "", url];
+  }
+  try {
+    const child = spawn(command, rest, {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.on("error", () => {
+      // No browser opener: the printed URL is the way in.
+    });
+    child.unref();
+  } catch {
+    // As above.
+  }
+}
+
+/**
+ * Create the deployment's GitHub App with GitHub's app-manifest flow, through a page on this machine's loopback, and
+ * return its client id and secret. Nothing of it is written to disk.
+ */
+async function createGitHubApp(deployment: string): Promise<CreatedApp> {
+  const host = new URL(deployment).hostname.replace(/\.workers\.dev$/u, "");
+  const state = randomBytes(24).toString("hex");
+  // The loopback page receives the code GitHub sends back, and closes the server, which ends the wait below.
+  let code = "";
+  let page = "";
+  const server = createServer((incoming, outgoing) => {
+    loopback(incoming, outgoing, {
+      created: (received) => {
+        code = received;
+        server.close();
+        server.closeAllConnections();
+      },
+      deployment,
+      host,
+      page,
+      state,
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!isAddressInfo(address)) {
+    throw new Error("could not open a loopback port for the GitHub App page");
+  }
+  page = `http://127.0.0.1:${address.port}/`;
+  console.log(
+    `    open ${page} and click "Create GitHub App" on github.com (waiting up to 15 minutes)`
+  );
+  openBrowser(page);
+  try {
+    await once(server, "close", {
+      signal: AbortSignal.timeout(GITHUB_APP_WAIT_MS),
+    });
+  } catch {
+    server.close();
+    server.closeAllConnections();
+    throw new Error("the GitHub App was not created in 15 minutes");
+  }
+  const answer = await fetch(
+    `https://api.github.com/app-manifests/${encodeURIComponent(code)}/conversions`,
+    {
+      headers: {
+        accept: "application/vnd.github+json",
+        "user-agent": "shelfkit-setup",
+      },
+      method: "POST",
+    }
+  );
+  const converted: unknown = answer.ok ? await answer.json() : null;
+  if (!isConversion(converted)) {
+    throw new Error(
+      `GitHub did not convert the app manifest (it answered ${answer.status})`
+    );
+  }
+  return {
+    clientId: converted.client_id,
+    clientSecret: converted.client_secret,
+    htmlUrl: converted.html_url,
+    slug: converted.slug,
+  };
+}
+
+/** What the loopback page needs to know. */
+interface LoopbackContext {
+  /** The page's own address, `http://127.0.0.1:<port>/`. */
+  readonly page: string;
+  /** The random value GitHub must send back, so only the app this run asked for is accepted. */
+  readonly state: string;
+  readonly deployment: string;
+  readonly host: string;
+  readonly created: (code: string) => void;
+}
+
+/** The loopback page: `/` posts the manifest to github.com, `/created` receives the code GitHub sends back. */
+function loopback(
+  incoming: IncomingMessage,
+  outgoing: ServerResponse,
+  context: LoopbackContext
+): void {
+  const { created, deployment, host, page, state } = context;
+  const url = new URL(incoming.url ?? "/", page);
+  const html = (body: string) => {
+    outgoing.writeHead(200, {
+      "cache-control": "no-store",
+      connection: "close",
+      "content-type": "text/html; charset=utf-8",
+    });
+    outgoing.end(
+      `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ShelfKit setup</title></head><body>${body}</body></html>`
+    );
+  };
+  if (url.pathname === "/created") {
+    if (url.searchParams.get("state") !== state) {
+      html(
+        "<p>This is not the GitHub App this setup asked for. Go back to the terminal.</p>"
+      );
+      return;
+    }
+    // Once the page is sent, hand the code over; that closes this server.
+    const code = url.searchParams.get("code") ?? "";
+    outgoing.on("finish", () => {
+      created(code);
+    });
+    html(
+      "<p>The GitHub App is created. Go back to the terminal; you can close this tab.</p>"
+    );
+    return;
+  }
+  if (url.pathname !== "/") {
+    outgoing.writeHead(404).end();
+    return;
+  }
+  const manifest = {
+    callback_urls: [`${deployment}/auth/github/callback`],
+    default_events: [],
+    default_permissions: {},
+    description: `Sign-in for the ShelfKit deployment at ${deployment}. It asks for no permissions: it only tells ShelfKit who signed in.`,
+    hook_attributes: { active: false, url: deployment },
+    name: `ShelfKit ${host}`.slice(0, 34),
+    public: true,
+    redirect_url: new URL("/created", page).toString(),
+    request_oauth_on_install: false,
+    url: deployment,
+  };
+  const target =
+    githubOrg === undefined
+      ? "https://github.com/settings/apps/new"
+      : `https://github.com/organizations/${encodeURIComponent(githubOrg)}/settings/apps/new`;
+  html(
+    `<h1>Create ShelfKit's GitHub App</h1><p>This sends the app's manifest to GitHub. On the next page, click <strong>Create GitHub App</strong>. It asks for no permissions.</p><form method="post" action="${escapeHtml(`${target}?state=${state}`)}"><input type="hidden" name="manifest" value="${escapeHtml(JSON.stringify(manifest))}"><button type="submit">Continue to GitHub</button></form>`
+  );
+}
+
+/** A new `SESSION_SECRET`, unless the Worker has one and it is not being rotated. */
+function sessionSecret(
+  existing: ReadonlySet<string>
+): Partial<Record<typeof SESSION_SECRET, string>> {
+  step("Session secret, which signs the browser's session cookie");
+  if (existing.has(SESSION_SECRET) && !rotateSession) {
+    console.log(
+      `    the Worker has ${SESSION_SECRET}; keeping it (--rotate-session-secret replaces it and signs every browser out)`
+    );
+    return {};
+  }
+  console.log(dryRun ? "    would make one" : "    made a new one");
+  return { [SESSION_SECRET]: randomBytes(32).toString("base64url") };
+}
+
+/** The owner's GitHub account id, unless the Worker has one and `--github-owner` does not replace it. */
+async function ownerGitHub(
+  existing: ReadonlySet<string>
+): Promise<Partial<Record<typeof OWNER_GITHUB, string>>> {
+  step("Owner's GitHub account: signing in with it is signing in as the owner");
+  if (existing.has(OWNER_GITHUB) && githubOwner === undefined) {
+    console.log(
+      `    the Worker has ${OWNER_GITHUB}; keeping it (--github-owner <login> replaces it)`
+    );
+    return {};
+  }
+  const owner = await ownerAccount();
+  console.log(
+    `    @${owner.login} (id ${owner.id})${githubOwner === undefined ? "; pass --github-owner <login> to choose another account" : ""}`
+  );
+  return { [OWNER_GITHUB]: String(owner.id) };
+}
+
+/** The GitHub App's client id and secret, unless the Worker has them and `--recreate-github-app` was not given. */
+async function ensureGitHubApp(
+  existing: ReadonlySet<string>,
+  url: string
+): Promise<void> {
+  step(
+    `GitHub App for "Sign in with GitHub" (callback ${url}/auth/github/callback)`
+  );
+  if (existing.has(CLIENT_ID) && existing.has(CLIENT_SECRET) && !recreateApp) {
+    console.log(
+      `    the Worker has ${CLIENT_ID} and ${CLIENT_SECRET}; keeping them (--recreate-github-app makes a new app)`
+    );
+    return;
+  }
+  if (dryRun) {
+    console.log("    would create one through github.com, after the deploy");
+    return;
+  }
+  const app = await createGitHubApp(url);
+  putSecret(CLIENT_ID, app.clientId);
+  putSecret(CLIENT_SECRET, app.clientSecret);
+  console.log(
+    `    created ${app.slug}: ${app.htmlUrl} (its private key and webhook secret were not kept)`
+  );
+}
+
+/** `wrangler secret put`, with the value on its standard input, so it is neither printed nor written to disk. */
+function putSecret(name: string, value: string): void {
+  must(
+    wrangler(["secret", "put", name], { input: value, quiet: true }),
+    `setting the secret ${name}`
+  );
+}
+
 async function main(): Promise<void> {
   const directory = mkdtempSync(path.join(tmpdir(), "shelfkit-setup-"));
   try {
@@ -289,9 +647,12 @@ async function main(): Promise<void> {
     ensureQueue(DEAD_LETTERS);
     ensureQueue(QUEUE);
 
-    step("Owner key");
+    const existing = workerSecrets();
+    const secrets: Record<string, string> = {};
+
+    step("Owner key, for programs: the CLI, agents, CI");
     let ownerKey: string | undefined;
-    if (hasOwnerKey() && !rotate) {
+    if (existing.has(OWNER_SECRET) && !rotate) {
       console.log(
         `    the Worker has ${OWNER_SECRET}; keeping it (--rotate-owner-key replaces it)`
       );
@@ -303,12 +664,22 @@ async function main(): Promise<void> {
           : "    made a new one; the Worker keeps only its SHA-256"
       );
     }
-    const hash =
-      ownerKey === undefined
-        ? undefined
-        : createHash("sha256").update(ownerKey).digest("hex");
+    if (ownerKey !== undefined) {
+      secrets[OWNER_SECRET] = createHash("sha256")
+        .update(ownerKey)
+        .digest("hex");
+    }
 
-    const targets = deploy(directory, dryRun ? undefined : hash);
+    Object.assign(
+      secrets,
+      sessionSecret(existing),
+      await ownerGitHub(existing)
+    );
+
+    const targets = deploy(directory, dryRun ? {} : secrets);
+    if (dryRun) {
+      await ensureGitHubApp(existing, "https://<deployment>");
+    }
     const [url] = targets;
     if (dryRun) {
       console.log("\nDry run: nothing was created or deployed.");
@@ -323,6 +694,8 @@ async function main(): Promise<void> {
       throw new Error(`${url}/health did not answer`);
     }
 
+    await ensureGitHubApp(existing, url);
+
     if (ownerKey !== undefined) {
       if (keychain) {
         storeInKeychain(url, ownerKey);
@@ -332,7 +705,7 @@ async function main(): Promise<void> {
         );
       }
     }
-    console.log(`\nDone: ${url}`);
+    console.log(`\nDone: ${url}. Open ${url}/sign-in and sign in with GitHub.`);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
