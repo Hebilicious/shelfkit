@@ -3,7 +3,7 @@ import { computed } from "vue";
 
 import type { InventoryItem } from "../api/types.ts";
 import type { Preview } from "../composables/use-preview.ts";
-import type { Severity } from "../lib/conflicts.ts";
+import type { ConflictSeverity as Severity } from "@shelfkit/engine";
 
 const { preview, inventory, error } = defineProps<{
   preview: Preview | null;
@@ -109,6 +109,8 @@ function coordinate(id: string): string {
 
 <style scoped>
 .rail {
+  min-width: 0;
+  overflow-wrap: anywhere;
   max-height: calc(100dvh - var(--spacing-size-16) * 2);
   overflow: auto;
 }

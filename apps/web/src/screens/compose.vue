@@ -222,7 +222,7 @@ const idTaken = computed(
       <div class="compose__panes">
         <ComposeInventory :items="inventory" :in-profile="inProfile" @add="add($event, null)" />
         <ComposeProfile
-          :document="draft"
+          :profile="draft"
           :is-new="isNew"
           :inventory="inventory"
           :bundles="bundles"

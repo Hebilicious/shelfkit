@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
     "types": ["vite/client"],
     "plugins": [
       {
@@ -11,5 +11,5 @@
       }
     ]
   },
-  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts"]
+  "include": ["env.d.ts", "src/**/*.ts", "src/**/*.vue", "vite.config.ts"]
 }

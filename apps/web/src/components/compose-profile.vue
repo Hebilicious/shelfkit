@@ -16,15 +16,15 @@ import {
   toggle,
 } from "../lib/profile.ts";
 
-const { document, isNew, inventory, bundles, profiles } = defineProps<{
-  document: Profile;
+const { profile, isNew, inventory, bundles, profiles } = defineProps<{
+  profile: Profile;
   isNew: boolean;
   inventory: readonly InventoryItem[];
   bundles: readonly BundleDocument[];
   profiles: readonly ProfileOption[];
 }>();
 const emit = defineEmits<{
-  update: [document: Profile];
+  update: [profile: Profile];
   remove: [id: string];
   place: [id: string, at: number];
 }>();
@@ -35,12 +35,12 @@ const idTouched = ref(!isNew);
 type Compile = Profile["compile"];
 
 function set(patch: Partial<Profile>): void {
-  emit("update", { ...document, ...patch });
+  emit("update", { ...profile, ...patch });
 }
 
 function setCompile(patch: Partial<Compile>): void {
-  const compile: Compile = { ...document.compile, ...patch };
-  emit("update", { ...document, compile });
+  const compile: Compile = { ...profile.compile, ...patch };
+  emit("update", { ...profile, compile });
 }
 
 function setTitle(title: string): void {
@@ -57,7 +57,7 @@ const groups = computed(() => {
     string,
     { itemRef: string; id: string; at: number; item: InventoryItem | undefined }[]
   >();
-  for (const [at, itemRef] of document.items.entries()) {
+  for (const [at, itemRef] of profile.items.entries()) {
     const id = refId(itemRef);
     const item = byId.value.get(id);
     const kind = item?.kind ?? "missing";
@@ -84,10 +84,10 @@ function onDrop(event: DragEvent, at: number): void {
 
 function togglePin(id: string, itemRef: string): void {
   const current = byId.value.get(id)?.revision ?? null;
-  emit("update", pinItem(document, id, refRevision(itemRef) === null ? current : null));
+  emit("update", pinItem(profile, id, refRevision(itemRef) === null ? current : null));
 }
 
-const targets = computed(() => document.compile.targets ?? []);
+const targets = computed(() => profile.compile.targets ?? []);
 
 function selectValue(event: Event): string {
   return event.target instanceof HTMLSelectElement ? event.target.value : "";
@@ -128,12 +128,12 @@ function setTargets(slug: string): void {
     <div class="grid">
       <label class="field">
         Title
-        <input :value="document.title" name="title" @input="setTitle(inputValue($event))" />
+        <input :value="profile.title" name="title" @input="setTitle(inputValue($event))" />
       </label>
       <label class="field">
         Id
         <input
-          :value="document.id"
+          :value="profile.id"
           class="mono"
           name="id"
           :readonly="!isNew"
@@ -146,7 +146,7 @@ function setTargets(slug: string): void {
       <label class="field wide">
         Description
         <input
-          :value='document.description ?? ""'
+          :value='profile.description ?? ""'
           name="description"
           @input="set({ description: inputValue($event) })"
         />
@@ -154,17 +154,17 @@ function setTargets(slug: string): void {
     </div>
     <div class="items-head row">
       <h2>Items</h2>
-      <span class="small muted">{{ document.items.length }} named directly</span>
+      <span class="small muted">{{ profile.items.length }} named directly</span>
     </div>
     <div
       class="dropzone"
-      :class='{ "dropzone--over": dropping === document.items.length }'
+      :class='{ "dropzone--over": dropping === profile.items.length }'
       data-testid="profile-items"
-      @dragover.prevent="dropping = document.items.length"
+      @dragover.prevent="dropping = profile.items.length"
       @dragleave="dropping = null"
-      @drop.prevent="onDrop($event, document.items.length)"
+      @drop.prevent="onDrop($event, profile.items.length)"
     >
-      <p v-if="document.items.length === 0" class="muted small">Drop items here, or add them from the inventory.</p>
+      <p v-if="profile.items.length === 0" class="muted small">Drop items here, or add them from the inventory.</p>
       <div v-for="group in groups" :key="group.kind" class="group">
         <h3 class="small muted">{{ group.kind }}</h3>
         <ul class="list">
@@ -198,7 +198,7 @@ function setTargets(slug: string): void {
                 class="quiet small"
                 type="button"
                 :aria-label="`Move ${entry.id} up`"
-                @click='emit("update", moveItem(document, entry.id, -1))'
+                @click='emit("update", moveItem(profile, entry.id, -1))'
               >
                 ↑
               </button>
@@ -206,7 +206,7 @@ function setTargets(slug: string): void {
                 class="quiet small"
                 type="button"
                 :aria-label="`Move ${entry.id} down`"
-                @click='emit("update", moveItem(document, entry.id, 1))'
+                @click='emit("update", moveItem(profile, entry.id, 1))'
               >
                 ↓
               </button>
@@ -228,21 +228,21 @@ function setTargets(slug: string): void {
       <label v-for="bundle in bundles" :key="bundle.id" class="row small">
         <input
           type="checkbox"
-          :checked="document.bundles.includes(bundle.id)"
-          @change="set({ bundles: toggle(document.bundles, bundle.id) })"
+          :checked="profile.bundles.includes(bundle.id)"
+          @change="set({ bundles: toggle(profile.bundles, bundle.id) })"
         />
         {{ bundle.title }} <span class="muted">({{ bundle.items.length }} items)</span>
       </label>
     </fieldset>
     <fieldset v-if="profiles.length > 0">
       <legend>Extends</legend>
-      <label v-for="profile in profiles" :key="profile.id" class="row small">
+      <label v-for="other in profiles" :key="other.id" class="row small">
         <input
           type="checkbox"
-          :checked="document.extends.includes(profile.id)"
-          @change="set({ extends: toggle(document.extends, profile.id) })"
+          :checked="profile.extends.includes(other.id)"
+          @change="set({ extends: toggle(profile.extends, other.id) })"
         />
-        {{ profile.title }} <span class="mono muted">{{ profile.id }}</span>
+        {{ other.title }} <span class="mono muted">{{ other.id }}</span>
       </label>
     </fieldset>
     <fieldset>
@@ -251,7 +251,7 @@ function setTargets(slug: string): void {
         <label class="field">
           Package name
           <input
-            :value='document.compile.name ?? ""'
+            :value='profile.compile.name ?? ""'
             placeholder="the profile id"
             @input="setCompile({ name: inputValue($event) || undefined })"
           />
@@ -259,14 +259,14 @@ function setTargets(slug: string): void {
         <label class="field">
           Version
           <input
-            :value='document.version ?? ""'
+            :value='profile.version ?? ""'
             placeholder="from the revision"
             @input="set({ version: inputValue($event) || undefined })"
           />
         </label>
         <div class="field">
           <label for="compile-pin">Pin</label>
-          <select id="compile-pin" :value='document.compile.pin ?? ""' @change="setPin">
+          <select id="compile-pin" :value='profile.compile.pin ?? ""' @change="setPin">
             <option value="">default (revision)</option>
             <option value="revision">revision</option>
             <option value="latest">latest</option>
@@ -276,7 +276,7 @@ function setTargets(slug: string): void {
           <label for="compile-on-conflict">On conflict</label>
           <select
             id="compile-on-conflict"
-            :value='document.compile.onConflict ?? ""'
+            :value='profile.compile.onConflict ?? ""'
             @change="setOnConflict"
           >
             <option value="">default (fail)</option>
@@ -289,9 +289,9 @@ function setTargets(slug: string): void {
           <label for="compile-vendor">Vendor authored items</label>
           <select
             id="compile-vendor"
-            :value='document.compile.vendorAuthored === undefined
+            :value='profile.compile.vendorAuthored === undefined
               ? ""
-              : document.compile.vendorAuthored
+              : profile.compile.vendorAuthored
                 ? "yes"
                 : "no"'
             @change="setVendorAuthored"
@@ -331,9 +331,9 @@ function setTargets(slug: string): void {
           <label class="row small">
             <input
               type="checkbox"
-              :checked="document.compile.allowNonconformantTargets === true"
+              :checked="profile.compile.allowNonconformantTargets === true"
               @change="setCompile({
-                allowNonconformantTargets: document.compile.allowNonconformantTargets === true ? undefined : true,
+                allowNonconformantTargets: profile.compile.allowNonconformantTargets === true ? undefined : true,
               })"
             />
             opt in

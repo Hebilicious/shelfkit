@@ -590,6 +590,9 @@ export const CompileQuery = graphql(`
         revision
         apmCoordinate
         document
+        resolution {
+          json
+        }
         plan {
           errors {
             path
@@ -599,6 +602,10 @@ export const CompileQuery = graphql(`
             json
           }
         }
+      }
+      profiles {
+        id
+        title
       }
     }
   }

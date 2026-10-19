@@ -5,6 +5,8 @@
  * byte for byte what `shelfkit compile --dry-run` writes for the same profile. When the engine cannot run here (no
  * WebAssembly, or the shelf's files cannot be read), `previewProfile` asks the Worker, which runs the same engine.
  */
+import { conflictsOf } from "@shelfkit/engine";
+import type { Conflict } from "@shelfkit/engine";
 import type { CompilePlan, Profile, ResolvedProfile } from "@shelfkit/schema";
 import { ref, shallowRef, watch } from "vue";
 import type { Ref } from "vue";
@@ -14,8 +16,6 @@ import { readPlan, readResolution } from "../api/json.ts";
 import { PreviewProfileQuery } from "../api/operations.ts";
 import { loadEngine, shelfFiles } from "../engine/browser.ts";
 import type { SnapshotEntry } from "../engine/browser.ts";
-import { conflictsOf } from "../lib/conflicts.ts";
-import type { Conflict } from "../lib/conflicts.ts";
 
 export interface Preview {
   /** Where the preview ran. */
@@ -49,12 +49,12 @@ async function inBrowser(
   const resolved = engine.resolve(files, options);
   const planned = engine.planCompile(files, options);
   const resolution = resolved.ok ? resolved.value : null;
-  const errors = planned.ok ? [] : planned.errors;
   return {
     conflicts: conflictsOf(
-      resolution?.notices ?? [],
-      errors,
-      planned.ok ? planned.plan.notes : []
+      resolution,
+      planned.ok
+        ? { errors: [], plan: planned.plan }
+        : { errors: planned.errors, plan: null }
     ),
     plan: planned.ok ? planned.plan : null,
     planText: planned.ok ? planned.text : null,
