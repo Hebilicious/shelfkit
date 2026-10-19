@@ -42,6 +42,12 @@ tasks:
       - "@group(configs)"
       - "oxlint.config.ts"
 
+  test:
+    description: "Check what `moon run worker:setup` decides (scripts/setup-github.ts): the owner lookup, the secret listing, the app manifest, and the loopback page."
+    command: "node_modules/.bin/vitest run --dir scripts"
+    inputs:
+      - "scripts/**/*.ts"
+
   format:
     description: "Format the repository with oxfmt and Ultracite's settings."
     command: "node_modules/.bin/oxfmt ."

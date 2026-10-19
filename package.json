@@ -13,7 +13,8 @@
     "oxlint-tsgolint": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",
-    "ultracite": "catalog:"
+    "ultracite": "catalog:",
+    "vitest": "catalog:"
   },
   "engines": {
     "node": ">=26"
