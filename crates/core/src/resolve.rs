@@ -16,7 +16,7 @@
 
 use crate::error::{Error, ErrorKind};
 use crate::item::{ItemKind, Payload};
-use crate::profile::{ItemRef, OnConflict, Pin};
+use crate::profile::{ItemRef, OnConflict, Pin, Profile};
 use crate::revision::Revision;
 use crate::shelf::{Notice, NoticeCode, Shelf};
 use crate::target::{self, TargetClass};
@@ -60,10 +60,13 @@ pub struct CompileSettings {
 pub struct ResolvedItem {
     pub id: String,
     pub kind: ItemKind,
-    /// The revision this profile uses: the pin when there is one, otherwise
-    /// the item's current revision.
+    /// The revision this profile compiles. A pin must name the revision the
+    /// source holds (the load checks it), so this is the content compiled
+    /// whether the item is pinned or not, and the profile revision covers it.
     pub revision: Revision,
-    /// The item's revision in the shelf as loaded.
+    /// The item's revision in the shelf as loaded. Equal to `revision` for a
+    /// shelf loaded from files; a source that serves older snapshots could
+    /// make them differ.
     pub current: Revision,
     pub pinned: bool,
     pub origin: Origin,
@@ -98,7 +101,7 @@ pub(crate) fn resolve(shelf: &Shelf, id: &str) -> Result<ResolvedProfile, Vec<Er
     };
     let path = format!("profiles/{id}.json");
 
-    let order = breadth_first(shelf, id);
+    let order = breadth_first(&shelf.profiles, id);
 
     // Selected items, first profile in breadth-first order wins.
     let mut chosen: BTreeMap<String, (Option<Revision>, Origin)> = BTreeMap::new();
@@ -162,7 +165,7 @@ pub(crate) fn resolve(shelf: &Shelf, id: &str) -> Result<ResolvedProfile, Vec<Er
         }
     }
 
-    let compile = settings(shelf, &order, id);
+    let compile = settings(&shelf.profiles, id);
 
     let mut items = Vec::new();
     let mut notices = Vec::new();
@@ -170,20 +173,6 @@ pub(crate) fn resolve(shelf: &Shelf, id: &str) -> Result<ResolvedProfile, Vec<Er
         let Some(loaded) = shelf.items.get(&item_id) else {
             continue;
         };
-        if let Some(pin) = &pin
-            && pin != &loaded.revision
-        {
-            notices.push(Notice {
-                // The file that wrote the pin, which may be a parent profile
-                // or a bundle rather than the profile being resolved.
-                path: origin.declared_in(),
-                code: NoticeCode::StalePin,
-                message: format!(
-                    "`{item_id}` is pinned to {pin}, but its current revision is {}",
-                    loaded.revision
-                ),
-            });
-        }
         if loaded.kind() == ItemKind::Lsp {
             notices.push(Notice {
                 path: path.clone(),
@@ -234,12 +223,12 @@ pub(crate) fn resolve(shelf: &Shelf, id: &str) -> Result<ResolvedProfile, Vec<Er
 }
 
 /// The profile itself, then its parents level by level, each once.
-fn breadth_first(shelf: &Shelf, id: &str) -> Vec<String> {
+fn breadth_first(profiles: &BTreeMap<String, Profile>, id: &str) -> Vec<String> {
     let mut order = Vec::new();
     let mut seen = BTreeSet::from([id.to_owned()]);
     let mut queue = VecDeque::from([id.to_owned()]);
     while let Some(current) = queue.pop_front() {
-        if let Some(profile) = shelf.profiles.get(&current) {
+        if let Some(profile) = profiles.get(&current) {
             for parent in &profile.extends {
                 if seen.insert(parent.clone()) {
                     queue.push_back(parent.clone());
@@ -251,11 +240,12 @@ fn breadth_first(shelf: &Shelf, id: &str) -> Vec<String> {
     order
 }
 
-/// Each setting from the first profile in breadth-first order that sets it.
-fn settings(shelf: &Shelf, order: &[String], id: &str) -> CompileSettings {
-    let options: Vec<_> = order
+/// A profile's compile settings after `extends`: each setting from the first
+/// profile in breadth-first order that sets it, then the defaults.
+pub(crate) fn settings(profiles: &BTreeMap<String, Profile>, id: &str) -> CompileSettings {
+    let options: Vec<_> = breadth_first(profiles, id)
         .iter()
-        .filter_map(|profile| shelf.profiles.get(profile))
+        .filter_map(|profile| profiles.get(profile))
         .map(|profile| &profile.compile)
         .collect();
     macro_rules! first {

@@ -112,11 +112,77 @@
       "revision": "sha256-268865cb3e7fcb82edd0aa4b099d426b40955ecd07aa4de8c4b7d8415ccf828a"
     }
   },
+  "declared": {
+    "base": {
+      "$schema": "https://shelfkit.dev/schemas/profile.json",
+      "id": "base",
+      "title": "Base",
+      "items": [
+        "vue-cloudflare",
+        "drizzle@sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27"
+      ],
+      "bundles": [],
+      "extends": [],
+      "compile": {
+        "targets": [
+          "copilot",
+          "claude"
+        ],
+        "pin": "revision",
+        "onConflict": "fail"
+      }
+    },
+    "full": {
+      "$schema": "https://shelfkit.dev/schemas/profile.json",
+      "id": "full",
+      "title": "Everything",
+      "items": [
+        "pr-description",
+        "context7",
+        "playwright",
+        "linear",
+        "typescript-language-server",
+        "frontend-design",
+        "api-architect",
+        "release-tools",
+        "vue-sfc-patterns"
+      ],
+      "bundles": [
+        "code-quality"
+      ],
+      "extends": [
+        "base"
+      ],
+      "compile": {
+        "name": "full-stack",
+        "targets": [
+          "claude",
+          "copilot",
+          "cursor",
+          "codex",
+          "kiro"
+        ],
+        "allowNonconformantTargets": true
+      }
+    },
+    "minimal": {
+      "id": "minimal",
+      "title": "Minimal",
+      "items": [
+        "pr-description"
+      ],
+      "bundles": [],
+      "extends": [],
+      "compile": {
+        "pin": "latest"
+      }
+    }
+  },
   "profiles": {
     "base": {
       "id": "base",
       "path": "profiles/base.json",
-      "revision": "sha256-2bd03a335c85b93f4701dd0e2ca841635cd23b2400248fde3918202c1f1db5c3",
+      "revision": "sha256-59edd61460ec961e5d6a5b9e5e0c27f00cb9246694ba35f35cbb1db784a9e9df",
       "compile": {
         "name": "base",
         "targets": [
@@ -132,7 +198,7 @@
         {
           "id": "drizzle",
           "kind": "library",
-          "revision": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+          "revision": "sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27",
           "current": "sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27",
           "pinned": true,
           "origin": {
@@ -152,18 +218,12 @@
           }
         }
       ],
-      "notices": [
-        {
-          "path": "profiles/base.json",
-          "code": "stale-pin",
-          "message": "`drizzle` is pinned to sha256-0000000000000000000000000000000000000000000000000000000000000000, but its current revision is sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27"
-        }
-      ]
+      "notices": []
     },
     "full": {
       "id": "full",
       "path": "profiles/full.json",
-      "revision": "sha256-e48c4b11fe950db32d6a43fcef3b25aeb6bfdbf33316126e299d3aa0121bf5b5",
+      "revision": "sha256-04dd5e97077489cb42319e9ade109ce0da1c698b3f0f6e68faafe80c5a1f38e7",
       "compile": {
         "name": "full-stack",
         "targets": [
@@ -204,7 +264,7 @@
         {
           "id": "drizzle",
           "kind": "library",
-          "revision": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+          "revision": "sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27",
           "current": "sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27",
           "pinned": true,
           "origin": {
@@ -327,11 +387,6 @@
       ],
       "notices": [
         {
-          "path": "profiles/base.json",
-          "code": "stale-pin",
-          "message": "`drizzle` is pinned to sha256-0000000000000000000000000000000000000000000000000000000000000000, but its current revision is sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27"
-        },
-        {
           "path": "profiles/full.json",
           "code": "producer-nonconformant-target",
           "message": "target `kiro` is outside the OpenAPM v0.1 producer set, so this profile's manifest is Producer-nonconformant (opted in)"
@@ -372,11 +427,6 @@
     }
   },
   "check": [
-    {
-      "path": "profiles/base.json",
-      "code": "stale-pin",
-      "message": "`drizzle` is pinned to sha256-0000000000000000000000000000000000000000000000000000000000000000, but its current revision is sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27"
-    },
     {
       "path": "profiles/full.json",
       "code": "producer-nonconformant-target",

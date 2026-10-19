@@ -12,12 +12,20 @@ use crate::profile::{Bundle, ItemRef, Manifest, Profile};
 use crate::revision::{Revision, normalize_line_endings};
 use crate::secret;
 use crate::shelf::{LoadedItem, Shelf};
-use crate::source::{FileSource, check_path};
+use crate::source::{FileSource, Listing, check_path};
 use crate::target::{self, TargetClass};
 use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, BTreeSet};
 
 const SHELF_JSON: &str = "shelf.json";
+
+pub(crate) const NONCONFORMANT: &str = "is outside the OpenAPM v0.1 producer set; \
+    set `allowNonconformantTargets` to opt in";
+
+/// Files desktop operating systems drop into directories by themselves. They
+/// are ignored wherever they appear. Other dotfiles are content: a plugin's
+/// `.claude-plugin/` directory is part of the plugin.
+const OS_JUNK: &[&str] = &[".DS_Store", "Thumbs.db", "desktop.ini"];
 const ITEM_JSON: &str = "item.json";
 
 /// The agentskills.io frontmatter keys. Clients and uploaders reject any
@@ -45,8 +53,8 @@ pub fn load(source: &dyn FileSource) -> Result<Shelf, Errors> {
 
     let known_items: BTreeSet<&str> = item_dirs.keys().map(String::as_str).collect();
     loader.check_item_references(&items, &known_items, manifest.as_ref());
-    loader.check_bundles(&bundles, &known_items);
-    loader.check_profiles(&profiles, &bundles, &known_items);
+    loader.check_bundles(&bundles, &known_items, &items);
+    loader.check_profiles(&profiles, &bundles, &known_items, &items);
     if let Some(manifest) = &manifest {
         loader.check_manifest(manifest, &profiles);
     }
@@ -196,14 +204,15 @@ impl Loader<'_> {
     }
 
     fn list(&mut self, dir: &str) -> Vec<String> {
-        let mut paths = match self.source.list(dir) {
-            Ok(paths) => paths,
-            Err(error) => {
-                self.errors.push(error);
-                return Vec::new();
-            }
-        };
+        let Listing { mut paths, errors } = self.source.list(dir);
+        self.errors.extend(errors);
         paths.sort();
+        // Files an operating system writes on its own are not part of the
+        // shelf: hashing them would change a revision behind the author's back.
+        paths.retain(|path| {
+            let name = path.rsplit('/').next().unwrap_or_default();
+            !OS_JUNK.contains(&name)
+        });
         paths.retain(|path| match check_path(path) {
             Ok(()) => true,
             Err(error) => {
@@ -256,27 +265,33 @@ impl Loader<'_> {
         if item.title.trim().is_empty() {
             self.invalid(&path, "`title` must not be empty");
         }
-        for slug in &item.targets {
-            if let Err(reason) = target::classify(slug) {
-                self.push(
-                    &path,
-                    ErrorKind::Target {
-                        slug: slug.clone(),
-                        reason,
-                    },
-                );
-            }
-        }
+        self.targets(&path, &item.targets, item.allow_nonconformant_targets);
 
-        // Other JSON content is scanned for credentials too.
+        // Every other file is scanned for credentials too: JSON by field,
+        // other text by line. Content that is not UTF-8 is not text.
         for (name, content) in &files {
-            if name != ITEM_JSON && name.ends_with(".json") {
-                let file = format!("{dir}/{name}");
+            if name == ITEM_JSON {
+                continue;
+            }
+            let file = format!("{dir}/{name}");
+            if name.ends_with(".json") {
                 if let Some(value) = self.json_value(&file, content)
                     && matches!(name.as_str(), "hook.json" | "plugin.json")
                     && !value.is_object()
                 {
                     self.invalid(&file, "must be a JSON object");
+                }
+            } else if let Ok(text) = std::str::from_utf8(content) {
+                for (index, line) in text.lines().enumerate() {
+                    if let Some(reason) = secret::looks_like_credential(line) {
+                        self.push(
+                            &file,
+                            ErrorKind::Credential {
+                                field: format!("line {}", index + 1),
+                                reason: reason.to_owned(),
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -289,6 +304,27 @@ impl Loader<'_> {
             path: dir.to_owned(),
             files,
         })
+    }
+
+    /// Check target slugs as written: refused slugs fail, and a CLI-only slug
+    /// needs the opt-in. Profiles are checked again on their resolved
+    /// settings, where `extends` may supply either.
+    fn targets(&mut self, path: &str, slugs: &[String], opted_in: bool) {
+        for slug in slugs {
+            let reason = match target::classify(slug) {
+                Ok(TargetClass::Canonical) => continue,
+                Ok(TargetClass::CliOnly) if opted_in => continue,
+                Ok(TargetClass::CliOnly) => NONCONFORMANT.to_owned(),
+                Err(reason) => reason,
+            };
+            self.push(
+                path,
+                ErrorKind::Target {
+                    slug: slug.clone(),
+                    reason,
+                },
+            );
+        }
     }
 
     /// The checks that depend on the kind.
@@ -642,12 +678,37 @@ impl Loader<'_> {
         );
     }
 
-    /// Check an item list, and that no id appears twice with different pins.
-    fn check_refs(&mut self, path: &str, field: &str, refs: &[ItemRef], known: &BTreeSet<&str>) {
+    /// Check one file's item list: every id exists, no id is pinned two ways,
+    /// and every pin is a revision the source holds.
+    ///
+    /// A shelf loaded from files holds each item only at its current revision,
+    /// so a pin to any other revision cannot be compiled and fails the load.
+    /// Serving older revisions (from snapshots the hosted service keeps) is a
+    /// later concern; it would widen what this check accepts, nothing else.
+    fn check_refs(
+        &mut self,
+        path: &str,
+        field: &str,
+        refs: &[ItemRef],
+        known: &BTreeSet<&str>,
+        items: &BTreeMap<String, LoadedItem>,
+    ) {
         let mut seen: BTreeMap<&str, &ItemRef> = BTreeMap::new();
         for entry in refs {
             if !known.contains(entry.id.as_str()) {
                 self.unknown(path, field, "item", &entry.id);
+            }
+            if let (Some(pin), Some(loaded)) = (&entry.revision, items.get(&entry.id))
+                && pin != &loaded.revision
+            {
+                self.push(
+                    path,
+                    ErrorKind::RevisionMismatch {
+                        id: entry.id.clone(),
+                        expected: pin.to_string(),
+                        actual: loaded.revision.to_string(),
+                    },
+                );
             }
             if let Some(previous) = seen.insert(&entry.id, entry)
                 && previous.revision != entry.revision
@@ -664,9 +725,10 @@ impl Loader<'_> {
         &mut self,
         bundles: &BTreeMap<String, (String, Bundle)>,
         known: &BTreeSet<&str>,
+        items: &BTreeMap<String, LoadedItem>,
     ) {
         for (path, bundle) in bundles.values() {
-            self.check_refs(path, "items", &bundle.items, known);
+            self.check_refs(path, "items", &bundle.items, known, items);
         }
     }
 
@@ -675,18 +737,49 @@ impl Loader<'_> {
         profiles: &BTreeMap<String, (String, Profile)>,
         bundles: &BTreeMap<String, (String, Bundle)>,
         known: &BTreeSet<&str>,
+        items: &BTreeMap<String, LoadedItem>,
     ) {
-        for (path, profile) in profiles.values() {
-            // A profile's own entries are its items and its bundles' items,
-            // and one id may not be pinned two ways among them.
-            let mut own = profile.items.clone();
+        let by_id: BTreeMap<String, Profile> = profiles
+            .iter()
+            .map(|(id, (_, profile))| (id.clone(), profile.clone()))
+            .collect();
+
+        for (id, (path, profile)) in profiles {
+            // The profile's own list. A bundle's list is checked once, at the
+            // bundle's file, not again at every profile that names it.
+            self.check_refs(path, "items", &profile.items, known, items);
+
+            // Across files, one id may still not be pinned two ways: that is
+            // this profile's doing, so it is reported here.
+            let mut lists: Vec<(String, &[ItemRef])> =
+                vec![("`items`".to_owned(), profile.items.as_slice())];
             for bundle in &profile.bundles {
                 match bundles.get(bundle) {
-                    Some((_, b)) => own.extend(b.items.iter().cloned()),
+                    Some((_, b)) => lists.push((format!("bundle `{bundle}`"), b.items.as_slice())),
                     None => self.unknown(path, "bundles", "bundle", bundle),
                 }
             }
-            self.check_refs(path, "items", &own, known);
+            let mut first: BTreeMap<&str, (&str, &ItemRef)> = BTreeMap::new();
+            for (label, refs) in &lists {
+                for entry in *refs {
+                    match first.get(entry.id.as_str()) {
+                        Some((other, previous))
+                            if other != label && previous.revision != entry.revision =>
+                        {
+                            self.invalid(
+                                path.clone(),
+                                format!(
+                                    "{other} lists `{previous}` and {label} lists `{entry}`; pick one pin"
+                                ),
+                            );
+                        }
+                        Some(_) => {}
+                        None => {
+                            first.insert(&entry.id, (label, entry));
+                        }
+                    }
+                }
+            }
 
             for parent in &profile.extends {
                 if !profiles.contains_key(parent) {
@@ -694,23 +787,37 @@ impl Loader<'_> {
                 }
             }
 
-            let opted_in = profile.compile.allow_nonconformant_targets == Some(true);
-            for slug in profile.compile.targets.iter().flatten() {
-                let reason = match target::classify(slug) {
-                    Ok(TargetClass::Canonical) => continue,
-                    Ok(TargetClass::CliOnly) if opted_in => continue,
-                    Ok(TargetClass::CliOnly) => "is outside the OpenAPM v0.1 producer set; \
-                        set `compile.allowNonconformantTargets` to opt in"
-                        .to_owned(),
-                    Err(reason) => reason,
-                };
-                self.push(
-                    path,
-                    ErrorKind::Target {
-                        slug: slug.clone(),
-                        reason,
-                    },
-                );
+            // Refused slugs are reported where they are written. Whether a
+            // CLI-only slug is opted into depends on the resolved settings,
+            // since `extends` may supply the targets, the opt-in, or both.
+            let written = profile.compile.targets.clone().unwrap_or_default();
+            for slug in &written {
+                if let Err(reason) = target::classify(slug) {
+                    self.push(
+                        path.clone(),
+                        ErrorKind::Target {
+                            slug: slug.clone(),
+                            reason,
+                        },
+                    );
+                }
+            }
+            let resolved = crate::resolve::settings(&by_id, id);
+            if !resolved.allow_nonconformant_targets {
+                for slug in &resolved.targets {
+                    if target::classify(slug) == Ok(TargetClass::CliOnly) {
+                        self.push(
+                            path.clone(),
+                            ErrorKind::Target {
+                                slug: slug.clone(),
+                                reason: NONCONFORMANT.replace(
+                                    "set `allowNonconformantTargets`",
+                                    "set `compile.allowNonconformantTargets` here or in a profile it extends",
+                                ),
+                            },
+                        );
+                    }
+                }
             }
             if profile
                 .compile
@@ -718,7 +825,7 @@ impl Loader<'_> {
                 .as_deref()
                 .is_some_and(|n| n.trim().is_empty())
             {
-                self.invalid(path, "`compile.name` must not be empty");
+                self.invalid(path.clone(), "`compile.name` must not be empty");
             }
         }
     }
@@ -755,58 +862,62 @@ impl Loader<'_> {
         }
     }
 
-    /// Report every `extends` cycle once, at the profile with the smallest id
-    /// in it, as the chain that closes it.
+    /// Report `extends` cycles at the profile with the smallest id in each, as
+    /// the chain that closes it. A depth-first walk that visits each profile
+    /// once: linear in profiles and edges.
     fn check_cycles(&mut self, profiles: &BTreeMap<String, (String, Profile)>) {
-        let mut reported: BTreeSet<Vec<String>> = BTreeSet::new();
+        let mut finished: BTreeSet<String> = BTreeSet::new();
+        let mut cycles: BTreeSet<Vec<String>> = BTreeSet::new();
         for start in profiles.keys() {
-            let mut stack = vec![start.clone()];
-            self.walk(profiles, &mut stack, &mut reported);
+            let mut stack = Vec::new();
+            walk(profiles, start, &mut stack, &mut finished, &mut cycles);
         }
-        for cycle in reported {
+        for cycle in cycles {
             let Some(first) = cycle.first() else { continue };
             if let Some((path, _)) = profiles.get(first) {
                 self.push(path.clone(), ErrorKind::ExtendsCycle(cycle));
             }
         }
     }
+}
 
-    fn walk(
-        &self,
-        profiles: &BTreeMap<String, (String, Profile)>,
-        stack: &mut Vec<String>,
-        reported: &mut BTreeSet<Vec<String>>,
-    ) {
-        let Some(current) = stack.last().cloned() else {
-            return;
-        };
-        let Some((_, profile)) = profiles.get(&current) else {
-            return;
-        };
-        for parent in &profile.extends {
-            if let Some(position) = stack.iter().position(|id| id == parent) {
-                // Rotate so the chain starts at its smallest id: one cycle,
-                // one report, however it was entered.
-                let mut cycle: Vec<String> = stack[position..].to_vec();
-                if let Some(min) = cycle
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, id)| *id)
-                    .map(|(i, _)| i)
-                {
-                    cycle.rotate_left(min);
-                }
-                if let Some(first) = cycle.first().cloned() {
-                    cycle.push(first);
-                }
-                reported.insert(cycle);
-            } else if profiles.contains_key(parent) {
-                stack.push(parent.clone());
-                self.walk(profiles, stack, reported);
-                stack.pop();
+fn walk(
+    profiles: &BTreeMap<String, (String, Profile)>,
+    current: &str,
+    stack: &mut Vec<String>,
+    finished: &mut BTreeSet<String>,
+    cycles: &mut BTreeSet<Vec<String>>,
+) {
+    if finished.contains(current) {
+        return;
+    }
+    let Some((_, profile)) = profiles.get(current) else {
+        return;
+    };
+    stack.push(current.to_owned());
+    for parent in &profile.extends {
+        if let Some(position) = stack.iter().position(|id| id == parent) {
+            // Rotate so the chain starts at its smallest id: one cycle, one
+            // report, however it was entered.
+            let mut cycle: Vec<String> = stack[position..].to_vec();
+            if let Some(min) = cycle
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, id)| *id)
+                .map(|(i, _)| i)
+            {
+                cycle.rotate_left(min);
             }
+            if let Some(first) = cycle.first().cloned() {
+                cycle.push(first);
+            }
+            cycles.insert(cycle);
+        } else {
+            walk(profiles, parent, stack, finished, cycles);
         }
     }
+    stack.pop();
+    finished.insert(current.to_owned());
 }
 
 fn is_http_url(value: &str) -> bool {

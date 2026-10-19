@@ -4,7 +4,7 @@
   "title": "Base",
   "items": [
     "vue-cloudflare",
-    "drizzle@sha256-0000000000000000000000000000000000000000000000000000000000000000"
+    "drizzle@sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27"
   ],
   "compile": {
     "targets": [

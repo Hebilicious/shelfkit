@@ -63,14 +63,12 @@ pub struct Notice {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NoticeCode {
-    /// A profile opted into a CLI-only target, so its manifest is
-    /// Producer-nonconformant under OpenAPM v0.1.
+    /// A profile or an item opted into a CLI-only target, so a manifest
+    /// that uses it is Producer-nonconformant under OpenAPM v0.1.
     ProducerNonconformantTarget,
     /// A profile includes an `lsp` item, whose `dependencies.lsp` key is
     /// absent from the published OpenAPM v0.1 schema.
     UnratifiedLsp,
-    /// A profile pins a revision that is not the item's current one.
-    StalePin,
 }
 
 impl std::fmt::Display for Notice {
@@ -98,6 +96,19 @@ impl Shelf {
             .filter_map(|id| crate::resolve::resolve(self, id).ok())
             .flat_map(|resolved| resolved.notices)
             .collect();
+        for loaded in self.items.values() {
+            for slug in &loaded.item.targets {
+                if crate::target::classify(slug) == Ok(crate::target::TargetClass::CliOnly) {
+                    notices.push(Notice {
+                        path: loaded.item_json(),
+                        code: NoticeCode::ProducerNonconformantTarget,
+                        message: format!(
+                            "target `{slug}` is outside the OpenAPM v0.1 producer set (opted in)"
+                        ),
+                    });
+                }
+            }
+        }
         notices.sort();
         notices.dedup();
         notices

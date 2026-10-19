@@ -33,4 +33,4 @@ pub use profile::{Bundle, CompileOptions, ItemRef, Manifest, OnConflict, Pin, Pr
 pub use resolve::{CompileSettings, Origin, ResolvedItem, ResolvedProfile};
 pub use revision::Revision;
 pub use shelf::{LoadedItem, Notice, NoticeCode, Shelf};
-pub use source::{DirSource, FileSource, MemorySource};
+pub use source::{DirSource, FileSource, Listing, MemorySource};

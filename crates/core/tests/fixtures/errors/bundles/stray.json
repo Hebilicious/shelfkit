@@ -2,6 +2,7 @@
   "id": "stray",
   "title": "Stray",
   "items": [
-    "ghost-in-bundle"
+    "ghost-in-bundle",
+    "no-body@sha256-2222222222222222222222222222222222222222222222222222222222222222"
   ]
 }

@@ -14,10 +14,22 @@ pub trait FileSource {
     /// Every file under `dir`, recursively, as paths relative to the shelf
     /// root (`items/prompts/x/item.json`). A missing directory is empty, not
     /// an error. Order does not matter: the loader sorts.
-    fn list(&self, dir: &str) -> Result<Vec<String>>;
+    ///
+    /// An entry the source cannot use (a symbolic link, a name that is not
+    /// UTF-8, one it cannot read) is left out and reported in
+    /// [`Listing::errors`], so one bad file costs one error and the rest of
+    /// the shelf still loads and validates.
+    fn list(&self, dir: &str) -> Listing;
 
     /// The bytes of one file, by its path relative to the shelf root.
     fn read(&self, path: &str) -> Result<Vec<u8>>;
+}
+
+/// The files under one directory, and the entries that could not be listed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Listing {
+    pub paths: Vec<String>,
+    pub errors: Vec<Error>,
 }
 
 /// A shelf held in memory, keyed by relative path. This is what WASM callers
@@ -45,7 +57,11 @@ impl MemorySource {
     pub fn snapshot(source: &dyn FileSource, dirs: &[&str]) -> Result<Self> {
         let mut memory = Self::new();
         for dir in dirs {
-            for path in source.list(dir)? {
+            let listing = source.list(dir);
+            if let Some(error) = listing.errors.into_iter().next() {
+                return Err(error);
+            }
+            for path in listing.paths {
                 let bytes = source.read(&path)?;
                 memory.insert(path, bytes);
             }
@@ -65,14 +81,17 @@ impl<P: Into<String>, B: Into<Vec<u8>>> FromIterator<(P, B)> for MemorySource {
 }
 
 impl FileSource for MemorySource {
-    fn list(&self, dir: &str) -> Result<Vec<String>> {
+    fn list(&self, dir: &str) -> Listing {
         let prefix = format!("{}/", dir.trim_end_matches('/'));
-        Ok(self
-            .files
-            .keys()
-            .filter(|path| path.starts_with(&prefix))
-            .cloned()
-            .collect())
+        Listing {
+            paths: self
+                .files
+                .keys()
+                .filter(|path| path.starts_with(&prefix))
+                .cloned()
+                .collect(),
+            errors: Vec::new(),
+        }
     }
 
     fn read(&self, path: &str) -> Result<Vec<u8>> {
@@ -102,50 +121,71 @@ impl DirSource {
         &self.root
     }
 
+    /// `path` relative to the shelf root, with `/` separators. A component
+    /// that is not UTF-8 is written lossily, for the message, and refused.
     fn relative(&self, path: &Path) -> Result<String> {
-        let display = path.display().to_string();
-        let relative = path
-            .strip_prefix(&self.root)
-            .map_err(|_| Error::new(&display, ErrorKind::Path("outside the shelf".into())))?;
-        let mut parts = Vec::new();
-        for component in relative.components() {
-            let part = component.as_os_str().to_str().ok_or_else(|| {
-                Error::new(&display, ErrorKind::Path("file name is not UTF-8".into()))
-            })?;
-            parts.push(part);
+        let relative = path.strip_prefix(&self.root).unwrap_or(path);
+        let lossy: Vec<String> = relative
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        let joined = lossy.join("/");
+        if relative
+            .components()
+            .any(|component| component.as_os_str().to_str().is_none())
+        {
+            return Err(Error::new(
+                joined,
+                ErrorKind::Path("file name is not UTF-8".into()),
+            ));
         }
-        Ok(parts.join("/"))
+        Ok(joined)
     }
 }
 
 impl FileSource for DirSource {
-    fn list(&self, dir: &str) -> Result<Vec<String>> {
+    fn list(&self, dir: &str) -> Listing {
+        let mut listing = Listing::default();
         let base = self.root.join(dir);
         if !base.is_dir() {
-            return Ok(Vec::new());
+            return listing;
         }
 
-        let mut paths = Vec::new();
         for entry in walkdir::WalkDir::new(&base).follow_links(false) {
-            let entry = entry.map_err(|error| {
-                let path = error
-                    .path()
-                    .map_or_else(|| dir.to_owned(), |p| p.display().to_string());
-                Error::new(path, ErrorKind::Read(error.to_string()))
-            })?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    let path = error.path().map_or_else(
+                        || dir.to_owned(),
+                        |p| self.relative(p).unwrap_or_else(|e| e.path),
+                    );
+                    listing
+                        .errors
+                        .push(Error::new(path, ErrorKind::Read(error.to_string())));
+                    continue;
+                }
+            };
             let file_type = entry.file_type();
+            if !file_type.is_symlink() && !file_type.is_file() {
+                continue;
+            }
+            let path = match self.relative(entry.path()) {
+                Ok(path) => path,
+                Err(error) => {
+                    listing.errors.push(error);
+                    continue;
+                }
+            };
             if file_type.is_symlink() {
-                let path = self.relative(entry.path())?;
-                return Err(Error::new(
+                listing.errors.push(Error::new(
                     path,
                     ErrorKind::Path("symbolic links are not allowed in a shelf".into()),
                 ));
-            }
-            if file_type.is_file() {
-                paths.push(self.relative(entry.path())?);
+            } else {
+                listing.paths.push(path);
             }
         }
-        Ok(paths)
+        listing
     }
 
     fn read(&self, path: &str) -> Result<Vec<u8>> {
@@ -187,8 +227,8 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        assert_eq!(source.list("items").unwrap(), vec!["items/a/item.json"]);
-        assert!(source.list("bundles").unwrap().is_empty());
+        assert_eq!(source.list("items").paths, vec!["items/a/item.json"]);
+        assert!(source.list("bundles").paths.is_empty());
     }
 
     #[test]

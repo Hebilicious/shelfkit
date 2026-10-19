@@ -207,6 +207,9 @@ pub struct Item {
     pub description: String,
     pub tags: Vec<String>,
     pub targets: Vec<String>,
+    /// The explicit opt-in for CLI-only slugs in `targets`, as on a profile.
+    /// `check` reports every item that uses it.
+    pub allow_nonconformant_targets: bool,
     /// Items this one needs. Resolution pulls them into every profile that
     /// selects this item.
     pub requires: Vec<String>,
@@ -230,6 +233,8 @@ struct Common {
     tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     targets: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    allow_nonconformant_targets: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     requires: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -244,6 +249,7 @@ const COMMON_KEYS: &[&str] = &[
     "description",
     "tags",
     "targets",
+    "allowNonconformantTargets",
     "requires",
     "source",
 ];
@@ -279,6 +285,7 @@ impl Item {
             description: common.description,
             tags: common.tags,
             targets: common.targets,
+            allow_nonconformant_targets: common.allow_nonconformant_targets,
             requires: common.requires,
             source: common.source,
             payload,
@@ -310,6 +317,11 @@ impl Serialize for Item {
             tags: &'a [String],
             #[serde(skip_serializing_if = "<[String]>::is_empty")]
             targets: &'a [String],
+            #[serde(
+                rename = "allowNonconformantTargets",
+                skip_serializing_if = "std::ops::Not::not"
+            )]
+            allow_nonconformant_targets: bool,
             #[serde(skip_serializing_if = "<[String]>::is_empty")]
             requires: &'a [String],
             #[serde(flatten)]
@@ -326,6 +338,7 @@ impl Serialize for Item {
             description: &self.description,
             tags: &self.tags,
             targets: &self.targets,
+            allow_nonconformant_targets: self.allow_nonconformant_targets,
             requires: &self.requires,
             payload: &self.payload,
             source: &self.source,

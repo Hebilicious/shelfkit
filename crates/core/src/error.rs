@@ -79,7 +79,10 @@ pub enum ErrorKind {
     #[error("target `{slug}`: {reason}")]
     Target { slug: String, reason: String },
 
-    #[error("revision mismatch for `{id}`: expected {expected}, computed {actual}")]
+    #[error(
+        "`{id}` is pinned to {expected}, but the shelf holds it only at its current revision \
+         {actual}; update the pin"
+    )]
     RevisionMismatch {
         id: String,
         expected: String,

@@ -1,0 +1,8 @@
+{
+  "id": "kiro-only",
+  "kind": "prompt",
+  "title": "Kiro only",
+  "targets": [
+    "kiro"
+  ]
+}
