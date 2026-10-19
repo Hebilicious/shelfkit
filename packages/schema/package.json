@@ -4,12 +4,20 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./catalog": "./src/catalog.ts",
+    "./json-schema": "./src/json-schema.ts"
   },
   "dependencies": {
+    "@acid-cat/core-ts": "catalog:",
+    "@acid-cat/spec-ts": "catalog:",
+    "@valibot/to-json-schema": "catalog:",
     "valibot": "catalog:"
   },
   "devDependencies": {
-    "typescript": "catalog:"
+    "@acid-cat/cli": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

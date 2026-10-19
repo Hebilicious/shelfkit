@@ -1,0 +1,2189 @@
+{
+  "acidcat": "0.1",
+  "title": "ShelfKit",
+  "description": "A shelf of curated agent context: skills, prompts, instructions, agents, hooks, plugins, MCP servers, language servers, libraries, and stacks, composed into profiles. Find what fits a repository, read it, and plan the apm.yml that installs a profile. ShelfKit plans and never writes; you write the files, APM installs.",
+  "targets": {
+    "mcp": {
+      "bindings": [
+        "mcp"
+      ]
+    }
+  },
+  "$defs": {
+    "CompileSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "allowNonconformantTargets": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "onConflict": {
+          "enum": [
+            "fail",
+            "shelf-wins",
+            "local-wins"
+          ],
+          "type": "string"
+        },
+        "pin": {
+          "enum": [
+            "revision",
+            "latest"
+          ],
+          "type": "string"
+        },
+        "targets": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "vendorAuthored": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "allowNonconformantTargets",
+        "name",
+        "onConflict",
+        "pin",
+        "targets",
+        "vendorAuthored"
+      ],
+      "type": "object"
+    },
+    "Item": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "$schema": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "skill"
+            },
+            "requires": {
+              "items": {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "source": {
+              "$ref": "#/$defs/Source"
+            },
+            "tags": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "targets": {
+              "items": {
+                "pattern": "^[a-z][a-z0-9-]*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "$schema": {
+              "type": "string"
+            },
+            "asCommand": {
+              "type": "boolean"
+            },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "prompt"
+            },
+            "requires": {
+              "items": {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "source": {
+              "$ref": "#/$defs/Source"
+            },
+            "tags": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "targets": {
+              "items": {
+                "pattern": "^[a-z][a-z0-9-]*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "variables": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "default": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "required": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "$schema": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "instructions"
+            },
+            "markers": {
+              "$ref": "#/$defs/Markers"
+            },
+            "requires": {
+              "items": {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "sections": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "body": {
+                    "type": "string"
+                  },
+                  "heading": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "body",
+                  "heading"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "source": {
+              "$ref": "#/$defs/Source"
+            },
+            "tags": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "targets": {
+              "items": {
+                "pattern": "^[a-z][a-z0-9-]*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "$schema": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "agent"
+            },
+            "requires": {
+              "items": {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "source": {
+              "$ref": "#/$defs/Source"
+            },
+            "tags": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "targets": {
+              "items": {
+                "pattern": "^[a-z][a-z0-9-]*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "$schema": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "hook"
+            },
+            "requires": {
+              "items": {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "source": {
+              "$ref": "#/$defs/Source"
+            },
+            "tags": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "targets": {
+              "items": {
+                "pattern": "^[a-z][a-z0-9-]*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "$schema": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "plugin"
+            },
+            "requires": {
+              "items": {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "source": {
+              "$ref": "#/$defs/Source"
+            },
+            "tags": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "targets": {
+              "items": {
+                "pattern": "^[a-z][a-z0-9-]*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "$schema": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "flavour": {
+                  "const": "remote"
+                },
+                "headers": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "secret": {
+                            "pattern": "^[A-Z][A-Z0-9_]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "secret"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "id": {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "mcp"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "requires": {
+                  "items": {
+                    "maxLength": 64,
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "source": {
+                  "$ref": "#/$defs/Source"
+                },
+                "tags": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "targets": {
+                  "items": {
+                    "pattern": "^[a-z][a-z0-9-]*$",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "title": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "tools": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "transport": {
+                  "enum": [
+                    "http",
+                    "sse",
+                    "streamable-http"
+                  ],
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "flavour",
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "$schema": {
+                  "type": "string"
+                },
+                "args": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "command": {
+                  "type": "string"
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "env": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "secret": {
+                            "pattern": "^[A-Z][A-Z0-9_]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "secret"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "flavour": {
+                  "const": "stdio"
+                },
+                "id": {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "mcp"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "requires": {
+                  "items": {
+                    "maxLength": 64,
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "source": {
+                  "$ref": "#/$defs/Source"
+                },
+                "tags": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "targets": {
+                  "items": {
+                    "pattern": "^[a-z][a-z0-9-]*$",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "title": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "tools": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "command",
+                "flavour",
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "$schema": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "flavour": {
+                  "const": "hosted"
+                },
+                "headers": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "secret": {
+                            "pattern": "^[A-Z][A-Z0-9_]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "secret"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "id": {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "mcp"
+                },
+                "requires": {
+                  "items": {
+                    "maxLength": 64,
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "source": {
+                  "$ref": "#/$defs/Source"
+                },
+                "tags": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "targets": {
+                  "items": {
+                    "pattern": "^[a-z][a-z0-9-]*$",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "title": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "tools": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "transport": {
+                  "enum": [
+                    "http",
+                    "sse",
+                    "streamable-http"
+                  ],
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "flavour",
+                "kind",
+                "url"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "$schema": {
+              "type": "string"
+            },
+            "args": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "command": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "env": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "secret": {
+                        "pattern": "^[A-Z][A-Z0-9_]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "secret"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "propertyNames": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "extensionToLanguage": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "propertyNames": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "id": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            "initializationOptions": {},
+            "kind": {
+              "const": "lsp"
+            },
+            "maxRestarts": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "requires": {
+              "items": {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "restartOnCrash": {
+              "type": "boolean"
+            },
+            "settings": {},
+            "shutdownTimeout": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "source": {
+              "$ref": "#/$defs/Source"
+            },
+            "startupTimeout": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tags": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "targets": {
+              "items": {
+                "pattern": "^[a-z][a-z0-9-]*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "transport": {
+              "enum": [
+                "stdio",
+                "socket"
+              ],
+              "type": "string"
+            },
+            "workspaceFolder": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "command",
+            "extensionToLanguage",
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "$schema": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "detect": {
+              "$ref": "#/$defs/Markers"
+            },
+            "docs": {
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "library"
+            },
+            "notes": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "requires": {
+              "items": {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "source": {
+              "$ref": "#/$defs/Source"
+            },
+            "tags": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "targets": {
+              "items": {
+                "pattern": "^[a-z][a-z0-9-]*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "$schema": {
+              "type": "string"
+            },
+            "conventions": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "body": {
+                    "type": "string"
+                  },
+                  "heading": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "body",
+                  "heading"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "stack"
+            },
+            "markers": {
+              "$ref": "#/$defs/Markers"
+            },
+            "recommends": {
+              "items": {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "requires": {
+              "items": {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "source": {
+              "$ref": "#/$defs/Source"
+            },
+            "tags": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "targets": {
+              "items": {
+                "pattern": "^[a-z][a-z0-9-]*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "kind",
+            "markers"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ItemSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "skill",
+            "prompt",
+            "instructions",
+            "agent",
+            "hook",
+            "plugin",
+            "mcp",
+            "lsp",
+            "library",
+            "stack"
+          ],
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^sha256-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "id",
+        "kind",
+        "revision",
+        "tags",
+        "title"
+      ],
+      "type": "object"
+    },
+    "Markers": {
+      "additionalProperties": false,
+      "properties": {
+        "dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "packageManager": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "Notice": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "producer-nonconformant-target",
+            "unratified-lsp",
+            "stale-pin"
+          ],
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "path"
+      ],
+      "type": "object"
+    },
+    "ProfileSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^sha256-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "id",
+        "revision",
+        "title"
+      ],
+      "type": "object"
+    },
+    "ResolvedItem": {
+      "additionalProperties": false,
+      "properties": {
+        "current": {
+          "pattern": "^sha256-[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "skill",
+            "prompt",
+            "instructions",
+            "agent",
+            "hook",
+            "plugin",
+            "mcp",
+            "lsp",
+            "library",
+            "stack"
+          ],
+          "type": "string"
+        },
+        "origin": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "profile": {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                "via": {
+                  "const": "profile"
+                }
+              },
+              "required": [
+                "profile",
+                "via"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "bundle": {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                "profile": {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                "via": {
+                  "const": "bundle"
+                }
+              },
+              "required": [
+                "bundle",
+                "profile",
+                "via"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "item": {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                "via": {
+                  "const": "requires"
+                }
+              },
+              "required": [
+                "item",
+                "via"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "revision": {
+          "pattern": "^sha256-[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "current",
+        "id",
+        "kind",
+        "origin",
+        "pinned",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ResolvedProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "compile": {
+          "$ref": "#/$defs/CompileSettings"
+        },
+        "id": {
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ResolvedItem"
+          },
+          "type": "array"
+        },
+        "notices": {
+          "items": {
+            "$ref": "#/$defs/Notice"
+          },
+          "type": "array"
+        },
+        "path": {
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^sha256-[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "compile",
+        "id",
+        "items",
+        "notices",
+        "path",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "properties": {
+        "creditText": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "license": {
+          "type": "string"
+        },
+        "licenseId": {
+          "type": "string"
+        },
+        "linkTarget": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "recordUrl": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "resolvedCommit": {
+          "type": "string"
+        },
+        "shareAlike": {
+          "type": "boolean"
+        },
+        "url": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    }
+  },
+  "capabilities": {
+    "shelf.compile.plan": {
+      "description": "Plan the compile of one profile: the apm.yml to write, the vendored files, the install command, and the notes to pass on to the user. It changes nothing: ShelfKit plans, the agent writes the files, APM installs. Report the result with shelf.report.",
+      "audience": [
+        "mcp"
+      ],
+      "input": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "shelf": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shelf",
+          "profile"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "additionalProperties": false,
+        "properties": {
+          "apmYml": {
+            "type": "string"
+          },
+          "apmYmlDigest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "contents": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "contents",
+                "path"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "installCommand": {
+            "type": "string"
+          },
+          "notes": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "enum": [
+                    "producer-nonconformant-target",
+                    "unratified-lsp",
+                    "stale-pin",
+                    "hook-approval"
+                  ],
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "message",
+                "path"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "profile": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "profileRevision": {
+            "pattern": "^sha256-[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "apmYml",
+          "apmYmlDigest",
+          "files",
+          "installCommand",
+          "notes",
+          "profile",
+          "profileRevision"
+        ],
+        "type": "object"
+      },
+      "failures": {
+        "CompileFailed": {
+          "additionalProperties": false,
+          "properties": {
+            "_tag": {
+              "const": "CompileFailed"
+            },
+            "errors": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "message",
+                  "path"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "errors",
+            "_tag",
+            "message"
+          ],
+          "type": "object"
+        },
+        "ProfileNotFound": {
+          "additionalProperties": false,
+          "properties": {
+            "_tag": {
+              "const": "ProfileNotFound"
+            },
+            "message": {
+              "type": "string"
+            },
+            "profile": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "profile",
+            "_tag",
+            "message"
+          ],
+          "type": "object"
+        },
+        "ShelfNotFound": {
+          "additionalProperties": false,
+          "properties": {
+            "_tag": {
+              "const": "ShelfNotFound"
+            },
+            "message": {
+              "type": "string"
+            },
+            "shelf": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "shelf",
+            "_tag",
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "readOnly": true
+    },
+    "shelf.item.get": {
+      "description": "Read one item: its item.json, its revision, and its files. Name it as `id` for the current revision, or `id@sha256-…` for a pinned one.",
+      "audience": [
+        "mcp"
+      ],
+      "input": {
+        "additionalProperties": false,
+        "properties": {
+          "item": {
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:@sha256-[0-9a-f]{64})?$",
+            "type": "string"
+          },
+          "shelf": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shelf",
+          "item"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "contents": {
+                  "type": "string"
+                },
+                "encoding": {
+                  "enum": [
+                    "utf-8",
+                    "base64"
+                  ],
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "contents",
+                "encoding",
+                "path"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "item": {
+            "$ref": "#/$defs/Item"
+          },
+          "path": {
+            "type": "string"
+          },
+          "revision": {
+            "pattern": "^sha256-[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "files",
+          "item",
+          "path",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "failures": {
+        "ItemNotFound": {
+          "additionalProperties": false,
+          "properties": {
+            "_tag": {
+              "const": "ItemNotFound"
+            },
+            "item": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "item",
+            "_tag",
+            "message"
+          ],
+          "type": "object"
+        },
+        "RevisionNotFound": {
+          "additionalProperties": false,
+          "properties": {
+            "_tag": {
+              "const": "RevisionNotFound"
+            },
+            "item": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "revision": {
+              "pattern": "^sha256-[0-9a-f]{64}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "item",
+            "revision",
+            "_tag",
+            "message"
+          ],
+          "type": "object"
+        },
+        "ShelfNotFound": {
+          "additionalProperties": false,
+          "properties": {
+            "_tag": {
+              "const": "ShelfNotFound"
+            },
+            "message": {
+              "type": "string"
+            },
+            "shelf": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "shelf",
+            "_tag",
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "readOnly": true
+    },
+    "shelf.profile.get": {
+      "description": "Read one profile: what it declares, and its resolution, with bundles, extends, and requires expanded, each item's revision and origin, and the notices shelfkit check reports for it.",
+      "audience": [
+        "mcp"
+      ],
+      "input": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "shelf": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shelf",
+          "profile"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "additionalProperties": false,
+            "properties": {
+              "bundles": {
+                "items": {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "description": {
+                "type": "string"
+              },
+              "extends": {
+                "items": {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "id": {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "items": {
+                "items": {
+                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:@sha256-[0-9a-f]{64})?$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "bundles",
+              "description",
+              "extends",
+              "id",
+              "items",
+              "title"
+            ],
+            "type": "object"
+          },
+          "resolution": {
+            "$ref": "#/$defs/ResolvedProfile"
+          }
+        },
+        "required": [
+          "profile",
+          "resolution"
+        ],
+        "type": "object"
+      },
+      "failures": {
+        "ProfileNotFound": {
+          "additionalProperties": false,
+          "properties": {
+            "_tag": {
+              "const": "ProfileNotFound"
+            },
+            "message": {
+              "type": "string"
+            },
+            "profile": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "profile",
+            "_tag",
+            "message"
+          ],
+          "type": "object"
+        },
+        "ShelfNotFound": {
+          "additionalProperties": false,
+          "properties": {
+            "_tag": {
+              "const": "ShelfNotFound"
+            },
+            "message": {
+              "type": "string"
+            },
+            "shelf": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "shelf",
+            "_tag",
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "readOnly": true
+    },
+    "shelf.recommend": {
+      "description": "Recommend items and profiles for a repository from its stack markers: the files at its root, the package names in its dependency manifests, and its package manager. Stacks and libraries match on their markers, and a matched stack brings the items it recommends.",
+      "audience": [
+        "mcp"
+      ],
+      "input": {
+        "additionalProperties": false,
+        "properties": {
+          "markers": {
+            "$ref": "#/$defs/Markers"
+          },
+          "shelf": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shelf",
+          "markers"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "item": {
+                  "$ref": "#/$defs/ItemSummary"
+                },
+                "matched": {
+                  "$ref": "#/$defs/Markers"
+                },
+                "recommendedBy": {
+                  "items": {
+                    "maxLength": 64,
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "item",
+                "matched",
+                "recommendedBy"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "profiles": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "items": {
+                  "items": {
+                    "maxLength": 64,
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "profile": {
+                  "$ref": "#/$defs/ProfileSummary"
+                }
+              },
+              "required": [
+                "items",
+                "profile"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "profiles"
+        ],
+        "type": "object"
+      },
+      "failures": {
+        "ShelfNotFound": {
+          "additionalProperties": false,
+          "properties": {
+            "_tag": {
+              "const": "ShelfNotFound"
+            },
+            "message": {
+              "type": "string"
+            },
+            "shelf": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "shelf",
+            "_tag",
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "readOnly": true
+    },
+    "shelf.report": {
+      "description": "Record that a plan from shelf.compile.plan was applied to a repository: the profile and revision, the digest of the apm.yml written, and the outcome. This writes an activity record and nothing else. Returns whether the profile has moved on since.",
+      "audience": [
+        "mcp"
+      ],
+      "input": {
+        "additionalProperties": false,
+        "properties": {
+          "apmYmlDigest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "commit": {
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "applied",
+              "installed",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "profile": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "profileRevision": {
+            "pattern": "^sha256-[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "repository": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "shelf": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shelf",
+          "apmYmlDigest",
+          "outcome",
+          "profile",
+          "profileRevision",
+          "repository"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "additionalProperties": false,
+        "properties": {
+          "currentRevision": {
+            "pattern": "^sha256-[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "recordedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "currentRevision",
+          "id",
+          "recordedAt",
+          "stale"
+        ],
+        "type": "object"
+      },
+      "failures": {
+        "Forbidden": {
+          "additionalProperties": false,
+          "properties": {
+            "_tag": {
+              "const": "Forbidden"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "_tag",
+            "message"
+          ],
+          "type": "object"
+        },
+        "ProfileNotFound": {
+          "additionalProperties": false,
+          "properties": {
+            "_tag": {
+              "const": "ProfileNotFound"
+            },
+            "message": {
+              "type": "string"
+            },
+            "profile": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "profile",
+            "_tag",
+            "message"
+          ],
+          "type": "object"
+        },
+        "ShelfNotFound": {
+          "additionalProperties": false,
+          "properties": {
+            "_tag": {
+              "const": "ShelfNotFound"
+            },
+            "message": {
+              "type": "string"
+            },
+            "shelf": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "shelf",
+            "_tag",
+            "message"
+          ],
+          "type": "object"
+        }
+      }
+    },
+    "shelf.search": {
+      "description": "Search one shelf's items by text over titles, descriptions, tags, and prompt bodies. Filter by kind and tag. Returns summaries; read an item with shelf.item.get.",
+      "audience": [
+        "mcp"
+      ],
+      "input": {
+        "additionalProperties": false,
+        "properties": {
+          "kinds": {
+            "items": {
+              "enum": [
+                "skill",
+                "prompt",
+                "instructions",
+                "agent",
+                "hook",
+                "plugin",
+                "mcp",
+                "lsp",
+                "library",
+                "stack"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "shelf": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "shelf",
+          "query"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "item": {
+                  "$ref": "#/$defs/ItemSummary"
+                },
+                "snippet": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "item"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "failures": {
+        "ShelfNotFound": {
+          "additionalProperties": false,
+          "properties": {
+            "_tag": {
+              "const": "ShelfNotFound"
+            },
+            "message": {
+              "type": "string"
+            },
+            "shelf": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "shelf",
+            "_tag",
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "readOnly": true
+    }
+  }
+}
