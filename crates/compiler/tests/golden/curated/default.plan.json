@@ -1,6 +1,6 @@
 {
   "profile": "default",
-  "profileRevision": "sha256-16f55692f1f43eb6203bc3f4d8b2950ee61ea54939050581d8148570bc458144",
+  "profileRevision": "sha256-56e94ada4ff635ff2ec8c3b62846d7caa7b17801229a74ba24bb945025f3fa96",
   "apmYml": "name: default\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - copilot\nregistries:\n  hebilicious:\n    url: \"https://shelfkit.hebilicious.workers.dev/apm\"\n  default: hebilicious\ndependencies:\n  apm:\n    - git: anthropics/skills/skills/brand-guidelines\n      ref: dbd4588f9e1033efb41dad4bef2f7947c8993d44\n    - git: github/awesome-copilot/agents/CSharpExpert.agent.md\n      ref: cb64ad12e32737ae764becd6885462e9b4c7cb00\n    - id: hebilicious/default\n      version: 0.0.0+sha256.5442bb8baa8df9529c0fb9ec3a2522aad89704c95f5455ac5b109386c7219de6\n    - git: github/awesome-copilot/instructions/rust.instructions.md\n      ref: cb64ad12e32737ae764becd6885462e9b4c7cb00\n    - ./vendor/default\n  mcp:\n    - name: io.github.github/github-mcp-server\n      registry: false\n      transport: streamable-http\n      url: \"https://api.githubcopilot.com/mcp/\"\n      headers:\n        Authorization: \"${GITHUB_MCP_SERVER_AUTHORIZATION}\"\n",
   "apmYmlDigest": "sha256:a28359ea7dc33cb51e874ca0cdf400f18e61f43d9431197df2954365ceb0f262",
   "files": [

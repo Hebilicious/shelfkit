@@ -13,6 +13,7 @@ const context = contextOf(github.fetch);
 
 const ANTHROPICS = "https://github.com/anthropics/skills";
 const HEAD = "dbd4588f9e1033efb41dad4bef2f7947c8993d44";
+const COPILOT = "cb64ad12e32737ae764becd6885462e9b4c7cb00";
 
 /** The brand-guidelines skill, pinned to `resolvedCommit`. */
 function pinnedItem(
@@ -177,17 +178,17 @@ describe("the git adapter over recorded GitHub answers", () => {
       expect(imported.warnings[0]).toContain("imported as a link");
     });
 
-    it("pins a single file of awesome-copilot (MIT) as a virtual-file dependency, with its content", async () => {
+    it("pins a single file of awesome-copilot (MIT) as a virtual-file dependency, with its content and the MIT notice", async () => {
       const repo = "https://github.com/github/awesome-copilot";
-      for (const [path, kind, file] of [
+      for (const [path, kind, files] of [
         [
           "instructions/rust.instructions.md",
           "instructions",
-          "AGENTS.fragment.md",
+          ["AGENTS.fragment.md", "LICENSE"],
         ],
-        ["agents/CSharpExpert.agent.md", "agent", "agent.md"],
+        ["agents/CSharpExpert.agent.md", "agent", ["LICENSE", "agent.md"]],
       ] as const) {
-        const source: ImportSource = { kind: "git", path, repo };
+        const source: ImportSource = { kind: "git", path, ref: COPILOT, repo };
         // oxlint-disable-next-line eslint/no-await-in-loop -- one recorded source at a time.
         const { candidate } = await only(source);
         expect(candidate).toMatchObject({
@@ -204,7 +205,9 @@ describe("the git adapter over recorded GitHub answers", () => {
           { candidate: candidate.key },
           context
         );
-        expect(imported.files.map((entry) => entry.path)).toStrictEqual([file]);
+        expect(imported.files.map((entry) => entry.path)).toStrictEqual([
+          ...files,
+        ]);
         expect(imported.item.source?.path).toBe(path);
         expect(imported.item.source?.resolvedCommit).toMatch(/^[0-9a-f]{40}$/u);
       }
@@ -252,6 +255,37 @@ describe("the git adapter over recorded GitHub answers", () => {
         context
       );
       expect(state.status).toBe("gone");
+    });
+  });
+
+  describe("drift for an awesome-copilot file pinned to a commit", () => {
+    it("measures a commit pin against the default branch, file by file", async () => {
+      const states = await Promise.all(
+        [
+          "instructions/rust.instructions.md",
+          "agents/CSharpExpert.agent.md",
+        ].map(
+          async (path) =>
+            await gitAdapter.checkUpstream(
+              {
+                id: "x",
+                kind: path.endsWith(".agent.md") ? "agent" : "instructions",
+                source: {
+                  path,
+                  ref: COPILOT,
+                  repo: "https://github.com/github/awesome-copilot",
+                  resolvedCommit: COPILOT,
+                },
+                title: "x",
+              },
+              context
+            )
+        )
+      );
+      for (const state of states) {
+        expect(state.latest?.ref).toBe("main");
+        expect(["current", "moved"]).toContain(state.status);
+      }
     });
   });
 });

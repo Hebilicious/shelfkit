@@ -151,10 +151,14 @@ export interface SourceAdapter {
     pick: Pick,
     context: AdapterContext
   ) => Promise<ImportedItem>;
-  /** Compare an imported item's pin with its upstream now. */
+  /**
+   * Compare an imported item's pin with its upstream now. `source` is the `shelf.json` source the item's `source.id`
+   * names, when it names one: it carries the secret name a private upstream needs.
+   */
   readonly checkUpstream: (
     item: Item,
-    context: AdapterContext
+    context: AdapterContext,
+    source?: ImportSource
   ) => Promise<UpstreamState>;
 }
 

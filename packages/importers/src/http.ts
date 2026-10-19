@@ -52,13 +52,65 @@ function missing(response: Response): boolean {
   return response.status === 404 || response.status === 410;
 }
 
+/** The most any one answer may hold; a larger one is refused, not read. */
+export const MAX_ANSWER_BYTES = 10 * 1024 * 1024;
+
+/** Read a body, refusing it as soon as it passes `maxBytes`. */
+async function readCapped(
+  url: string,
+  response: Response,
+  maxBytes: number
+): Promise<Uint8Array> {
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > maxBytes) {
+    throw new HttpError(
+      url,
+      response.status,
+      `the answer is ${declared} bytes, more than the ${maxBytes} read`
+    );
+  }
+  if (response.body === null) {
+    return new Uint8Array();
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- a stream is read one chunk after another.
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    total += value.byteLength;
+    if (total > maxBytes) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- the stream is abandoned once, and the loop ends.
+      await reader.cancel();
+      throw new HttpError(
+        url,
+        response.status,
+        `the answer is more than the ${maxBytes} bytes read`
+      );
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 /** Parse a JSON body with `schema`, naming the URL when it is not JSON or not that shape. */
 async function parseBody<const TSchema extends v.GenericSchema>(
   url: string,
   response: Response,
   schema: TSchema
 ): Promise<v.InferOutput<TSchema>> {
-  const text = await response.text();
+  const text = new TextDecoder().decode(
+    await readCapped(url, response, MAX_ANSWER_BYTES)
+  );
   let body: unknown = undefined;
   try {
     body = JSON.parse(text);
@@ -102,14 +154,21 @@ export async function getJson<const TSchema extends v.GenericSchema>(
   return await parseBody(url, response, schema);
 }
 
-/** GET bytes. A 404 or 410 is `null`. */
+/** How to GET bytes: the token for the request, the type to accept, and the most to read. */
+export interface ByteRequest {
+  readonly token?: string;
+  readonly accept?: string;
+  readonly maxBytes?: number;
+}
+
+/** GET bytes. A 404 or 410 is `null`; an answer larger than `maxBytes` is refused. */
 export async function getBytes(
   fetcher: typeof fetch,
   url: string,
-  token?: string
+  request: ByteRequest = {}
 ): Promise<Uint8Array | null> {
   const response = await send(fetcher, url, {
-    headers: { ...headers("*/*", token) },
+    headers: { ...headers(request.accept ?? "*/*", request.token) },
   });
   if (missing(response)) {
     return null;
@@ -117,7 +176,7 @@ export async function getBytes(
   if (!response.ok) {
     throw new HttpError(url, response.status, `HTTP ${response.status}`);
   }
-  return new Uint8Array(await response.arrayBuffer());
+  return await readCapped(url, response, request.maxBytes ?? MAX_ANSWER_BYTES);
 }
 
 const GraphQLErrorsSchema = v.object({

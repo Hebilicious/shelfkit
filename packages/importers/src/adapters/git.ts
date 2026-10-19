@@ -15,7 +15,12 @@ import type { ItemKind } from "@shelfkit/schema";
 import * as v from "valibot";
 
 import { frontmatter, skillProblem } from "../frontmatter.ts";
-import { GitHub, parseRepository, repositoryUrl } from "../github.ts";
+import {
+  GITHUB_API,
+  GitHub,
+  parseRepository,
+  repositoryUrl,
+} from "../github.ts";
 import type { TreeEntry } from "../github.ts";
 import { byCodePoint, fileContents } from "../http.ts";
 import { uniqueIds } from "../ids.ts";
@@ -41,10 +46,10 @@ import {
 import type { Licence } from "../licence.ts";
 import {
   classifyText,
-  fromSpdx,
   fromStatement,
   isLicenceFile,
   NO_LICENCE,
+  restrictive,
 } from "../licence.ts";
 import type {
   AdapterContext,
@@ -94,8 +99,6 @@ interface Resolved {
   readonly github: GitHub;
   readonly ref: string;
   readonly commit: string;
-  /** The licence GitHub detected for the whole repository. */
-  readonly licence: string | undefined;
 }
 
 /** What one discovery read from the repository. */
@@ -104,6 +107,33 @@ interface Snapshot extends Resolved {
   readonly filesByDirectory: Map<string, TreeEntry[]>;
   readonly entries: TreeEntry[];
   readonly base: string;
+}
+
+/**
+ * The token a source's secret releases for GitHub's API, or why it cannot be used. A secret is sent only to the
+ * origin it is bound to, and the importer reads GitHub only through `https://api.github.com`, so a source that names
+ * a secret must bind it to that origin and set its `url` to it (the secret rule releases for the source's `url`).
+ */
+export function githubToken(
+  source: ImportSource | undefined,
+  context: AdapterContext
+): { token?: string } | { problem: string } {
+  if (source?.secret === undefined) {
+    return {};
+  }
+  const name = source.secret;
+  if (source.url !== GITHUB_API) {
+    return {
+      problem: `the source names the secret ${name}, which is sent only to ${GITHUB_API}: bind ${name} to ${GITHUB_API} and set the source's url to ${GITHUB_API}`,
+    };
+  }
+  const token = sourceSecret(source, context);
+  if (token === undefined) {
+    return {
+      problem: `the secret ${name} is not released for ${GITHUB_API}: the shelf must bind it to that origin, and its value must be set`,
+    };
+  }
+  return { token };
 }
 
 /** The repository, the ref to read, and the commit it resolves to (or the one given). */
@@ -116,11 +146,11 @@ async function resolve(
     throw new Error("a git source needs `repo`");
   }
   const repository = parseRepository(source.repo);
-  const github = new GitHub(
-    context.fetch,
-    repository,
-    sourceSecret(source, context)
-  );
+  const access = githubToken(source, context);
+  if ("problem" in access) {
+    throw new Error(access.problem);
+  }
+  const github = new GitHub(context.fetch, repository, access.token);
   const info = await github.info();
   if (info === null) {
     throw new Error(
@@ -132,7 +162,7 @@ async function resolve(
   if (commit === null) {
     throw new Error(`${repositoryUrl(repository)} has no ref \`${ref}\``);
   }
-  return { commit, github, licence: info.licence, ref };
+  return { commit, github, ref };
 }
 
 /** Every file a discovery listed, by its directory. */
@@ -181,56 +211,89 @@ async function classifyFile(snap: Resolved, path: string): Promise<Licence> {
     : classifyText(new TextDecoder().decode(bytes));
 }
 
-/** The nearest licence file to `directory`, and the directory it is in. */
+/** The licence file nearest to `directory`, from listings of it and every directory above it. */
 function nearestLicenceFile(
-  snap: Snapshot,
+  files: ReadonlyMap<string, TreeEntry[]>,
   directory: string
-): { file: TreeEntry; at: string } | undefined {
+): TreeEntry | undefined {
   for (const here of ancestry(directory)) {
-    const file = (snap.filesByDirectory.get(here) ?? []).find((entry) =>
+    const file = (files.get(here) ?? []).find((entry) =>
       isLicenceFile(basename(entry.path))
     );
     if (file !== undefined) {
-      return { at: here, file };
+      return file;
     }
   }
   return undefined;
 }
 
-/** The licence that applies to an artifact in `directory`: the nearest licence file, else the repository's. */
-async function licenceAt(
-  snap: Snapshot,
-  directory: string,
-  cache: Map<string, Promise<Licence>>
-): Promise<Licence> {
-  const detected =
-    snap.licence === undefined ? undefined : fromSpdx(snap.licence);
-  const nearest = nearestLicenceFile(snap, directory);
-  if (nearest === undefined) {
-    return detected ?? NO_LICENCE;
-  }
-  if (nearest.at === "" && detected !== undefined) {
-    return detected;
-  }
-  const cached =
-    cache.get(nearest.file.path) ?? classifyFile(snap, nearest.file.path);
-  cache.set(nearest.file.path, cached);
-  return await cached;
+/** The licence governing an artifact, and the file that states it. */
+interface Governing {
+  readonly licence: Licence;
+  readonly file: TreeEntry | undefined;
 }
 
-/** A skill with no licence file may still name an SPDX licence in its SKILL.md. */
+/**
+ * The licence of the nearest licence file to `directory`, read from the file at this commit. GitHub's detected
+ * licence is not used: it describes the default branch's head, not the commit being read.
+ */
+async function governing(
+  snap: Resolved,
+  files: ReadonlyMap<string, TreeEntry[]>,
+  directory: string,
+  cache: Map<string, Promise<Licence>>
+): Promise<Governing> {
+  const file = nearestLicenceFile(files, directory);
+  if (file === undefined) {
+    return { file, licence: NO_LICENCE };
+  }
+  const cached = cache.get(file.path) ?? classifyFile(snap, file.path);
+  cache.set(file.path, cached);
+  return { file, licence: await cached };
+}
+
+/**
+ * Combine a licence file with what SKILL.md states. A pointer to the file defers to it; an SPDX id on the allowlist
+ * stands when there is no file and must agree with a file that is there; anything else restricts.
+ */
+export function effectiveLicence(
+  found: Governing,
+  statement: string | undefined
+): Licence {
+  if (statement === undefined) {
+    return found.licence;
+  }
+  const read = fromStatement(statement);
+  if (read === "see-file") {
+    return found.file === undefined
+      ? restrictive(
+          `SKILL.md defers to a licence file ("${statement}"), and there is none`
+        )
+      : found.licence;
+  }
+  if (!read.permitsCopy || found.file === undefined) {
+    return read;
+  }
+  if (!found.licence.permitsCopy || found.licence.id === read.id) {
+    return found.licence;
+  }
+  return restrictive(
+    `SKILL.md says ${read.id ?? statement}, but ${found.file.path} is ${found.licence.id ?? found.licence.statement}`
+  );
+}
+
+/** What a SKILL.md's frontmatter states as its licence, if it states one. */
 async function skillStatement(
   snap: Resolved,
-  artifact: Artifact
-): Promise<Licence | undefined> {
-  const path = artifact.path === "" ? "SKILL.md" : `${artifact.path}/SKILL.md`;
-  const bytes = await snap.github.raw(snap.commit, path);
-  const statement =
-    bytes === null
-      ? undefined
-      : frontmatter(new TextDecoder().decode(bytes)).license;
-  const read = statement === undefined ? undefined : fromStatement(statement);
-  return read === "see-file" ? undefined : read;
+  directory: string
+): Promise<string | undefined> {
+  const bytes = await snap.github.raw(
+    snap.commit,
+    directory === "" ? "SKILL.md" : `${directory}/SKILL.md`
+  );
+  return bytes === null
+    ? undefined
+    : frontmatter(new TextDecoder().decode(bytes)).license;
 }
 
 /** A human title from a file or directory name: `api-architect` is `Api architect`. */
@@ -357,7 +420,7 @@ async function manifestArtifacts(snap: Snapshot): Promise<Artifact[]> {
   return found;
 }
 
-/** The licence of each artifact, in order. */
+/** The licence of each artifact, in order, as discovery reports it: a skill without a licence file is read for one. */
 async function licences(
   snap: Snapshot,
   artifacts: readonly Artifact[]
@@ -365,11 +428,16 @@ async function licences(
   const cache = new Map<string, Promise<Licence>>();
   return await Promise.all(
     artifacts.map(async (artifact) => {
-      const licence = await licenceAt(snap, artifact.directory, cache);
-      if (licence === NO_LICENCE && artifact.kind === "skill") {
-        return (await skillStatement(snap, artifact)) ?? licence;
+      const found = await governing(
+        snap,
+        snap.filesByDirectory,
+        artifact.directory,
+        cache
+      );
+      if (found.file !== undefined || artifact.kind !== "skill") {
+        return found.licence;
       }
-      return licence;
+      return effectiveLicence(found, await skillStatement(snap, artifact.path));
     })
   );
 }
@@ -514,44 +582,125 @@ async function mcpFields(
   return { ...fields, name };
 }
 
-/** What a copy holds, or why the item is a link instead. */
+/** Blob listings of `directory` and every directory above it, at the snapshot's commit. */
+async function listingsAt(
+  snap: Resolved,
+  directory: string
+): Promise<Map<string, TreeEntry[]>> {
+  const walked = await snap.github.walk(snap.commit, directory);
+  const entries = walked.ancestors.flatMap((listing) => listing.entries);
+  if (walked.entry?.type === "tree") {
+    entries.push(
+      ...(await snap.github.tree(walked.entry.sha, directory, false))
+    );
+  }
+  return byDirectory(entries);
+}
+
+/** The directory whose licence governs an artifact at `path`. */
+function artifactDirectory(kind: ItemKind, path: string): string {
+  return kind === "skill" || kind === "plugin" ? path : parent(path);
+}
+
+/** Why a licence makes an import a link. */
+function notPermitted(licence: Licence): string {
+  return `its licence (${licence.statement}) does not permit keeping a copy`;
+}
+
+/** What a copy holds, under which licence, or why the item is a link instead. */
 interface Content {
   readonly files: ImportedFile[];
+  readonly licence: Licence;
   readonly linkOnly: boolean;
   readonly reason: string;
 }
 
-/** Copy a licensed artifact; a SKILL.md that declares a restriction, or that the loader would refuse, makes a link. */
+/** The licence file itself, added to a copy whose licence requires its notice when the copy does not include it. */
+async function notice(
+  snap: Resolved,
+  found: Governing,
+  files: readonly ImportedFile[],
+  path: string,
+  kind: ItemKind
+) {
+  const { file } = found;
+  const inside =
+    kind === "skill" &&
+    file !== undefined &&
+    (path === "" || file.path.startsWith(`${path}/`));
+  if (!found.licence.attribution || file === undefined || inside) {
+    return [];
+  }
+  const name = basename(file.path);
+  if (files.some((copied) => copied.path === name)) {
+    return [];
+  }
+  const bytes = await snap.github.raw(snap.commit, file.path);
+  return bytes === null ? [] : [{ ...fileContents(bytes), path: name }];
+}
+
+/**
+ * Copy an artifact when its licence, read from the files at the commit being copied, permits it. Discovery's
+ * judgement is never reused: a pick may name another commit, and SKILL.md is only read here.
+ */
 async function content(
   snap: Resolved,
   candidate: Candidate,
   id: string
 ): Promise<Content> {
-  const notPermitted = `its licence (${candidate.license ?? "none stated"}) does not permit keeping a copy`;
-  if (candidate.linkOnly || candidate.kind === "mcp") {
-    return { files: [], linkOnly: candidate.linkOnly, reason: notPermitted };
-  }
-  const copied = await copy(snap, candidate.kind, candidate.path ?? "");
-  if ("problem" in copied) {
-    return { files: [], linkOnly: true, reason: copied.problem };
-  }
-  const skill = copied.files.find((file) => file.path === "SKILL.md");
-  if (candidate.kind !== "skill" || skill === undefined) {
-    return { files: copied.files, linkOnly: false, reason: "" };
-  }
-  const declared = frontmatter(textOf(skill)).license;
-  const read = declared === undefined ? undefined : fromStatement(declared);
-  if (read !== undefined && read !== "see-file" && !read.permitsCopy) {
+  const path = candidate.path ?? "";
+  const listings = await listingsAt(
+    snap,
+    artifactDirectory(candidate.kind, path)
+  );
+  const found = await governing(
+    snap,
+    listings,
+    artifactDirectory(candidate.kind, path),
+    new Map()
+  );
+  if (candidate.kind === "mcp") {
     return {
       files: [],
-      linkOnly: true,
-      reason: `its SKILL.md declares the licence \`${declared ?? ""}\``,
+      licence: found.licence,
+      linkOnly: !found.licence.permitsCopy,
+      reason: "",
     };
   }
-  const problem = skillProblem(textOf(skill), id);
-  return problem === undefined
-    ? { files: copied.files, linkOnly: false, reason: "" }
-    : { files: [], linkOnly: true, reason: problem };
+  // A skill's own SKILL.md may restrict what its licence file allows: read its frontmatter before copying anything.
+  const licence =
+    candidate.kind === "skill"
+      ? effectiveLicence(found, await skillStatement(snap, path))
+      : found.licence;
+  if (!licence.permitsCopy) {
+    return {
+      files: [],
+      licence,
+      linkOnly: true,
+      reason: notPermitted(licence),
+    };
+  }
+  const copied = await copy(snap, candidate.kind, path);
+  if ("problem" in copied) {
+    return { files: [], licence, linkOnly: true, reason: copied.problem };
+  }
+  const skill = copied.files.find((file) => file.path === "SKILL.md");
+  const problem =
+    candidate.kind === "skill" ? skillProblem(textOf(skill), id) : undefined;
+  if (problem !== undefined) {
+    return { files: [], licence, linkOnly: true, reason: problem };
+  }
+  const added = await notice(
+    snap,
+    { file: found.file, licence },
+    copied.files,
+    path,
+    candidate.kind
+  );
+  const files = [...copied.files, ...added].toSorted((a, b) =>
+    byCodePoint(a.path, b.path)
+  );
+  return { files, licence, linkOnly: false, reason: "" };
 }
 
 /** The commit to fetch at: the pick's, or the candidate's when the pick asks for no other ref. */
@@ -562,6 +711,20 @@ function pinnedCommit(candidate: Candidate, pick: Pick): string | undefined {
   return pick.pin?.ref === undefined
     ? candidate.upstream.resolvedCommit
     : undefined;
+}
+
+/** The credit a licence that requires attribution asks for: the work, where it is, and its licence. */
+function credit(
+  snap: Resolved,
+  path: string,
+  licence: Licence
+): string | undefined {
+  if (!licence.attribution) {
+    return undefined;
+  }
+  const where = path === "" ? "" : `: ${path}`;
+  const which = licence.id === undefined ? "" : ` (${licence.id})`;
+  return `${snap.github.repository.owner}/${snap.github.repository.name}${where}${which}`;
 }
 
 async function fetchItem(
@@ -596,29 +759,24 @@ async function fetchItem(
         : CONTENT_FILE.get(candidate.kind))
   );
   const meta = frontmatter(textOf(main));
-  const { licenseId } = candidate;
-  const creditPath = path === "" ? "" : `: ${path}`;
-  const creditLicence = licenseId === undefined ? "" : ` (${licenseId})`;
+  const { licence } = copied;
   const item = {
     ...fields,
     description: meta.description,
     id,
     kind: candidate.kind,
     source: provenance({
-      creditText: `${snap.github.repository.owner}/${snap.github.repository.name}${creditPath}${creditLicence}`,
+      creditText: credit(snap, path, licence),
       id: source.sourceId,
-      license: candidate.license ?? NO_LICENCE.statement,
-      licenseId,
+      license: licence.statement,
+      licenseId: licence.id,
       linkTarget: repo,
       path: path === "" ? undefined : path,
       recordUrl: record,
       ref: snap.ref,
       repo,
       resolvedCommit: snap.commit,
-      shareAlike:
-        licenseId === undefined
-          ? undefined
-          : (fromSpdx(licenseId)?.shareAlike ?? false),
+      shareAlike: licence.permitsCopy ? licence.shareAlike : undefined,
     }),
     title:
       meta.title ??
@@ -649,7 +807,8 @@ async function objectAt(
 
 async function checkUpstream(
   item: Item,
-  context: AdapterContext
+  context: AdapterContext,
+  declared?: ImportSource
 ): Promise<UpstreamState> {
   const source = sourceOf(item);
   if (source.repo === undefined) {
@@ -661,7 +820,15 @@ async function checkUpstream(
       status: "error",
     };
   }
-  const github = new GitHub(context.fetch, parseRepository(source.repo));
+  const access = githubToken(declared, context);
+  if ("problem" in access) {
+    return { error: access.problem, status: "error" };
+  }
+  const github = new GitHub(
+    context.fetch,
+    parseRepository(source.repo),
+    access.token
+  );
   const info = await github.info();
   if (info === null) {
     return { status: "gone" };

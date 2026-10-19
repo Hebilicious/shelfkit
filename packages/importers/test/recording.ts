@@ -141,6 +141,44 @@ function trimmed(url: string, json: Json, requested: readonly string[]): Json {
   return json;
 }
 
+/**
+ * Content that imports as a link (it has no licence that permits a copy) is not committed here either: of these
+ * files, a recording keeps only the YAML frontmatter, which is all the adapter reads of them.
+ */
+const LINK_ONLY_CONTENT = [
+  "/anthropics/skills/",
+  "/ComposioHQ/awesome-claude-skills/",
+];
+
+/** Whether a recorded URL is the SKILL.md of an artifact that imports as a link. */
+function linkOnlySkill(url: string): boolean {
+  return (
+    url.startsWith("https://raw.githubusercontent.com/") &&
+    url.endsWith("/SKILL.md") &&
+    LINK_ONLY_CONTENT.some((repo) => url.includes(repo)) &&
+    (url.includes("/doc-coauthoring/") ||
+      url.includes("/domain-name-brainstormer/") ||
+      url.includes("/skills/docx/"))
+  );
+}
+
+/** A SKILL.md cut to its frontmatter. */
+function frontmatterOnly(text: string): string {
+  const end = text.indexOf("\n---", 4);
+  return end === -1 ? "" : `${text.slice(0, end + 4)}\n`;
+}
+
+/** What a fixture keeps of an answer. */
+function stored(key: string, answer: Answer, keys: readonly string[]): Answer {
+  if (answer.json !== undefined) {
+    return { ...answer, json: trimmed(key, answer.json, keys) };
+  }
+  if (linkOnlySkill(key) && answer.text !== undefined) {
+    return { ...answer, text: frontmatterOnly(answer.text) };
+  }
+  return answer;
+}
+
 /** What a recorded `fetch` gives a test: the stand-in, and the keys it was asked for. */
 export interface Recorded {
   readonly fetch: typeof fetch;
@@ -231,9 +269,7 @@ export function recorded(name: string): Recorded {
         .toSorted(([a], [b]) => byCodePoint(a, b))
         .map(([key, answer]): [string, Answer] => [
           key,
-          answer.json === undefined
-            ? answer
-            : { ...answer, json: trimmed(key, answer.json, keys) },
+          stored(key, answer, keys),
         ]);
       mkdirSync(path.dirname(file), { recursive: true });
       writeFileSync(

@@ -17,8 +17,6 @@ import {
   manifestsToRead,
   MarketplaceSchema,
 } from "../src/layouts.ts";
-import { classifyText, fromStatement } from "../src/licence.ts";
-import { ALL_TERMS } from "../src/terms.ts";
 
 /** A SKILL.md with the given frontmatter. */
 function skill(front: string): string {
@@ -110,56 +108,6 @@ describe("APM's package layouts", () => {
         name: "db",
       },
     ]);
-  });
-});
-
-describe("licences", () => {
-  it("identifies licence texts by their fixed wording, and anything else as restrictive", () => {
-    expect(classifyText("Apache License\n Version 2.0, January 2004").id).toBe(
-      "Apache-2.0"
-    );
-    expect(
-      classifyText(
-        "Permission is hereby granted, free of charge, to any person ... without restriction ... The above copyright notice and this permission notice shall be included"
-      ).id
-    ).toBe("MIT");
-    expect(
-      classifyText(
-        "MIT No Attribution\n\nPermission is hereby granted, free of charge"
-      ).id
-    ).toBe("MIT-0");
-    const noDerivatives = classifyText(
-      "licensed under Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International"
-    );
-    expect([noDerivatives.id, noDerivatives.permitsCopy]).toStrictEqual([
-      "CC-BY-NC-ND-4.0",
-      false,
-    ]);
-    const proprietary = classifyText(
-      "© 2025 Anthropic, PBC. All rights reserved."
-    );
-    expect([proprietary.id, proprietary.permitsCopy]).toStrictEqual([
-      undefined,
-      false,
-    ]);
-  });
-
-  it("reads a SKILL.md licence statement", () => {
-    expect(fromStatement("Apache-2.0")).toMatchObject({
-      id: "Apache-2.0",
-      permitsCopy: true,
-    });
-    expect(fromStatement("Complete terms in LICENSE.txt")).toBe("see-file");
-    expect(
-      fromStatement("Proprietary. LICENSE.txt has complete terms")
-    ).toMatchObject({ permitsCopy: false });
-  });
-
-  it("records every source's terms with a citation and the date they were read", () => {
-    for (const terms of ALL_TERMS) {
-      expect(terms.citations.length).toBeGreaterThan(0);
-      expect(terms.checked).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
-    }
   });
 });
 

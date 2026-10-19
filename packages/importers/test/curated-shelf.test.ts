@@ -76,6 +76,7 @@ const IMPORTS: readonly {
     source: {
       kind: "git",
       path: "instructions/rust.instructions.md",
+      ref: "cb64ad12e32737ae764becd6885462e9b4c7cb00",
       repo: "https://github.com/github/awesome-copilot",
       sourceId: "awesome-copilot",
     },
@@ -85,6 +86,7 @@ const IMPORTS: readonly {
     source: {
       kind: "git",
       path: "agents/CSharpExpert.agent.md",
+      ref: "cb64ad12e32737ae764becd6885462e9b4c7cb00",
       repo: "https://github.com/github/awesome-copilot",
       sourceId: "awesome-copilot",
     },

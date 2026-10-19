@@ -46,10 +46,7 @@ export function repositoryUrl(repository: Repository): string {
   return `https://github.com/${repository.owner}/${repository.name}`;
 }
 
-const RepoSchema = v.object({
-  default_branch: v.string(),
-  license: v.nullish(v.object({ spdx_id: v.nullish(v.string()) })),
-});
+const RepoSchema = v.object({ default_branch: v.string() });
 
 const CommitSchema = v.object({ sha: v.string() });
 
@@ -90,11 +87,8 @@ export class GitHub {
     return `${GITHUB_API}/repos/${this.repository.owner}/${this.repository.name}${path}`;
   }
 
-  /** The default branch and the licence GitHub detected, or `null` when the repository is not there. */
-  async info(): Promise<{
-    defaultBranch: string;
-    licence: string | undefined;
-  } | null> {
+  /** The default branch, or `null` when the repository is not there (or is private and no token was given). */
+  async info(): Promise<{ defaultBranch: string } | null> {
     const repo = await getJson(
       this.fetcher,
       this.api(""),
@@ -104,11 +98,7 @@ export class GitHub {
     if (repo === null) {
       return null;
     }
-    const spdx = repo.license?.spdx_id ?? undefined;
-    return {
-      defaultBranch: repo.default_branch,
-      licence: spdx === "NOASSERTION" ? undefined : spdx,
-    };
+    return { defaultBranch: repo.default_branch };
   }
 
   /** The commit a ref resolves to now, or `null` when the ref is not there. */
@@ -192,13 +182,25 @@ export class GitHub {
     return { ancestors, entry };
   }
 
-  /** A file's bytes at a commit, or `null` when it is not there. */
+  /**
+   * A file's bytes at a commit, or `null` when it is not there. With a token, through the API (the only origin a
+   * token is sent to); without one, from GitHub's raw file host, which has no rate limit to spend.
+   */
   async raw(commit: string, path: string): Promise<Uint8Array | null> {
     const encoded = path.split("/").map(encodeURIComponent).join("/");
+    if (this.token !== undefined) {
+      return await getBytes(
+        this.fetcher,
+        this.api(`/contents/${encoded}?ref=${commit}`),
+        {
+          accept: "application/vnd.github.raw",
+          token: this.token,
+        }
+      );
+    }
     return await getBytes(
       this.fetcher,
-      `${GITHUB_RAW}/${this.repository.owner}/${this.repository.name}/${commit}/${encoded}`,
-      this.token
+      `${GITHUB_RAW}/${this.repository.owner}/${this.repository.name}/${commit}/${encoded}`
     );
   }
 }
