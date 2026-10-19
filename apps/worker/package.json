@@ -5,6 +5,8 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
+    "@acid-cat/core-ts": "catalog:",
+    "@acid-cat/spec-ts": "catalog:",
     "@pothos/core": "catalog:",
     "@shelfkit/engine": "workspace:*",
     "@shelfkit/importers": "workspace:*",
@@ -15,6 +17,7 @@
     "valibot": "catalog:"
   },
   "devDependencies": {
+    "@acid-cat/cli": "catalog:",
     "@cloudflare/vitest-plugin": "catalog:",
     "drizzle-kit": "catalog:",
     "typescript": "catalog:",
