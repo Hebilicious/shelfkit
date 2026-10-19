@@ -90,6 +90,24 @@ async function failureText(response: Response): Promise<string> {
   return `${response.status} ${response.statusText}`;
 }
 
+/** What to do when the service refuses for want of access; `session.ts` reloads who the browser is. */
+let onRefusal: (() => void) | null = null;
+
+/**
+ * Be told when a request is refused for want of access. A key revoked elsewhere leaves the browser's cookie cleared
+ * and its requests anonymous, so the first refusal is when the page learns it is signed out.
+ */
+export function whenRefused(handler: () => void): void {
+  onRefusal = handler;
+}
+
+function refused(error: GraphQLRequestError): GraphQLRequestError {
+  if (error.unauthorized) {
+    onRefusal?.();
+  }
+  return error;
+}
+
 /** Run one operation and return its data, or throw a `GraphQLRequestError` with every problem. */
 export async function execute<TResult, TVariables>(
   document: TadaDocumentNode<TResult, TVariables>,
@@ -106,18 +124,18 @@ export async function execute<TResult, TVariables>(
   });
   const media = response.headers.get("content-type") ?? "";
   if (!media.includes("json")) {
-    throw new GraphQLRequestError(
-      await failureText(response),
-      response.status,
-      []
+    throw refused(
+      new GraphQLRequestError(await failureText(response), response.status, [])
     );
   }
   const parsed = v.safeParse(ResponseSchema, await response.json());
   if (!parsed.success) {
-    throw new GraphQLRequestError(
-      `${response.status}: an answer that is not GraphQL`,
-      response.status,
-      []
+    throw refused(
+      new GraphQLRequestError(
+        `${response.status}: an answer that is not GraphQL`,
+        response.status,
+        []
+      )
     );
   }
   const { data, errors = [] } = parsed.output;
@@ -131,7 +149,7 @@ export async function execute<TResult, TVariables>(
       (response.ok
         ? "the service answered with no data"
         : `${response.status} ${response.statusText}`);
-    throw new GraphQLRequestError(message, response.status, problems);
+    throw refused(new GraphQLRequestError(message, response.status, problems));
   }
   // SAFETY: the document was validated against the SDL the server serves (`web:graphql-check`), and Yoga answers with
   // exactly the selection requested, so `data` has the document's result shape.

@@ -72,3 +72,35 @@ test("a share link shows the profile read-only to a browser with no key", async 
   ).toHaveCount(0);
   await anonymous.close();
 });
+
+test("a browser signed in with a key that is revoked shows itself signed out at its next refusal", async ({
+  browser,
+  page,
+}) => {
+  await signIn(page);
+  await page.goto(`/shelves/${SHELF}/settings`);
+  await page.getByLabel("New key's name").fill("phone");
+  await page.getByLabel("Read the shelf").check();
+  await page.getByRole("button", { name: "Create key" }).click();
+  const key = (await page.getByTestId("new-key").textContent()) ?? "";
+  await page.getByRole("button", { name: "Done" }).first().click();
+
+  const phone = await browser.newContext({
+    permissions: ["clipboard-read", "clipboard-write"],
+  });
+  const holder = await phone.newPage();
+  await signIn(holder, key, "phone");
+  await holder.goto(`/shelves/${SHELF}/prompts/pr-description`);
+  await expect(holder.getByTestId("prompt-title")).toHaveText("PR description");
+
+  const row = page.getByRole("row").filter({ hasText: "phone" });
+  await row.getByRole("button", { name: "Revoke" }).click();
+  await row.getByRole("button", { name: "Revoke: sure?" }).click();
+  await expect(row.getByText("revoked")).toBeVisible();
+
+  // The revoked cookie makes the next request anonymous; the first refusal brings the header up to date.
+  await holder.getByRole("button", { exact: true, name: "☆" }).click();
+  await expect(holder.getByTestId("viewer")).toHaveCount(0);
+  await expect(holder.getByRole("link", { name: "Sign in" })).toBeVisible();
+  await phone.close();
+});

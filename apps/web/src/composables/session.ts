@@ -4,7 +4,7 @@
  */
 import { ref, shallowRef } from "vue";
 
-import { execute } from "../api/graphql.ts";
+import { execute, whenRefused } from "../api/graphql.ts";
 import type { ResultOf } from "../api/graphql.ts";
 import {
   SignInMutation,
@@ -30,6 +30,11 @@ export async function loadSession(): Promise<void> {
     sessionError.value = error instanceof Error ? error.message : String(error);
   }
 }
+
+// A refusal may mean the key behind the cookie was revoked: read who the browser is now.
+whenRefused(() => {
+  void loadSession();
+});
 
 /** Trade a key for the cookie, then read the session it opens. */
 export async function signIn(key: string): Promise<void> {

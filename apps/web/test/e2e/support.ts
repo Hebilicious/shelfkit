@@ -147,12 +147,16 @@ export function sortedTree(root: string): [string, string][] {
   return [...readTree(root)].toSorted(([a], [b]) => a.localeCompare(b));
 }
 
-/** Sign in through the sign-in screen with the owner key; the browser keeps it in the HttpOnly cookie. */
-export async function signIn(page: Page): Promise<void> {
+/** Sign in through the sign-in screen, with the owner key unless another is given; the browser keeps it in the HttpOnly cookie. */
+export async function signIn(
+  page: Page,
+  key = OWNER_KEY,
+  viewer = "Owner"
+): Promise<void> {
   await page.goto("/sign-in");
-  await page.getByLabel("Key").fill(OWNER_KEY);
+  await page.getByLabel("Key").fill(key);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByTestId("viewer")).toHaveText("Owner");
+  await expect(page.getByTestId("viewer")).toHaveText(viewer);
 }
 
 /** The clipboard's text. */

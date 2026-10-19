@@ -8,8 +8,9 @@ import PromptDetail from "../components/prompt-detail.vue";
 import PromptNew from "../components/prompt-new.vue";
 import QueryState from "../components/query-state.vue";
 import { useListNav } from "../composables/list-nav.ts";
+import { loadSession } from "../composables/session.ts";
 import { useShelfId } from "../composables/shelf-context.ts";
-import { notifyError } from "../composables/toasts.ts";
+import { notify, notifyError } from "../composables/toasts.ts";
 import { useQuery } from "../composables/use-query.ts";
 import { param } from "../router.ts";
 
@@ -96,7 +97,13 @@ const detailChanges = ref(0);
 
 async function toggleFavourite(id: string, favourite: boolean): Promise<void> {
   try {
-    await execute(SetFavouriteMutation, { favourite, item: id, shelf: shelf.value });
+    const data = await execute(SetFavouriteMutation, { favourite, item: id, shelf: shelf.value });
+    if (!data.setFavourite) {
+      // Favourites are kept per key; one that is not recorded means this browser holds no valid key now.
+      notify("Favourites are kept per key: sign in to keep them.", null, "error");
+      await loadSession();
+      return;
+    }
     detailChanges.value += 1;
     await prompts.refresh();
   } catch (error) {

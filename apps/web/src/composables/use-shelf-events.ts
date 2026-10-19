@@ -9,6 +9,7 @@ import { ref } from "vue";
 
 import { getUrl } from "../api/graphql.ts";
 import { ShelfChangedSubscription } from "../api/operations.ts";
+import { loadSession } from "./session.ts";
 
 /** How many changes the current shelf has seen since the page loaded. */
 export const shelfChanges = ref(0);
@@ -113,6 +114,10 @@ function connect(shelf: string): void {
     if (event !== null) {
       lastChange.value = event;
       shelfChanges.value += 1;
+      // A key was created or revoked: it may be the one this browser holds.
+      if (event.kind === "keys") {
+        void loadSession();
+      }
     }
   });
   // The server ended the subscription; the shelf is still followed, so subscribe again.
