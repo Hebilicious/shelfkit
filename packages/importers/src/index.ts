@@ -15,8 +15,9 @@
  * - `catalog`: the official MCP Registry and ClawHub (`./adapters/catalog.ts`).
  * - `shelfkit`: another ShelfKit instance's public profiles and items (`./adapters/shelfkit.ts`).
  *
- * The scanners: ShelfKit's own deterministic scanner, ClawHub's per-version verdict (taken only when the files match
- * byte for byte), and one scanner per skills.sh audit partner. Each source's terms, with citations, are in
+ * The scanners: ShelfKit's own deterministic scanner, and ClawHub's per-version verdict (taken only when the files
+ * match byte for byte). skills.sh's audits are not used: they name no commit or hash of what was audited, so none
+ * could be bound to the bytes a revision holds (`./terms.ts`). Each source's terms, with citations, are in
  * `./terms.ts`.
  */
 import type { Source } from "@shelfkit/schema";
@@ -25,7 +26,6 @@ import { catalogAdapter, catalogOf } from "./adapters/catalog.ts";
 import { gitAdapter } from "./adapters/git.ts";
 import { shelfkitAdapter } from "./adapters/shelfkit.ts";
 import { clawHubScanner } from "./scanners/clawhub.ts";
-import { skillsShScanners } from "./scanners/skills-sh.ts";
 import { staticScanner } from "./scanners/static.ts";
 import type { Scanner, SourceAdapter, SourceKind } from "./seam.ts";
 
@@ -41,11 +41,7 @@ export const adapters: readonly SourceAdapter[] = [
 ];
 
 /** Every scanner: ShelfKit's own first, then the third-party verdicts, each of which covers only its own items. */
-export const scanners: readonly Scanner[] = [
-  staticScanner,
-  clawHubScanner,
-  ...skillsShScanners,
-];
+export const scanners: readonly Scanner[] = [staticScanner, clawHubScanner];
 
 /** The adapter for a kind of source, or `undefined` when there is none yet. */
 export function adapterFor(

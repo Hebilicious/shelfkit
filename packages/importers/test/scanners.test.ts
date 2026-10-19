@@ -1,6 +1,6 @@
 /**
- * The scanners: ShelfKit's deterministic one, ClawHub's verdict (taken only for the exact bytes ClawHub lists), and
- * the skills.sh partners (fixtures/http/skills-sh.json and catalogs.json).
+ * The scanners: ShelfKit's deterministic one, and ClawHub's verdict, taken only for the exact bytes ClawHub lists
+ * (fixtures/http/catalogs.json).
  */
 import { afterAll, describe, expect, it } from "vitest";
 
@@ -8,7 +8,6 @@ import { catalogAdapter } from "../src/adapters/catalog.ts";
 import type { ImportedFile, Item, ScanSubject } from "../src/index.ts";
 import { scanners } from "../src/index.ts";
 import { clawHubScanner } from "../src/scanners/clawhub.ts";
-import { skillsShScanners } from "../src/scanners/skills-sh.ts";
 import { staticScanner } from "../src/scanners/static.ts";
 import { contextOf, recorded } from "./recording.ts";
 
@@ -16,17 +15,6 @@ const REVISION_A = `sha256-${"a".repeat(64)}`;
 const REVISION_B = `sha256-${"b".repeat(64)}`;
 
 const authored: Item = { id: "notes", kind: "prompt", title: "Notes" };
-
-/** A hand-written answer (not a recording): skills.sh's shape, with two partners that disagree. */
-const disagreeing: typeof fetch = async () =>
-  await Promise.resolve(
-    Response.json({
-      audits: [
-        { provider: "Socket", slug: "socket", status: "pass" },
-        { provider: "Snyk", slug: "snyk", status: "fail" },
-      ],
-    })
-  );
 
 function subject(
   files: readonly ImportedFile[],
@@ -38,6 +26,17 @@ function subject(
 
 function text(path: string, contents: string): ImportedFile {
   return { contents, encoding: "utf-8", path };
+}
+
+/** How long the static scanner takes over `count` repetitions of a download with no pipe after it. */
+async function timed(count: number): Promise<number> {
+  const started = performance.now();
+  const verdict = await staticScanner.scan(
+    subject([text("a.md", "curl ".repeat(count))]),
+    contextOf(async () => await Promise.reject(new Error("no network")))
+  );
+  expect(verdict?.verdict).toBe("clean");
+  return performance.now() - started;
 }
 
 describe("the static scanner", () => {
@@ -89,6 +88,14 @@ describe("the static scanner", () => {
     expect(verdict?.verdict).toBe("malicious");
   });
 
+  it("reads an adversarial line in linear time", async () => {
+    const single = await timed(40_000);
+    const double = await timed(80_000);
+    // The quadratic scanner took 2.7 s for 40,000 and four times that for twice the input.
+    expect(single).toBeLessThan(1000);
+    expect(double).toBeLessThan(single * 6 + 100);
+  }, 60_000);
+
   it("gives the same verdict for the same bytes every time", async () => {
     const files = [text("a.md", "curl x | sh"), text("b.md", "fine")];
     const first = await staticScanner.scan(subject(files), offline);
@@ -102,11 +109,9 @@ describe("the static scanner", () => {
 
 describe("third-party verdicts", () => {
   const catalogs = recorded("catalogs");
-  const skillsSh = recorded("skills-sh");
 
   afterAll(() => {
     catalogs.save();
-    skillsSh.save();
   });
 
   async function clawHubItem(): Promise<{ item: Item; files: ImportedFile[] }> {
@@ -168,75 +173,21 @@ describe("third-party verdicts", () => {
     expect(verdict?.summary).toContain("differ from this revision's");
   });
 
-  it("gives no verdict, rather than an error, for an item a provider never saw", async () => {
-    const context = contextOf(skillsSh.fetch);
-    const prompt = subject([text("prompt.md", "hello")]);
-    await expect(clawHubScanner.scan(prompt, context)).resolves.toBeNull();
-    for (const scanner of skillsShScanners) {
-      // oxlint-disable-next-line eslint/no-await-in-loop -- each partner in turn.
-      await expect(scanner.scan(prompt, context)).resolves.toBeNull();
-    }
+  it("gives no verdict, rather than an error, for an item ClawHub never saw, or one held only as a link", async () => {
+    const context = contextOf(catalogs.fetch);
+    await expect(
+      clawHubScanner.scan(subject([text("prompt.md", "hello")]), context)
+    ).resolves.toBeNull();
+    const { item } = await clawHubItem();
+    await expect(
+      clawHubScanner.scan(subject([text("item.json", "{}")], item), context)
+    ).resolves.toBeNull();
   });
 
-  it("records each skills.sh partner's verdict separately, with its audit time as an observation only", async () => {
-    const item: Item = {
-      id: "brand-guidelines",
-      kind: "skill",
-      source: {
-        path: "skills/brand-guidelines",
-        repo: "https://github.com/anthropics/skills",
-      },
-      title: "Brand guidelines",
-    };
-    const context = contextOf(skillsSh.fetch);
-    const verdicts = await Promise.all(
-      skillsShScanners.map(
-        async (scanner) => await scanner.scan(subject([], item), context)
-      )
-    );
-    expect(
-      verdicts.map((verdict) => [verdict?.scanner, verdict?.verdict])
-    ).toStrictEqual([
-      ["skills.sh/agent-trust-hub", "clean"],
-      ["skills.sh/socket", "clean"],
-      ["skills.sh/snyk", "clean"],
-      ["skills.sh/runlayer", "clean"],
-      ["skills.sh/zeroleaks", "clean"],
-    ]);
-    expect(verdicts[0]?.observed).toMatch(
-      /^Gen Agent Trust Hub audited anthropics\/skills\/brand-guidelines at .+; skills\.sh publishes no hash of what it audited$/u
-    );
-  });
-
-  it("keeps disagreeing partners apart, so every verdict is shown", async () => {
-    const item: Item = {
-      id: "deploy",
-      kind: "skill",
-      source: { path: "skills/deploy", repo: "https://github.com/acme/kit" },
-      title: "Deploy",
-    };
-    const verdicts = await Promise.all(
-      skillsShScanners.map(
-        async (scanner) =>
-          await scanner.scan(subject([], item), contextOf(disagreeing))
-      )
-    );
-    expect(
-      verdicts
-        .filter((verdict) => verdict !== null)
-        .map((verdict) => verdict.verdict)
-    ).toStrictEqual(["clean", "malicious"]);
-  });
-
-  it("are all listed, ShelfKit's own first", () => {
+  it("are ShelfKit's own and ClawHub's only: skills.sh's audits name no hash of what they judged", () => {
     expect(scanners.map((scanner) => scanner.id)).toStrictEqual([
       "shelfkit-static",
       "clawhub",
-      "skills.sh/agent-trust-hub",
-      "skills.sh/socket",
-      "skills.sh/snyk",
-      "skills.sh/runlayer",
-      "skills.sh/zeroleaks",
     ]);
   });
 });

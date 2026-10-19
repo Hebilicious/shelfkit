@@ -69,14 +69,14 @@ export const CLAWHUB_TERMS: SourceTerms = {
     "All skills published on ClawHub are licensed MIT-0, with no per-skill override, and attribution is not required. Third parties reusing the public catalog are asked to link back to the canonical listing, https://clawhub.ai/<owner>/skills/<slug>, and not to mirror hidden or moderation-blocked content; ShelfKit records that listing as each item's record URL and link target.",
 };
 
-/** skills.sh, Vercel's skill directory, read here for its security audits. */
+/** skills.sh, Vercel's skill directory. Its audits were evaluated as scanners and are not used. */
 export const SKILLS_SH_TERMS: SourceTerms = {
   checked: CHECKED,
   citations: ["https://www.skills.sh/terms", "https://www.skills.sh/docs/api"],
   licence: "per-artifact",
   name: "skills.sh",
   summary:
-    "Skills in the directory belong to their authors under the licences in their source repositories; skills.sh does not relicense them. The public API is rate-limited per IP, and caching results is allowed. Audits carry a provider and a timestamp but no content hash.",
+    "Skills in the directory belong to their authors under the licences in their source repositories; skills.sh does not relicense them. Its audit endpoint (`/api/v1/skills/audit/{source}/{skill}`) gives each partner's status and an audit time, but no commit or hash of what was audited, and the skill's own `hash` describes its current snapshot, not the audited one. A verdict ShelfKit records must be bound to the bytes it holds (docs/PRD.md section 11), so skills.sh produces no verdicts; ShelfKit imports those skills from their repositories as `git` sources.",
 };
 
 /** `github/awesome-copilot`, read as a Git repository. */

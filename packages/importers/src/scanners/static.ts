@@ -21,56 +21,93 @@ import type {
 
 interface Rule {
   readonly id: string;
-  readonly pattern: RegExp;
+  readonly test: (line: string) => boolean;
   readonly severity: "suspicious" | "malicious";
   readonly message: string;
 }
+
+/** A shell at the start of a pipeline stage. Anchored, so each stage is read once. */
+const SHELL = /^\s*(?:sudo\s+)?(?:ba|z|da)?sh\b/iu;
+const POWERSHELL_EVAL = /^\s*iex\b/iu;
+const DOWNLOAD = /\b(?:curl|wget)\b/iu;
+const POWERSHELL_DOWNLOAD = /\b(?:iwr|Invoke-WebRequest)\b/iu;
+const DECODE = /\bbase64\s+(?:-d|--decode)\b/iu;
+
+/** Whether a stage matching `from` pipes straight into a stage matching `into`. Linear in the line. */
+function pipes(line: string, from: RegExp, into: RegExp): boolean {
+  const stages = line.split("|");
+  return stages.some((stage, index) => {
+    const next = stages[index + 1];
+    return next !== undefined && from.test(stage) && into.test(next);
+  });
+}
+
+/** Whether any stage decodes data and a later stage is a shell. */
+function decodedIntoShell(line: string): boolean {
+  let decoded = false;
+  for (const stage of line.split("|")) {
+    if (decoded && SHELL.test(stage)) {
+      return true;
+    }
+    decoded ||= DECODE.test(stage);
+  }
+  return false;
+}
+
+/** Patterns are anchored on fixed text and every repetition is bounded, so no line costs more than linear time. */
+const HIDDEN =
+  /[\u202A-\u202E\u2066-\u2069\u200B-\u200D\u2060]|[\u{E0000}-\u{E007F}]/u;
+const CREDENTIAL =
+  /\bgh[pousr]_[A-Za-z0-9]{36}\b|\bgithub_pat_[A-Za-z0-9_]{40,255}|\bsk-[A-Za-z0-9_-]{32,255}|\bAKIA[0-9A-Z]{16}\b|\bxox[abprs]-[A-Za-z0-9-]{10,255}|-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/u;
+const OVERRIDE =
+  /\b(?:ignore|disregard|forget) {1,8}(?:all {1,8})?(?:of {1,8})?(?:the {1,8}|your {1,8})?(?:previous|prior|above|earlier) {1,8}instructions\b/iu;
+const CREDENTIAL_READ =
+  /(?:~|\$HOME|\$\{HOME\})\/\.(?:ssh|aws|gnupg|kube|docker\/config\.json)\b/u;
 
 const RULES: readonly Rule[] = [
   {
     id: "decoded-shell",
     message: "decodes data and pipes it into a shell",
-    pattern:
-      /base64\s+(?:-d|--decode)\b[^\n]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b/iu,
     severity: "malicious",
+    test: decodedIntoShell,
   },
   {
     id: "pipe-to-shell",
     message: "pipes a download into a shell",
-    pattern:
-      /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b|\b(?:iwr|Invoke-WebRequest)\b[^\n|]*\|\s*iex\b/iu,
     severity: "suspicious",
+    test: (line) =>
+      pipes(line, DOWNLOAD, SHELL) ||
+      pipes(line, POWERSHELL_DOWNLOAD, POWERSHELL_EVAL),
   },
   {
     id: "hidden-characters",
     message:
       "contains characters a reader cannot see (bidirectional controls, zero-width, or tag characters)",
-    pattern:
-      /[\u202A-\u202E\u2066-\u2069\u200B-\u200D\u2060]|[\u{E0000}-\u{E007F}]/u,
     severity: "suspicious",
+    test: (line) => HIDDEN.test(line),
   },
   {
     id: "credential",
     message: "contains what looks like a credential",
-    pattern:
-      /\bgh[pousr]_[A-Za-z0-9]{36}\b|\bgithub_pat_[A-Za-z0-9_]{40,}|\bsk-[A-Za-z0-9_-]{32,}|\bAKIA[0-9A-Z]{16}\b|\bxox[abprs]-[A-Za-z0-9-]{10,}|-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/u,
     severity: "suspicious",
+    test: (line) => CREDENTIAL.test(line),
   },
   {
     id: "instruction-override",
     message: "tells the agent to discard its prior instructions",
-    pattern:
-      /\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:of\s+)?(?:the\s+|your\s+)?(?:previous|prior|above|earlier)\s+instructions\b/iu,
     severity: "suspicious",
+    test: (line) => OVERRIDE.test(line.replaceAll(/\s/gu, " ")),
   },
   {
     id: "credential-read",
     message: "reads an SSH, cloud, or GPG credential directory",
-    pattern:
-      /(?:~|\$HOME|\$\{HOME\})\/\.(?:ssh|aws|gnupg|kube|docker\/config\.json)\b/u,
     severity: "suspicious",
+    test: (line) => CREDENTIAL_READ.test(line),
   },
 ];
+
+/** The most of one file the scanner reads; a larger file is flagged as not fully scanned. */
+export const MAX_SCANNED_CHARACTERS = 2 * 1024 * 1024;
 
 /** Magic numbers of executables: ELF, PE, and Mach-O. */
 function isExecutable(bytes: string): boolean {
@@ -107,9 +144,20 @@ function scanFile(file: ImportedFile): Finding[] {
       : [];
   }
   const findings: Finding[] = [];
-  const lines = file.contents.replaceAll("\r\n", "\n").split("\n");
+  if (file.contents.length > MAX_SCANNED_CHARACTERS) {
+    findings.push({
+      message: `is longer than the ${MAX_SCANNED_CHARACTERS} characters the scanner reads, so it was not fully scanned`,
+      rule: "too-large",
+      severity: "suspicious",
+      where: file.path,
+    });
+  }
+  const lines = file.contents
+    .slice(0, MAX_SCANNED_CHARACTERS)
+    .replaceAll("\r\n", "\n")
+    .split("\n");
   for (const rule of RULES) {
-    const line = lines.findIndex((text) => rule.pattern.test(text));
+    const line = lines.findIndex((text) => rule.test(text));
     if (line !== -1) {
       findings.push({
         message: rule.message,
