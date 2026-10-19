@@ -76,7 +76,7 @@ moon run worker:setup -- --keychain      # the same, handing a new owner key to 
 
 Setup is a moon task, not `pnpm setup`: `pnpm setup` is pnpm's own built-in command, and this repository has no npm scripts. Wrangler is the only deployment path. Setup is idempotent: run again, it creates nothing that exists and keeps the owner key (`--rotate-owner-key` replaces it). Pass `CLOUDFLARE_ACCOUNT_ID` when Wrangler can reach more than one account.
 
-It creates, in order: the R2 bucket `shelfkit-blobs`, with a bucket lock that retains everything under `objects/` indefinitely (content is addressed by `sha256`, so a published archive cannot be overwritten or deleted at the storage layer); the queues `shelfkit-jobs-dlq` and `shelfkit-jobs`; the owner key, of which the Worker keeps only the SHA-256 as the secret `OWNER_KEY_HASH`; and the deploy, which creates the Durable Object namespace and applies its migrations. A new owner key is shown once and stored nowhere else.
+It creates, in order: the R2 bucket `shelfkit-blobs`, with a bucket lock that retains everything under `archives/` indefinitely (published registry archives, addressed by `sha256`, so a published version cannot be overwritten or deleted at the storage layer; uploaded content under `objects/` is not locked); the queues `shelfkit-jobs-dlq` and `shelfkit-jobs`; the owner key, of which the Worker keeps only the SHA-256 as the secret `OWNER_KEY_HASH`; and the deploy, which creates the Durable Object namespace and applies its migrations. A new owner key is shown once and stored nowhere else.
 
 Then, from a shelf:
 
@@ -90,7 +90,9 @@ A profile then installs from the deployment with APM's registry client: `registr
 
 Keys are managed over GraphQL (`createKey`, `revokeKey`), with the registry's scopes: `read`, `read:{shelf}/{profile}`, `publish:{shelf}/{profile}`, `publish:{shelf}/*`, plus `mcp:{shelf}/{item}` for the MCP relay. A key works on the registry, GraphQL, and `/mcp` alike, and a revoked one fails on all three at once. The browser holds its key in an `HttpOnly` cookie.
 
-To tear a deployment down: `wrangler delete shelfkit`; `wrangler queues delete shelfkit-jobs` and `shelfkit-jobs-dlq`; `wrangler r2 bucket lock remove shelfkit-blobs --id objects-immutable`, empty the bucket, and `wrangler r2 bucket delete shelfkit-blobs`.
+Uploads no commit takes (a refused or abandoned push) stay in `objects/` and are never served: `/raw` serves only objects a committed snapshot names. Removing them is a follow-up: objects are shared by hash across a deployment's shelves, so a sweep must know that no shelf references an object before it deletes it, and there is no cross-shelf query to ask. The plan is per-shelf reference records in R2 (`refs/<sha256>/<shelf>`), written at commit, which a cron sweep reads before deleting an unreferenced object older than a day.
+
+To tear a deployment down: `wrangler delete shelfkit`; `wrangler queues delete shelfkit-jobs` and `shelfkit-jobs-dlq`; `wrangler r2 bucket lock remove shelfkit-blobs --id archives-immutable` (and `--id objects-immutable` on a deployment set up before the lock moved), empty the bucket, and `wrangler r2 bucket delete shelfkit-blobs`.
 
 ## Conventions
 

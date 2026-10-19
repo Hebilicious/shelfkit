@@ -5,8 +5,8 @@
  * This is the self-hosting path (`docs/PRD.md` section 10.5), and Wrangler is the only tool it drives. In dependency
  * order, and idempotently, so running it again creates nothing that exists:
  *
- * 1. the R2 bucket `shelfkit-blobs`, and a bucket lock that keeps `objects/` immutable: a published revision cannot be
- *    overwritten or deleted at the storage layer either;
+ * 1. the R2 bucket `shelfkit-blobs`, and a bucket lock that keeps `archives/` immutable: a published registry
+ *    version cannot be overwritten or deleted at the storage layer either;
  * 2. the queue `shelfkit-jobs` and its dead-letter queue `shelfkit-jobs-dlq`;
  * 3. the owner key, unless the Worker already has one: 32 random bytes, of which the Worker keeps only the SHA-256 as
  *    the secret `OWNER_KEY_HASH`;
@@ -44,14 +44,18 @@ const BUCKET = "shelfkit-blobs";
 const QUEUE = "shelfkit-jobs";
 const DEAD_LETTERS = "shelfkit-jobs-dlq";
 const OWNER_SECRET = "OWNER_KEY_HASH";
-/** The bucket lock: everything under `objects/`, the content-addressed prefix, retained indefinitely. */
+/**
+ * The bucket lock: published registry archives (`archives/`), retained indefinitely. Uploaded content (`objects/`) is
+ * not locked: an upload no commit takes must stay removable. Setting the configuration replaces any earlier rule, so
+ * a deployment that locked `objects/` (the rule `objects-immutable`) loses that rule here.
+ */
 const LOCK = {
   rules: [
     {
       condition: { type: "Indefinite" },
       enabled: true,
-      id: "objects-immutable",
-      prefix: "objects/",
+      id: "archives-immutable",
+      prefix: "archives/",
     },
   ],
 };
@@ -122,7 +126,9 @@ function ensureBucket(): void {
 }
 
 function ensureLock(directory: string): void {
-  step(`Bucket lock on ${BUCKET}/objects/ (indefinite retention)`);
+  step(
+    `Bucket lock on ${BUCKET}/archives/ (published archives, indefinite retention)`
+  );
   if (dryRun) {
     console.log("    would set it");
     return;
