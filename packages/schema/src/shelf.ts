@@ -264,11 +264,7 @@ export const ItemSummarySchema = v.strictObject({
 
 /** What `shelfkit check` reports that does not stop a load: the Rust `Notice`. */
 export const NoticeSchema = v.strictObject({
-  code: v.picklist([
-    "producer-nonconformant-target",
-    "unratified-lsp",
-    "stale-pin",
-  ]),
+  code: v.picklist(["producer-nonconformant-target", "unratified-lsp"]),
   message: v.string(),
   /** The file the notice is about, relative to the shelf root. */
   path: v.string(),

@@ -195,7 +195,6 @@ export const CompileNoteSchema = v.strictObject({
   code: v.picklist([
     "producer-nonconformant-target",
     "unratified-lsp",
-    "stale-pin",
     "hook-approval",
   ]),
 });

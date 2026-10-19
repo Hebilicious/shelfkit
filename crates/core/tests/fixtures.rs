@@ -576,3 +576,28 @@ fn one_symbolic_link_costs_one_error() {
         "items/prompts/pr-description/link.md: invalid path: symbolic links are not allowed in a shelf"
     );
 }
+
+#[test]
+fn the_schema_package_lists_exactly_the_notice_codes_rust_emits() {
+    let catalog =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/schema/acidcat.catalog.json");
+    let catalog: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(catalog).unwrap()).unwrap();
+    let listed: BTreeSet<String> = catalog["$defs"]["Notice"]["properties"]["code"]["enum"]
+        .as_array()
+        .expect("the catalog's Notice type lists its codes")
+        .iter()
+        .map(|code| code.as_str().unwrap().to_owned())
+        .collect();
+    let emitted: BTreeSet<String> = shelfkit_core::NoticeCode::ALL
+        .iter()
+        .map(|code| {
+            serde_json::to_value(code)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(listed, emitted);
+}

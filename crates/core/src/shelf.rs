@@ -71,6 +71,10 @@ pub enum NoticeCode {
     UnratifiedLsp,
 }
 
+impl NoticeCode {
+    pub const ALL: [Self; 2] = [Self::ProducerNonconformantTarget, Self::UnratifiedLsp];
+}
+
 impl std::fmt::Display for Notice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}: {}", self.path, self.message)

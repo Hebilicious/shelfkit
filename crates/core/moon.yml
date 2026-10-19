@@ -25,10 +25,12 @@ tasks:
     command: "cargo fmt --package shelfkit-core --check"
   test:
     command: "cargo test --package shelfkit-core"
-    # The tests load ShelfKit's own shelf as well as the fixtures beside them.
+    # The tests load ShelfKit's own shelf as well as the fixtures beside them,
+    # and compare the notice codes with the schema package's catalog.
     inputs:
       - "**/*"
       - "/shelf/**/*"
+      - "/packages/schema/acidcat.catalog.json"
       - "/Cargo.toml"
       - "/Cargo.lock"
   fmt:

@@ -1170,8 +1170,7 @@
         "code": {
           "enum": [
             "producer-nonconformant-target",
-            "unratified-lsp",
-            "stale-pin"
+            "unratified-lsp"
           ],
           "type": "string"
         },
@@ -1536,7 +1535,6 @@
                   "enum": [
                     "producer-nonconformant-target",
                     "unratified-lsp",
-                    "stale-pin",
                     "hook-approval"
                   ],
                   "type": "string"
