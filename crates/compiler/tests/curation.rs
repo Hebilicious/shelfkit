@@ -517,3 +517,132 @@ fn add_lists_a_remote_source_through_the_hosted_import_then_imports_what_was_pic
     assert_eq!(snapshot(&root), before);
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// A machine with `GITHUB_TOKEN` set, whose network answers 404, or
+/// `answer` for POSTs, and records each request's URL and whether it
+/// carried a credential.
+struct Watched {
+    sent: RefCell<Vec<(String, bool)>>,
+    post: &'static str,
+}
+
+impl System for Watched {
+    fn find(&self, _: &str) -> Option<PathBuf> {
+        None
+    }
+    fn capture(&self, program: &Path, _: &[&str]) -> io::Result<(i32, String)> {
+        panic!("ran {}", program.display());
+    }
+    fn run(&self, program: &Path, _: &[String], _: &Path) -> io::Result<i32> {
+        panic!("ran {}", program.display());
+    }
+    fn platform(&self) -> Platform {
+        Platform::Unix
+    }
+    fn var(&self, name: &str) -> Option<String> {
+        (name == "GITHUB_TOKEN").then(|| "ghp_doctor_test_token".to_owned())
+    }
+    fn http(&self, request: &HttpRequest) -> io::Result<HttpResponse> {
+        let carried = request
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("authorization"));
+        self.sent.borrow_mut().push((request.url.clone(), carried));
+        if request.method == "POST" {
+            return Ok(HttpResponse {
+                status: 200,
+                body: self.post.as_bytes().to_vec(),
+            });
+        }
+        Ok(HttpResponse {
+            status: 404,
+            body: Vec::new(),
+        })
+    }
+}
+
+fn shelf_with(name: &str, items: &[(&str, &str)]) -> PathBuf {
+    let root =
+        std::env::temp_dir().join(format!("shelfkit-curation-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("shelf.json"), r#"{ "name": "watched" }"#).unwrap();
+    for (path, text) in items {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    root
+}
+
+#[test]
+fn doctor_sends_the_github_token_to_api_github_com_and_nowhere_else() {
+    let shelf = shelf_with(
+        "token",
+        &[
+            (
+                "items/mcp/lookalike/item.json",
+                r#"{ "id": "lookalike", "kind": "mcp", "flavour": "remote", "name": "x/y", "title": "Lookalike",
+                     "source": { "url": "https://api.github.com.evil.example/v0.1/servers/x/versions/1", "version": "1" } }"#,
+            ),
+            (
+                "items/skills/kit/item.json",
+                r#"{ "id": "kit", "kind": "skill", "title": "Kit",
+                     "source": { "repo": "https://github.com/acme/kit", "path": "skills/kit", "resolvedCommit": "0000000000000000000000000000000000000000" } }"#,
+            ),
+        ],
+    );
+    let machine = Watched {
+        sent: RefCell::new(Vec::new()),
+        post: "{}",
+    };
+    let ran = shelfkit(
+        &shelf,
+        &machine,
+        &["doctor", "--shelf", shelf.to_str().unwrap()],
+    );
+    assert_eq!(ran.code, 0, "{}", ran.stdout);
+    let sent = machine.sent.borrow();
+    assert!(
+        sent.iter()
+            .any(|(url, _)| url.starts_with("https://api.github.com.evil.example/")),
+        "{sent:?}"
+    );
+    for (url, carried) in sent.iter() {
+        assert_eq!(
+            *carried,
+            url.starts_with("https://api.github.com/"),
+            "{url}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(shelf);
+}
+
+#[test]
+fn doctor_reports_a_graphql_error_from_an_instance_as_an_error_not_as_gone() {
+    let shelf = shelf_with(
+        "graphql-error",
+        &[(
+            "items/prompts/commit-style/item.json",
+            r#"{ "id": "commit-style", "kind": "prompt", "title": "Commit message",
+                 "source": { "url": "https://shelf.example", "path": "team/commit-style", "digest": "sha256:00" } }"#,
+        )],
+    );
+    let machine = Watched {
+        sent: RefCell::new(Vec::new()),
+        post: r#"{ "errors": [{ "message": "the shelf is being migrated" }] }"#,
+    };
+    let ran = shelfkit(
+        &shelf,
+        &machine,
+        &["doctor", "--shelf", shelf.to_str().unwrap()],
+    );
+    assert!(
+        ran.stdout.contains(
+            "error   commit-style: https://shelf.example/graphql: the shelf is being migrated"
+        ),
+        "{}",
+        ran.stdout
+    );
+    let _ = std::fs::remove_dir_all(shelf);
+}

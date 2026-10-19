@@ -108,6 +108,9 @@ fn host(url: &str) -> &str {
 }
 
 fn catalog_of(url: &str) -> Option<Catalog> {
+    if !url.starts_with("https://") || host(url).contains('@') {
+        return None;
+    }
     let host = host(url);
     if host == "clawhub.ai" || host.ends_with(".clawhub.ai") {
         return Some(Catalog::ClawHub);
@@ -233,7 +236,7 @@ impl Reader<'_> {
             ("accept".to_owned(), "application/json".to_owned()),
             ("user-agent".to_owned(), "shelfkit-doctor".to_owned()),
         ];
-        if let Some(token) = self.token.as_ref().filter(|_| url.starts_with(GITHUB_API)) {
+        if let Some(token) = self.token.as_ref().filter(|_| is_github_api(url)) {
             headers.push(("authorization".to_owned(), format!("Bearer {token}")));
         }
         if !body.is_empty() {
@@ -431,8 +434,12 @@ impl Reader<'_> {
                         hex(&Sha256::digest(canonical_json(server).as_bytes()))
                     )
                 });
+                // The digest is the registry document's only when the item came
+                // straight from the registry; one re-exported by another
+                // ShelfKit instance carries that instance's revision instead.
+                let from_registry = source.record_url.is_none() || source.record_url == source.url;
                 let status = match (&source.digest, digest) {
-                    (Some(pinned), Some(now)) if *pinned != now => Status::Moved,
+                    (Some(pinned), Some(now)) if from_registry && *pinned != now => Status::Moved,
                     _ => Status::Current,
                 };
                 (status, Some(version))
@@ -458,6 +465,14 @@ impl Reader<'_> {
                 None,
             );
         };
+        if !instance.starts_with("https://") || host(&instance).contains('@') {
+            return (
+                Status::Error(format!(
+                    "`{instance}` is not an https URL; an instance is read over https only"
+                )),
+                None,
+            );
+        }
         if source.version.is_some() {
             return self.registry_package(source, Some(&format!("{instance}/apm")));
         }
@@ -473,6 +488,18 @@ impl Reader<'_> {
             Err(message) => (Status::Error(message), None),
             Ok(None) => (Status::Gone, None),
             Ok(Some(found)) => {
+                if let Some(errors) = found.get("errors").and_then(Value::as_array)
+                    && !errors.is_empty()
+                {
+                    let messages: Vec<&str> = errors
+                        .iter()
+                        .filter_map(|error| error.get("message").and_then(Value::as_str))
+                        .collect();
+                    return (
+                        Status::Error(format!("{instance}/graphql: {}", messages.join("; "))),
+                        None,
+                    );
+                }
                 let Some(revision) = found
                     .pointer("/data/shelf/item/revision")
                     .and_then(Value::as_str)
@@ -536,6 +563,17 @@ impl Reader<'_> {
             }
         }
     }
+}
+
+/// Whether a URL is GitHub's API: `https`, the host exactly
+/// `api.github.com`, no credentials, no port. A token goes nowhere else,
+/// whatever an item's `source` says.
+fn is_github_api(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    authority == "api.github.com"
 }
 
 /// `owner` and `repo` of a github.com repository URL or shorthand.
