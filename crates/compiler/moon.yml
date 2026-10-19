@@ -6,6 +6,7 @@ tags: ["crate", "compiler"]
 
 dependsOn:
   - "core"
+  - "registry"
 
 tasks:
   build:
@@ -28,6 +29,8 @@ tasks:
       - "**/*"
       - "/crates/core/src/**/*"
       - "/crates/core/tests/fixtures/**/*"
+      - "/crates/registry/src/**/*"
+      - "/crates/registry/conformance/**/*"
       - "/shelf/**/*"
       - "/packages/schema/acidcat.catalog.json"
       - "/Cargo.toml"

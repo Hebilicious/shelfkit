@@ -34,7 +34,7 @@ tasks:
     command: "node_modules/.bin/tsc --noEmit"
     inputs: ["@group(sources)"]
   test:
-    description: "Compare the WASM engine's plans with `shelfkit compile --dry-run --json`, byte for byte."
+    description: "Compare the WASM engine's plans and packages with the native binary's, byte for byte, and run the registry conformance suite against `shelfkit serve` and against the engine."
     command: "node_modules/.bin/vitest run"
     deps:
       - "build"
@@ -45,4 +45,5 @@ tasks:
       - "/target/debug/shelfkit"
       - "/crates/core/tests/fixtures/**/*"
       - "/crates/compiler/tests/fixtures/**/*"
+      - "/crates/registry/conformance/**/*"
       - "/shelf/**/*"

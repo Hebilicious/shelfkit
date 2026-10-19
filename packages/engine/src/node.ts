@@ -5,6 +5,10 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
+import * as v from "valibot";
+
+import { SuiteSchema } from "./conformance.ts";
+import type { Suite } from "./conformance.ts";
 import { createEngine } from "./index.ts";
 import type { Engine, ShelfFile } from "./index.ts";
 
@@ -82,4 +86,38 @@ async function readShelfFile(
   } catch {
     return { contents: bytes, path: relative };
   }
+}
+
+/** The registry conformance suite in this repository. */
+export const CONFORMANCE_DIR = path.resolve(
+  import.meta.dirname,
+  "../../../crates/registry/conformance"
+);
+
+/** Read the conformance suite and its archives, checking each archive against its recorded digest. */
+export async function loadConformanceSuite(
+  directory: string = CONFORMANCE_DIR
+): Promise<{
+  readonly suite: Suite;
+  readonly archives: ReadonlyMap<string, Uint8Array>;
+}> {
+  const suite = v.parse(
+    SuiteSchema,
+    JSON.parse(await readFile(path.join(directory, "cases.json"), "utf-8"))
+  );
+  const entries = await Promise.all(
+    Object.entries(suite.archives).map(async ([name, entry]) => {
+      const bytes = new Uint8Array(
+        await readFile(path.join(directory, entry.file))
+      );
+      const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+      const digest = `sha256:${[...hash].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+      if (digest !== entry.digest) {
+        throw new Error(`${entry.file}: digest ${digest}, not ${entry.digest}`);
+      }
+      return [name, bytes] as const;
+    })
+  );
+  const archives = new Map<string, Uint8Array>(entries);
+  return { archives, suite };
 }

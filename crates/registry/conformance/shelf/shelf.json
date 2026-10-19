@@ -1,0 +1,7 @@
+{
+  "$schema": "https://shelfkit.dev/schemas/shelf.json",
+  "name": "conformance",
+  "description": "An empty shelf under the conformance suite's owner, for running crates/registry/conformance/cases.json against `shelfkit serve`.",
+  "registry": { "namespace": "acme", "public": true },
+  "sources": []
+}

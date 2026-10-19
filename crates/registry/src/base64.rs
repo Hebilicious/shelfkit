@@ -1,5 +1,6 @@
-//! Standard base64 with padding, for vendored files that are not UTF-8 text.
-//! Small enough to keep a dependency out of the WASM engine.
+//! Standard base64 with padding: vendored files that are not UTF-8 text,
+//! HTTP Basic credentials, and RFC 3230 digests. Small enough to keep a
+//! dependency out of the WASM engine.
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 

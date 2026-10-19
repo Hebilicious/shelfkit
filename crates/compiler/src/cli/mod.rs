@@ -11,6 +11,7 @@
 pub mod add;
 pub mod apm;
 pub mod output;
+pub mod serve;
 pub mod system;
 
 use crate::engine::{self, Request};
@@ -45,7 +46,7 @@ pub struct Context<'a> {
         MCP and LSP servers, libraries, stacks) and profiles that select them. `compile` turns a profile \
         into an apm.yml plus vendored content and stops; APM installs it. ShelfKit never writes a lockfile \
         and runs APM only when `install` is asked for.\n\n\
-        Not in this build: `search`, `serve` (issue #4), `login` and `push` (issue #5).",
+        Not in this build: `search`, `login` and `push` (issue #5).",
     after_help = "See docs/PRD.md for the specification."
 )]
 struct Cli {
@@ -100,6 +101,18 @@ enum Command {
     /// With neither `apm` nor `uv`, it prints the command that installs uv for this platform and installs nothing.
     /// Arguments after `--` are passed to `apm install`.
     Install(InstallArgs),
+    /// Serve the shelf as an OpenAPM registry on http://127.0.0.1, in memory, until stopped.
+    ///
+    /// Every profile is packaged and published as `{registry.namespace}/{profile}` at its `version`, or at
+    /// `0.0.0+sha256.<revision>` when it has none. The three Registry HTTP API endpoints are served at the root:
+    /// `GET /v1/packages/{owner}/{repo}/versions`, `GET .../versions/{version}/download`, and `PUT
+    /// .../versions/{version}` (tar.gz as application/gzip only; a version is immutable, so a repeat PUT is 409).
+    /// Reads are anonymous when the shelf is public (`registry.public`, or --public / --private). Keys are given as
+    /// `SCOPES=KEY`, scopes comma-separated from `read`, `read:{owner}/{repo}`, `publish:{owner}/{repo}`, and
+    /// `publish:{owner}/*`, with --key or in SHELFKIT_SERVE_KEYS (whitespace-separated; prefer it, since arguments are
+    /// visible to other processes). Keys are never printed or logged. APM 0.33.0 sends no credentials over plain
+    /// http, so APM installs only from a public shelf on loopback.
+    Serve(ServeArgs),
 }
 
 #[derive(Args)]
@@ -214,6 +227,22 @@ struct InstallArgs {
     apm_args: Vec<String>,
 }
 
+#[derive(Args)]
+struct ServeArgs {
+    /// The loopback port; 0 picks a free one.
+    #[arg(long, default_value_t = 7878)]
+    port: u16,
+    /// Serve anonymous reads, whatever shelf.json's `registry.public` says.
+    #[arg(long, conflicts_with = "private")]
+    public: bool,
+    /// Require a key for every read, whatever shelf.json's `registry.public` says.
+    #[arg(long)]
+    private: bool,
+    /// A key, as `SCOPES=KEY`. Repeatable. Prefer SHELFKIT_SERVE_KEYS.
+    #[arg(long = "key", value_name = "SCOPES=KEY")]
+    keys: Vec<String>,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum ConflictPolicy {
     Fail,
@@ -282,6 +311,7 @@ where
         Command::Verify(args) => verify(ctx, shelf, &args),
         Command::Doctor(args) => doctor(ctx, shelf, &args),
         Command::Install(args) => return install(ctx, &args),
+        Command::Serve(args) => serve_command(ctx, shelf, &args),
     };
     match outcome {
         Ok(()) => 0,
@@ -1163,4 +1193,123 @@ fn install(ctx: &mut Context<'_>, args: &InstallArgs) -> u8 {
         }
     }
     u8::try_from(code).unwrap_or(1)
+}
+
+fn serve_command(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &ServeArgs) -> Outcome {
+    use shelfkit_registry::PackageId;
+    use shelfkit_registry::host::{MemoryKeys, MemoryStore, Registry};
+    use std::sync::{Arc, Mutex};
+
+    let (_, loaded) = load_shelf(ctx, shelf)?;
+    let Some(settings) = &loaded.manifest.registry else {
+        return Err(
+            "shelf.json has no `registry`: set `registry.namespace`, the `{owner}` its profiles \
+                    publish under, and `registry.public` for anonymous reads"
+                .to_owned()
+                .into(),
+        );
+    };
+    let namespace = settings.namespace.clone();
+    let public = if args.public {
+        true
+    } else if args.private {
+        false
+    } else {
+        settings.public
+    };
+
+    let mut keys = MemoryKeys::new();
+    let from_env = std::env::var(serve::KEYS_ENV).unwrap_or_default();
+    for (index, entry) in args
+        .keys
+        .iter()
+        .map(String::as_str)
+        .chain(from_env.split_whitespace())
+        .enumerate()
+    {
+        let (key, scopes) =
+            serve::parse_key(entry).map_err(|error| format!("key {}: {error}", index + 1))?;
+        keys.add(&key, scopes);
+    }
+    let key_count = keys.len();
+    let mut store = MemoryStore::new();
+    store.add_shelf(&namespace, public);
+    let mut registry = Registry { store, keys };
+
+    let listener = serve::bind(args.port)
+        .map_err(|error| format!("cannot listen on 127.0.0.1:{}: {error}", args.port))?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| error.to_string())?
+        .port();
+    let url = format!("http://127.0.0.1:{port}");
+    let visibility = if public {
+        "public: anonymous reads"
+    } else {
+        "private: every read needs a key"
+    };
+    let _ = writeln!(ctx.stdout, "listening on {url}");
+    let _ = writeln!(
+        ctx.stdout,
+        "shelf `{namespace}`, {visibility}, {key_count} key(s)"
+    );
+
+    let now = serve::now();
+    let mut published = Vec::new();
+    for id in loaded.profiles.keys() {
+        let packaged = loaded
+            .resolve(id)
+            .and_then(|resolved| crate::package::package(&loaded, &resolved));
+        match packaged {
+            Ok(packaged) => {
+                let package = PackageId::parse(&packaged.package)?;
+                let response =
+                    registry.publish(&package, &packaged.version, packaged.archive.clone(), &now);
+                if response.status == 201 {
+                    let _ = writeln!(
+                        ctx.stdout,
+                        "published {} {} {}",
+                        packaged.package, packaged.version, packaged.digest
+                    );
+                    published.push((package, packaged.version));
+                } else {
+                    let _ = writeln!(
+                        ctx.stderr,
+                        "not published: {} ({}): {}",
+                        packaged.package,
+                        response.status,
+                        String::from_utf8_lossy(&response.body)
+                    );
+                }
+            }
+            Err(errors) => {
+                let _ = writeln!(ctx.stderr, "not published: profile `{id}`:\n{errors}");
+            }
+        }
+    }
+    let default = loaded.manifest.default_profile.as_deref();
+    let example = published
+        .iter()
+        .find(|(package, _)| Some(package.repo.as_str()) == default)
+        .or_else(|| published.first());
+    if let Some((package, version)) = example {
+        let _ = writeln!(
+            ctx.stdout,
+            "\nTo install it with APM, run `apm experimental enable registries` once, then declare in apm.yml:\n\n{}",
+            serve::install_snippet(&url, package, version)
+        );
+    }
+    if !public {
+        let _ = writeln!(
+            ctx.stderr,
+            "note: APM 0.33.0 sends no credentials over plain http, so it cannot read a private shelf from \
+             this server; use --public for APM, or a client that sends a key"
+        );
+    }
+    let _ = ctx.stdout.flush();
+
+    let shared = Arc::new(Mutex::new(registry));
+    let log: Arc<Mutex<dyn Write + Send>> = Arc::new(Mutex::new(std::io::stderr()));
+    serve::run(&listener, &shared, &log);
+    Ok(())
 }
