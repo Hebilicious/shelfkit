@@ -1,0 +1,6 @@
+{
+  "id": "team-conventions",
+  "kind": "instructions",
+  "title": "Team conventions",
+  "source": { "id": "acme", "path": "acme/team-conventions", "version": "1.2.0", "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111" }
+}

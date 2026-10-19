@@ -1,0 +1,7 @@
+{
+  "id": "deploy",
+  "kind": "skill",
+  "title": "Deploy",
+  "targets": ["claude"],
+  "source": { "id": "acme", "path": "acme/deploy-skill", "version": "2.0.1" }
+}

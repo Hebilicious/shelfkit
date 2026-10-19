@@ -1,0 +1,18 @@
+{
+  "profile": "minimal",
+  "profileRevision": "sha256-45c555ef58f2f77e21485bd89e08562159ae32367a7df86718fdaa3e2eef240c",
+  "apmYml": "name: minimal\nversion: \"0.0.0\"\ndependencies:\n  apm:\n    - ./vendor/minimal\n",
+  "apmYmlDigest": "sha256:aafdeb1c2d1fc120b7fbf2736c3efef1b00a643211925c8c4cb208a9c7f6bf71",
+  "files": [
+    {
+      "path": "vendor/minimal/.apm/prompts/pr-description.prompt.md",
+      "contents": "---\ndescription: Write a PR description from the staged diff\ninput:\n  - ticket\n  - audience\n---\n\nWrite a pull request description for the staged diff.\n\nAudience: ${input:audience}\nTicket: ${input:ticket}\n"
+    },
+    {
+      "path": "vendor/minimal/apm.yml",
+      "contents": "name: minimal\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile minimal, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\n"
+    }
+  ],
+  "installCommand": "apm install",
+  "notes": []
+}

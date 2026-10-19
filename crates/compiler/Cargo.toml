@@ -1,6 +1,6 @@
 [package]
 name = "shelfkit-compiler"
-description = "Compiles a shelf profile into a valid apm.yml plus vendored content."
+description = "Compiles a shelf profile into a valid apm.yml plus vendored content, and the shelfkit binary."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,12 +10,23 @@ rust-version.workspace = true
 [[bin]]
 name = "shelfkit"
 path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli", "schema"]
+# The `shelfkit` command line: argument parsing, the filesystem, and running APM.
+cli = ["schema", "dep:clap"]
+# Validation against the vendored OpenAPM JSON Schema. Native only.
+schema = ["dep:jsonschema"]
 
 [dependencies]
 shelfkit-core.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 serde_yaml.workspace = true
-thiserror.workspace = true
+sha2.workspace = true
+clap = { workspace = true, optional = true }
+jsonschema = { workspace = true, optional = true }
 
 [lints]
 workspace = true

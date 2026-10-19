@@ -12,7 +12,7 @@ rust-version = "1.98"
 [workspace.dependencies]
 # Internal
 shelfkit-core = { path = "crates/core", version = "0.0.0" }
-shelfkit-compiler = { path = "crates/compiler", version = "0.0.0" }
+shelfkit-compiler = { path = "crates/compiler", version = "0.0.0", default-features = false }
 
 # Shared
 serde = { version = "1", features = ["derive"] }
@@ -21,7 +21,11 @@ serde_yaml = "0.9"
 thiserror = "2"
 sha2 = "0.10"
 walkdir = "2"
-jsonschema = "0.30"
+# No default features: those fetch remote schemas over the network. Validation
+# is native only, because the crate cannot build for wasm32-unknown-unknown
+# without wasm-bindgen imports (its hasher seeds from `getrandom`).
+jsonschema = { version = "0.59", default-features = false }
+clap = { version = "4", features = ["derive"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -37,3 +41,10 @@ expect_used = { level = "warn", priority = -1 }
 lto = true
 codegen-units = 1
 strip = true
+
+# The WASM engine (`crates/wasm`), built with `--profile wasm`: the release
+# profile, sized for download rather than speed.
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+panic = "abort"

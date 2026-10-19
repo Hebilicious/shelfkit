@@ -1,0 +1,5 @@
+{
+  "Stop": [
+    { "hooks": [{ "type": "command", "command": "pnpm lint" }] }
+  ]
+}

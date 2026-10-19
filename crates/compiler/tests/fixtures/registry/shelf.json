@@ -1,0 +1,9 @@
+{
+  "name": "registry",
+  "description": "A compiler fixture: items routed through an APM registry beside Git references, a hook imported from Git, and a skill with a binary asset.",
+  "defaultProfile": "team",
+  "sources": [
+    { "id": "acme", "kind": "apm-registry", "url": "http://192.168.1.20:8787/apm" },
+    { "id": "upstream", "kind": "git", "repo": "https://github.com/acme/agent-kit" }
+  ]
+}

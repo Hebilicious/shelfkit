@@ -24,10 +24,11 @@ tasks:
     inputs: ["@group(sources)"]
   test:
     command: "node_modules/.bin/vitest run"
-    # The contract tests read the Rust fixtures and golden file, and ShelfKit's own shelf.
+    # The contract tests read the Rust fixtures and golden files, and ShelfKit's own shelf.
     inputs:
       - "@group(sources)"
       - "/crates/core/tests/**/*"
+      - "/crates/compiler/tests/golden/**/*"
       - "/shelf/**/*"
 
   catalog:
