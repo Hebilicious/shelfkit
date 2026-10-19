@@ -29,6 +29,22 @@ walkdir = "2"
 # without wasm-bindgen imports (its hasher seeds from `getrandom`).
 jsonschema = { version = "0.59", default-features = false }
 clap = { version = "4", features = ["derive"] }
+# The hosted service's client (`shelfkit login`, `push`, `fetch`): a blocking
+# HTTP client, so the binary needs no async runtime, with rustls and Mozilla's
+# roots rather than the platform's TLS.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+# The OS keychain `login` stores a key in: Secret Service on Linux and the BSDs
+# (through libdbus, built from source so no system package is needed), the
+# Keychain on macOS, and the Credential Manager on Windows.
+keyring-core = "1"
+dbus-secret-service-keyring-store = { version = "1", features = [
+  "crypto-rust",
+  "vendored",
+] }
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
+windows-native-keyring-store = "1"
+# Reading a key from a terminal without echoing it.
+rpassword = "7"
 # gzip for registry archives, through the pure-Rust backend only, so the
 # same bytes come out natively and in WASM.
 flate2 = { version = "1", default-features = false, features = [

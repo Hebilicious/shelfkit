@@ -1,8 +1,12 @@
-//! The one door to other processes.
+//! The one door to the world outside the shelf: other processes, the
+//! network, the OS keychain, and the user's environment.
 //!
 //! Every command reaches `PATH` and child processes through [`System`], and
 //! only `install` and `doctor` ever call it. Tests pass a double that panics
-//! on any call, which is how they prove `compile` never runs APM.
+//! on any call, which is how they prove `compile` never runs APM. The hosted
+//! service's client (`login`, `push`, `fetch`) is the only caller of the
+//! network and keychain methods, whose defaults refuse, so a double that does
+//! not provide them proves a command never reaches either.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -11,6 +15,33 @@ use std::path::{Path, PathBuf};
 pub enum Platform {
     Unix,
     Windows,
+}
+
+/// A request to the hosted service.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpRequest {
+    pub method: &'static str,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+/// The hosted service's answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpResponse {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+/// The keychain service every key is stored under; the account is the
+/// service's URL.
+pub const KEYCHAIN_SERVICE: &str = "shelfkit";
+
+fn unavailable(what: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!("{what} is not available here"),
+    )
 }
 
 pub trait System {
@@ -22,6 +53,43 @@ pub trait System {
     /// return its exit code.
     fn run(&self, program: &Path, args: &[String], dir: &Path) -> io::Result<i32>;
     fn platform(&self) -> Platform;
+
+    /// Send one HTTP request and read the whole answer. A status that is not
+    /// 2xx is an answer, not an error.
+    fn http(&self, _request: &HttpRequest) -> io::Result<HttpResponse> {
+        Err(unavailable("the network"))
+    }
+
+    /// The key stored for `account` in the OS keychain, if there is one.
+    fn keychain_get(&self, _account: &str) -> io::Result<Option<String>> {
+        Err(unavailable("the OS keychain"))
+    }
+
+    fn keychain_set(&self, _account: &str, _secret: &str) -> io::Result<()> {
+        Err(unavailable("the OS keychain"))
+    }
+
+    /// Remove the key stored for `account`; `false` when there was none.
+    fn keychain_delete(&self, _account: &str) -> io::Result<bool> {
+        Err(unavailable("the OS keychain"))
+    }
+
+    /// An environment variable.
+    fn var(&self, _name: &str) -> Option<String> {
+        None
+    }
+
+    /// The directory user configuration lives in (`$XDG_CONFIG_HOME`,
+    /// `~/.config`, or `%APPDATA%`).
+    fn config_dir(&self) -> Option<PathBuf> {
+        None
+    }
+
+    /// Read a secret: from the terminal without echoing it, or a line of
+    /// standard input when that is not a terminal.
+    fn read_secret(&self, _prompt: &str) -> io::Result<String> {
+        Err(unavailable("reading a secret"))
+    }
 }
 
 /// The real machine.
@@ -73,6 +141,48 @@ impl System for HostSystem {
         } else {
             Platform::Unix
         }
+    }
+
+    fn http(&self, request: &HttpRequest) -> io::Result<HttpResponse> {
+        crate::cli::network::send(request)
+    }
+
+    fn keychain_get(&self, account: &str) -> io::Result<Option<String>> {
+        crate::cli::keychain::get(account)
+    }
+
+    fn keychain_set(&self, account: &str, secret: &str) -> io::Result<()> {
+        crate::cli::keychain::set(account, secret)
+    }
+
+    fn keychain_delete(&self, account: &str) -> io::Result<bool> {
+        crate::cli::keychain::delete(account)
+    }
+
+    fn var(&self, name: &str) -> Option<String> {
+        std::env::var(name).ok().filter(|value| !value.is_empty())
+    }
+
+    fn config_dir(&self) -> Option<PathBuf> {
+        if cfg!(windows) {
+            return std::env::var_os("APPDATA").map(PathBuf::from);
+        }
+        std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+    }
+
+    fn read_secret(&self, prompt: &str) -> io::Result<String> {
+        use std::io::IsTerminal as _;
+        let secret = if io::stdin().is_terminal() {
+            rpassword::prompt_password(prompt)?
+        } else {
+            let mut line = String::new();
+            io::stdin().read_line(&mut line)?;
+            line
+        };
+        Ok(secret.trim().to_owned())
     }
 }
 
