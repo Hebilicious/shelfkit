@@ -1,0 +1,18 @@
+{
+  "id": "playwright",
+  "kind": "mcp",
+  "title": "Playwright",
+  "flavour": "stdio",
+  "name": "microsoft/playwright-mcp",
+  "command": "npx",
+  "args": [
+    "-y",
+    "@playwright/mcp@latest"
+  ],
+  "env": {
+    "LOG_LEVEL": "info",
+    "BROWSER_TOKEN": {
+      "secret": "BROWSER_TOKEN"
+    }
+  }
+}

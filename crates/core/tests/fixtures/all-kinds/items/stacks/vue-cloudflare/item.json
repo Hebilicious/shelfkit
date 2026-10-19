@@ -1,0 +1,31 @@
+{
+  "id": "vue-cloudflare",
+  "kind": "stack",
+  "title": "Vue on Cloudflare Workers",
+  "markers": {
+    "files": [
+      "wrangler.jsonc",
+      "vite.config.ts"
+    ],
+    "dependencies": [
+      "vue",
+      "wrangler"
+    ],
+    "packageManager": "pnpm"
+  },
+  "conventions": [
+    {
+      "heading": "Runtime",
+      "body": "Workers. No Node built-ins."
+    }
+  ],
+  "recommends": [
+    "vue-sfc-patterns",
+    "context7",
+    "drizzle"
+  ],
+  "tags": [
+    "vue",
+    "cloudflare"
+  ]
+}

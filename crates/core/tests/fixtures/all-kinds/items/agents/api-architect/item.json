@@ -1,0 +1,6 @@
+{
+  "id": "api-architect",
+  "kind": "agent",
+  "title": "API architect",
+  "description": "Designs HTTP APIs."
+}

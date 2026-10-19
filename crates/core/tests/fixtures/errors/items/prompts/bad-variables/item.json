@@ -1,0 +1,15 @@
+{
+  "id": "bad-variables",
+  "kind": "prompt",
+  "title": "Bad variables",
+  "variables": [
+    {
+      "name": "x",
+      "required": true,
+      "default": "y"
+    },
+    {
+      "name": "x"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "id": "plain-http-relay",
+  "kind": "mcp",
+  "title": "Plain HTTP relay",
+  "flavour": "hosted",
+  "url": "http://mcp.example.com/mcp",
+  "headers": {
+    "X-Api-Key": "letmein"
+  }
+}

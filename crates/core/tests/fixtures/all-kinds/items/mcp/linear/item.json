@@ -1,0 +1,16 @@
+{
+  "id": "linear",
+  "kind": "mcp",
+  "title": "Linear",
+  "flavour": "hosted",
+  "url": "https://mcp.linear.app/mcp",
+  "transport": "streamable-http",
+  "headers": {
+    "Authorization": {
+      "secret": "LINEAR_API_KEY"
+    }
+  },
+  "tools": [
+    "list_issues"
+  ]
+}

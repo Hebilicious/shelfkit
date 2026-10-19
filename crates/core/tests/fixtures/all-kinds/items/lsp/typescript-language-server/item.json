@@ -1,0 +1,15 @@
+{
+  "id": "typescript-language-server",
+  "kind": "lsp",
+  "title": "TypeScript language server",
+  "name": "typescript",
+  "command": "typescript-language-server",
+  "args": [
+    "--stdio"
+  ],
+  "extensionToLanguage": {
+    ".ts": "typescript",
+    ".tsx": "typescriptreact"
+  },
+  "transport": "stdio"
+}

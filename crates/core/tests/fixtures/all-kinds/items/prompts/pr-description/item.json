@@ -1,0 +1,21 @@
+{
+  "id": "pr-description",
+  "kind": "prompt",
+  "title": "PR description",
+  "description": "Write a PR description from the staged diff",
+  "asCommand": true,
+  "variables": [
+    {
+      "name": "ticket",
+      "required": false
+    },
+    {
+      "name": "audience",
+      "default": "reviewers"
+    }
+  ],
+  "tags": [
+    "git",
+    "review"
+  ]
+}

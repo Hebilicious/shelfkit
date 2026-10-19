@@ -1,0 +1,19 @@
+{
+  "id": "drizzle",
+  "kind": "library",
+  "title": "Drizzle ORM",
+  "description": "Schema-first ORM. Use the relational query builder, not string SQL.",
+  "detect": {
+    "dependencies": [
+      "drizzle-orm"
+    ]
+  },
+  "docs": "https://orm.drizzle.team/docs/overview",
+  "notes": [
+    "Migrations are generated, never hand-written.",
+    "Prefer `db.query` over `db.select`."
+  ],
+  "tags": [
+    "db"
+  ]
+}

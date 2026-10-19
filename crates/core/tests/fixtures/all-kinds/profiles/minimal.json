@@ -1,0 +1,10 @@
+{
+  "id": "minimal",
+  "title": "Minimal",
+  "items": [
+    "pr-description"
+  ],
+  "compile": {
+    "pin": "latest"
+  }
+}

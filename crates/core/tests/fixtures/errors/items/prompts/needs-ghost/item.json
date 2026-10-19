@@ -1,0 +1,8 @@
+{
+  "id": "needs-ghost",
+  "kind": "prompt",
+  "title": "Needs a ghost",
+  "requires": [
+    "ghost"
+  ]
+}

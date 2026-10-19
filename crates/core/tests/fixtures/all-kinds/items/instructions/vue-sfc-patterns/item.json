@@ -1,0 +1,16 @@
+{
+  "id": "vue-sfc-patterns",
+  "kind": "instructions",
+  "title": "Vue SFC patterns",
+  "sections": [
+    {
+      "heading": "Script",
+      "body": "Use <script setup lang=\"ts\">."
+    }
+  ],
+  "markers": {
+    "dependencies": [
+      "vue"
+    ]
+  }
+}
