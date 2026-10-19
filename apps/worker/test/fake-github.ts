@@ -25,6 +25,9 @@ export const FAKE_ACCOUNTS = {
   owner: { id: 1001, login: "shelf-owner" },
 } as const satisfies Record<string, FakeAccount>;
 
+/** Looking this login up answers as GitHub does once its rate limit has run out. */
+export const RATE_LIMITED_LOGIN = "rate-limited";
+
 /** The client the Worker under test is configured with. Test values only. */
 export const FAKE_CLIENT = {
   id: "Iv1.testclient",
@@ -79,6 +82,10 @@ export class FakeGitHub {
   readonly web: string;
   readonly api: string;
   readonly accounts: readonly FakeAccount[];
+  /** The callback URLs the app is registered with: GitHub redirects to no other. */
+  readonly callbacks: readonly string[];
+  /** The `Authorization` header of every `GET /users/{login}`, so a test can check how the Worker asked. */
+  readonly lookups: (string | null)[] = [];
   /** Every token issued, by value, so a test can check what became of it. */
   readonly tokens = new Map<string, IssuedToken>();
   private readonly codes = new Map<string, IssuedCode>();
@@ -86,10 +93,12 @@ export class FakeGitHub {
   constructor(
     web: string,
     api: string,
+    callbacks: readonly string[],
     accounts: readonly FakeAccount[] = Object.values(FAKE_ACCOUNTS)
   ) {
     this.web = web.replace(/\/+$/u, "");
     this.api = api.replace(/\/+$/u, "");
+    this.callbacks = callbacks;
     this.accounts = accounts;
   }
 
@@ -127,7 +136,7 @@ export class FakeGitHub {
     if (
       account === undefined ||
       params.get("client_id") !== FAKE_CLIENT.id ||
-      redirectUri === "" ||
+      !this.callbacks.includes(redirectUri) ||
       params.get("code_challenge_method") !== "S256" ||
       challenge === ""
     ) {
@@ -149,6 +158,17 @@ export class FakeGitHub {
     path: string
   ): Promise<Response> {
     const [route = ""] = path.split("?");
+    if (
+      route.startsWith("/login/oauth/") &&
+      url.searchParams.has("redirect_uri") &&
+      !this.callbacks.includes(url.searchParams.get("redirect_uri") ?? "")
+    ) {
+      // GitHub's own answer to a redirect_uri the app is not registered with.
+      return new Response(
+        "The redirect_uri is not associated with this application.",
+        { status: 400 }
+      );
+    }
     if (request.method === "GET" && route === "/login/oauth/authorize") {
       return this.authorizePage(url);
     }
@@ -251,6 +271,20 @@ export class FakeGitHub {
     }
     const user = /^\/users\/(?<login>[^/]+)$/u.exec(route)?.groups?.login;
     if (request.method === "GET" && user !== undefined) {
+      this.lookups.push(request.headers.get("authorization"));
+      // A login that stands for GitHub's primary rate limit having run out.
+      if (user === RATE_LIMITED_LOGIN) {
+        return Response.json(
+          { message: "API rate limit exceeded" },
+          {
+            headers: {
+              "x-ratelimit-remaining": "0",
+              "x-ratelimit-reset": "4102444800",
+            },
+            status: 403,
+          }
+        );
+      }
       const account = this.accounts.find(
         (found) =>
           found.login.toLowerCase() === decodeURIComponent(user).toLowerCase()

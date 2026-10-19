@@ -10,9 +10,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { signSession } from "../src/auth/browser.ts";
 import { githubRoute } from "../src/auth/github.ts";
+import { authenticateRequest } from "../src/auth/index.ts";
 import {
   FAKE_ACCOUNTS,
+  FAKE_CLIENT,
   FakeGitHub,
+  RATE_LIMITED_LOGIN,
   TEST_GITHUB,
   TEST_SESSION_SECRET,
 } from "./fake-github.ts";
@@ -26,7 +29,10 @@ import {
   TEST_OWNER_KEY,
 } from "./helpers.ts";
 
-let github = new FakeGitHub(TEST_GITHUB.web, TEST_GITHUB.api);
+/** The app is registered with this deployment's callback, and GitHub redirects to no other. */
+const CALLBACKS = [`${ORIGIN}/auth/github/callback`];
+
+let github = new FakeGitHub(TEST_GITHUB.web, TEST_GITHUB.api, CALLBACKS);
 
 /** Every test starts from nothing, with the Worker's outbound `fetch` to GitHub answered by a fresh stand-in. */
 function standInGitHub(): void {
@@ -39,7 +45,7 @@ function standInGitHub(): void {
 async function fresh(): Promise<void> {
   await reset();
   await abortAllDurableObjects();
-  github = new FakeGitHub(TEST_GITHUB.web, TEST_GITHUB.api);
+  github = new FakeGitHub(TEST_GITHUB.web, TEST_GITHUB.api, CALLBACKS);
   const platform = globalThis.fetch;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const request = new Request(input, init);
@@ -267,16 +273,80 @@ describe("signing in with GitHub", () => {
     expect(finished.headers.get("location")).toBe("/sign-in?error=denied");
   });
 
-  it("returns only to a path on this origin", async () => {
-    for (const next of [
+  it("returns only to a path on this origin, whatever `next` holds", async () => {
+    const hostile = [
+      "/\t/evil.example",
+      "/\r/evil.example",
+      "/\n/evil.example",
+      "/\\evil.example",
+      "\\/evil.example",
       "//evil.example/x",
+      "/\\/evil.example",
+      " //evil.example",
       "https://evil.example",
-      "/\\evil",
+      "http:evil.example",
+      ["javascript", "alert(1)"].join(":"),
+      "/auth/github/start",
+    ];
+    const landed: string[] = [];
+    for (const next of hostile) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- one sign-in after another.
+      const { finished } = await signInAs(FAKE_ACCOUNTS.ada.login, next);
+      landed.push(`${finished.status} ${finished.headers.get("location")}`);
+    }
+    expect(landed).toStrictEqual(hostile.map(() => "302 /"));
+  });
+
+  it("keeps a local `next` with its query and fragment, and an encoded `//` as a path", async () => {
+    const kept: (string | null)[] = [];
+    for (const next of [
+      "/shelves/acme/prompts?tag=git#top",
+      "/%2F%2Fevil.example",
     ]) {
       // oxlint-disable-next-line eslint/no-await-in-loop -- one sign-in after another.
       const { finished } = await signInAs(FAKE_ACCOUNTS.ada.login, next);
-      expect(finished.headers.get("location")).toBe("/");
+      kept.push(finished.headers.get("location"));
     }
+    expect(kept).toStrictEqual([
+      "/shelves/acme/prompts?tag=git#top",
+      "/%2F%2Fevil.example",
+    ]);
+  });
+
+  it("is refused by GitHub when it starts on an address the app is not registered with", async () => {
+    const started = await visit(
+      "https://custom.example/auth/github/start?next=%2F"
+    );
+    const authorize = new URL(started.headers.get("location") ?? "");
+    expect(() => github.approve(authorize, FAKE_ACCOUNTS.ada.login)).toThrow(
+      "refuses this authorize request"
+    );
+  });
+
+  it("is not configured, and fails closed, with no session secret", async () => {
+    const unsigned = { ...env, SESSION_SECRET: "" };
+    const started = await githubRoute(
+      new Request(`${ORIGIN}/auth/github/start`),
+      unsigned
+    );
+    // A cookie the deployment's real secret signed: with no secret configured, even it is refused.
+    const cookie = await signSession(TEST_SESSION_SECRET, {
+      id: String(FAKE_ACCOUNTS.owner.id),
+      login: FAKE_ACCOUNTS.owner.login,
+    });
+    const presented = await authenticateRequest(
+      new Request(`${ORIGIN}/graphql`, {
+        headers: { cookie: `${SESSION}=${cookie}` },
+      }),
+      unsigned
+    );
+    expect({
+      location: started.headers.get("location"),
+      session: presented.session.kind,
+    }).toStrictEqual({
+      location: "/sign-in?error=unconfigured",
+      session: "anonymous",
+    });
   });
 
   it("says the deployment is not set up when it has no GitHub client", async () => {
@@ -518,6 +588,68 @@ describe("a GitHub account that is not the owner", () => {
     expect(unknown?.message).toContain("GitHub has no account");
     const owner = await refusal("shelf-owner", ["read"]);
     expect(owner?.message).toContain("owns this deployment");
+  });
+
+  it("is looked up with the app's client credentials, and a rate limit is said plainly", async () => {
+    await push("acme", shelfOf("acme", false));
+    await data(GrantSchema, GRANT, {
+      login: "grace",
+      scopes: ["read"],
+      shelf: "acme",
+    });
+    const limited = await refusal(RATE_LIMITED_LOGIN, ["read"]);
+    expect({
+      code: limited?.extensions?.code,
+      lookups: github.lookups,
+      message: limited?.message,
+    }).toStrictEqual({
+      code: "GITHUB_RATE_LIMITED",
+      lookups: [
+        `Basic ${btoa(`${FAKE_CLIENT.id}:${FAKE_CLIENT.secret}`)}`,
+        `Basic ${btoa(`${FAKE_CLIENT.id}:${FAKE_CLIENT.secret}`)}`,
+      ],
+      message:
+        "GitHub's API rate limit for looking up accounts is used up until 2100-01-01T00:00:00.000Z; try again then",
+    });
+  });
+
+  it("reaches the shelves its grant markers name, without asking every shelf", async () => {
+    await push("acme", shelfOf("acme", false));
+    await push("other", shelfOf("other", false));
+    const cookie = await sessionAs(FAKE_ACCOUNTS.ada.login);
+    for (const shelf of ["acme", "other"]) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- one grant after another.
+      await data(GrantSchema, GRANT, { login: "ada", scopes: ["read"], shelf });
+    }
+    const markers = await env.BLOBS.list({
+      prefix: `grants/${FAKE_ACCOUNTS.ada.id}/`,
+    });
+    // A shelf whose marker is gone is not listed, though its grant still holds when the shelf is opened.
+    await env.BLOBS.delete(`grants/${FAKE_ACCOUNTS.ada.id}/other`);
+    const listed = await viewerOf(cookie);
+    const opened = await asBrowser(cookie, SHELF, { shelf: "other" });
+    await data(
+      v.object({ revokeAccess: v.boolean() }),
+      "mutation Revoke($shelf: ID!, $id: ID!) { revokeAccess(shelf: $shelf, githubId: $id) }",
+      { id: String(FAKE_ACCOUNTS.ada.id), shelf: "acme" }
+    );
+    const left = await env.BLOBS.list({
+      prefix: `grants/${FAKE_ACCOUNTS.ada.id}/`,
+    });
+    expect({
+      left: left.objects.map((object) => object.key),
+      listed: listed.shelves,
+      markers: markers.objects.map((object) => object.key),
+      opened: v.parse(ShelfSchema, opened.data).shelf?.id,
+    }).toStrictEqual({
+      left: [],
+      listed: [{ id: "acme" }],
+      markers: [
+        `grants/${FAKE_ACCOUNTS.ada.id}/acme`,
+        `grants/${FAKE_ACCOUNTS.ada.id}/other`,
+      ],
+      opened: "other",
+    });
   });
 
   it("is listed for the owner, and not for a key", async () => {

@@ -4,14 +4,13 @@ import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 import { signInUrl, viewer, viewerName } from "../composables/session.ts";
+import { localPath } from "../lib/local-path.ts";
 
 const route = useRoute();
-const LocalPathSchema = v.pipe(v.string(), v.startsWith("/"));
-
 /** Where to return after signing in: a path on this site, else the shelves. */
 const next = computed(() => {
   const { next: wanted } = route.query;
-  return v.is(LocalPathSchema, wanted) && !wanted.startsWith("//") ? wanted : "/";
+  return localPath(v.is(v.string(), wanted) ? wanted : null, window.location.origin);
 });
 
 /**

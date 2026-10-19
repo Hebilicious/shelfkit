@@ -82,18 +82,35 @@ function configOf(env: Env): GitHubConfig | null {
   };
 }
 
-/** A path on this origin to return to, or `/`: never another origin, so the redirect cannot be pointed elsewhere. */
-export function localPath(next: string | null): string {
+/** Characters `next` may never hold: controls, space, and `\`, which browsers read as `/` or drop from a URL. */
+// oxlint-disable-next-line eslint/no-control-regex -- matching control characters is the point: `next` may hold none.
+const UNSAFE_PATH = /[\u0000-\u0020\u007F\\]/u;
+
+/**
+ * A path on this origin to return to, or `/`: never another origin, so the redirect cannot be pointed elsewhere.
+ * `next` must be a path; it is resolved against `origin` and must stay there, and only its path, query, and fragment
+ * are kept. A value with a control character, a space, or a backslash is refused outright, since a browser would
+ * strip or rewrite them (`/<TAB>/evil` is `//evil`), and a `Location` with one would not be sent at all.
+ */
+export function localPath(next: string | null, origin: string): string {
+  if (next === null || !next.startsWith("/") || UNSAFE_PATH.test(next)) {
+    return "/";
+  }
+  let resolved: URL;
+  try {
+    resolved = new URL(next, origin);
+  } catch {
+    return "/";
+  }
+  const path = `${resolved.pathname}${resolved.search}${resolved.hash}`;
   if (
-    next === null ||
-    !next.startsWith("/") ||
-    next.startsWith("//") ||
-    next.startsWith("/\\") ||
-    next.startsWith("/auth/")
+    resolved.origin !== origin ||
+    path.startsWith("//") ||
+    path.startsWith("/auth/")
   ) {
     return "/";
   }
-  return next;
+  return path;
 }
 
 function randomToken(): string {
@@ -155,7 +172,7 @@ async function start(url: URL, config: GitHubConfig): Promise<Response> {
   const verifier = randomToken();
   const pending = await signClaims(config.sessionSecret, {
     exp: Math.floor(Date.now() / 1000) + STATE_SECONDS,
-    next: localPath(url.searchParams.get("next")),
+    next: localPath(url.searchParams.get("next"), url.origin),
     state,
     verifier,
   });
@@ -205,7 +222,8 @@ async function finish(
     return failed("github");
   }
   const session = await signSession(config.sessionSecret, identity);
-  return redirect(pending.output.next, [
+  // Checked again on the way out, so no `next` reaches a `Location` header unchecked.
+  return redirect(localPath(pending.output.next, url.origin), [
     stateCookie("", 0),
     sessionCookie(session),
   ]);
@@ -294,7 +312,29 @@ async function revoke(config: GitHubConfig, token: string): Promise<void> {
   }
 }
 
-/** `GET {GITHUB_API_URL}/users/{login}`: a GitHub account by login, for a grant. `null` when there is none. */
+/** GitHub refused to look an account up because a rate limit ran out. */
+export class GitHubRateLimitedError extends Error {
+  readonly resetAt: string | null;
+
+  constructor(resetAt: string | null) {
+    super(
+      resetAt === null
+        ? "GitHub's API rate limit for looking up accounts is used up for now; try again in a few minutes"
+        : `GitHub's API rate limit for looking up accounts is used up until ${resetAt}; try again then`
+    );
+    this.name = "GitHubRateLimitedError";
+    this.resetAt = resetAt;
+  }
+}
+
+/**
+ * `GET {GITHUB_API_URL}/users/{login}`: a GitHub account by login, for a grant. `null` when there is none.
+ *
+ * Asked with the app's client id and secret as Basic credentials: GitHub documents that for OAuth apps, with 5,000
+ * requests an hour per app instead of 60 an hour per IP address, which a Worker shares with everyone on Cloudflare's
+ * addresses. GitHub does not document it for GitHub Apps; if it refuses the credentials (`401`), the lookup is made
+ * anonymously. A rate limit that runs out is `GitHubRateLimitedError`.
+ */
 export async function lookUpAccount(
   env: Env,
   login: string
@@ -303,16 +343,37 @@ export async function lookUpAccount(
     return null;
   }
   const api: string = env.GITHUB_API_URL;
-  const answer = await fetch(
-    `${api.replace(/\/+$/u, "")}/users/${encodeURIComponent(login)}`,
-    { headers: API_HEADERS }
-  );
-  if (answer.status === 404) {
+  const address = `${api.replace(/\/+$/u, "")}/users/${encodeURIComponent(login)}`;
+  const clientId = env.GITHUB_CLIENT_ID ?? "";
+  const clientSecret = env.GITHUB_CLIENT_SECRET ?? "";
+  let answer =
+    clientId === "" || clientSecret === ""
+      ? await fetch(address, { headers: API_HEADERS })
+      : await fetch(address, {
+          headers: {
+            ...API_HEADERS,
+            authorization: `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
+          },
+        });
+  if (answer.status === 401) {
     await answer.body?.cancel();
-    return null;
+    answer = await fetch(address, { headers: API_HEADERS });
   }
   if (!answer.ok) {
     await answer.body?.cancel();
+  }
+  if (answer.status === 403 || answer.status === 429) {
+    const reset = Number(answer.headers.get("x-ratelimit-reset") ?? "");
+    throw new GitHubRateLimitedError(
+      Number.isFinite(reset) && reset > 0
+        ? new Date(reset * 1000).toISOString()
+        : null
+    );
+  }
+  if (answer.status === 404) {
+    return null;
+  }
+  if (!answer.ok) {
     throw new Error(
       `GitHub answered ${answer.status} for the account \`${login}\``
     );

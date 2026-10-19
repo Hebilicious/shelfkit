@@ -23,9 +23,10 @@ import { GraphQLError, valueFromASTUntyped } from "graphql";
 import type { GraphQLSchema } from "graphql";
 import * as v from "valibot";
 
-import { lookUpAccount } from "../auth/github.ts";
+import { GitHubRateLimitedError, lookUpAccount } from "../auth/github.ts";
 import {
   access,
+  grantedShelves,
   listShelves,
   shelfExists,
   shelfStub,
@@ -1992,8 +1993,13 @@ export function buildSchema(): GraphQLSchema {
           if (session.kind !== "owner" && session.kind !== "github") {
             return [];
           }
-          // Each shelf's own object answers for itself; nothing is queried across shelves.
-          const listed = await listShelves(context.env);
+          // The owner sees every shelf. An account asks only the shelves its grant markers name, so an account with
+          // no grant, which anyone on GitHub can be, costs one R2 list and no shelf object. Each shelf's object still
+          // decides from its own grants.
+          const listed =
+            session.kind === "owner"
+              ? await listShelves(context.env)
+              : await grantedShelves(context.env, session.github.id);
           const found = await Promise.all(
             listed.map(async (id) => {
               if (session.kind === "github") {
@@ -2174,7 +2180,17 @@ export function buildSchema(): GraphQLSchema {
           }
           const shelf = shelfArg(args.shelf);
           const target = await held(context, shelf);
-          const account = await lookUpAccount(context.env, args.login.trim());
+          let account: Awaited<ReturnType<typeof lookUpAccount>>;
+          try {
+            account = await lookUpAccount(context.env, args.login.trim());
+          } catch (error) {
+            if (error instanceof GitHubRateLimitedError) {
+              throw new GraphQLError(error.message, {
+                extensions: { code: "GITHUB_RATE_LIMITED" },
+              });
+            }
+            throw error;
+          }
           if (account === null) {
             throw badInput(`GitHub has no account \`${args.login.trim()}\``);
           }

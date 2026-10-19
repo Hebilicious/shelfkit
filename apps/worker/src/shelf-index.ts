@@ -51,7 +51,7 @@ import { DurableObject } from "cloudflare:workers";
 import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import * as v from "valibot";
 
-import { SHELF_MARKERS } from "./auth/index.ts";
+import { grantMarker, SHELF_MARKERS } from "./auth/index.ts";
 import {
   displayPrefix,
   newShareToken,
@@ -581,15 +581,16 @@ export class ShelfIndex extends DurableObject<Env> {
    * Grant a GitHub account scopes on this shelf, the same scopes a key holds, replacing any it had. The owner only.
    * The account is named by its id, which the caller resolved from a login with GitHub's API.
    */
-  grantAccess(
+  async grantAccess(
     session: Session,
     input: {
       readonly account: GitHubIdentity;
       readonly scopes: readonly string[];
     }
-  ):
+  ): Promise<
     | { readonly ok: true; readonly grant: GrantRecord }
-    | { readonly ok: false; readonly errors: readonly string[] } {
+    | { readonly ok: false; readonly errors: readonly string[] }
+  > {
     const shelf = this.shelfId();
     if (shelf === null || this.granted(session)?.owner !== true) {
       return { errors: ["only the owner grants access"], ok: false };
@@ -618,6 +619,10 @@ export class ShelfIndex extends DurableObject<Env> {
         target: table.githubGrant.githubId,
       })
       .run();
+    await this.env.BLOBS.put(
+      grantMarker(grant.githubId, shelf),
+      new Uint8Array()
+    );
     this.broadcast({
       at: grant.createdAt,
       id: githubKeyId(input.account),
@@ -627,8 +632,9 @@ export class ShelfIndex extends DurableObject<Env> {
   }
 
   /** Remove a GitHub account's grant. A browser signed in as it loses the access at its next request. The owner only. */
-  revokeAccess(session: Session, githubId: string): boolean {
-    if (this.granted(session)?.owner !== true) {
+  async revokeAccess(session: Session, githubId: string): Promise<boolean> {
+    const shelf = this.shelfId();
+    if (shelf === null || this.granted(session)?.owner !== true) {
       return false;
     }
     const removed = this.db
@@ -636,6 +642,8 @@ export class ShelfIndex extends DurableObject<Env> {
       .where(eq(table.githubGrant.githubId, githubId))
       .returning({ githubId: table.githubGrant.githubId })
       .all();
+    // Removed whether or not a row was: a marker left by an earlier failure goes too.
+    await this.env.BLOBS.delete(grantMarker(githubId, shelf));
     if (removed.length > 0) {
       // The event also closes the account's open streams, which no longer pass `stillGranted`.
       this.broadcast({ at: now(), id: `github:${githubId}`, kind: "keys" });

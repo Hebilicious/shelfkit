@@ -6,10 +6,11 @@ import {
   FAKE_ACCOUNTS,
   FAKE_CLIENT,
 } from "../../../worker/test/fake-github.ts";
+import { FAKE_GITHUB_PORT } from "./ports.ts";
 
 export { FAKE_ACCOUNTS } from "../../../worker/test/fake-github.ts";
 
-export const FAKE_GITHUB_PORT = 8793;
+export { FAKE_GITHUB_PORT } from "./ports.ts";
 export const FAKE_GITHUB_WEB = `http://127.0.0.1:${FAKE_GITHUB_PORT}`;
 export const FAKE_GITHUB_API = `${FAKE_GITHUB_WEB}/api`;
 

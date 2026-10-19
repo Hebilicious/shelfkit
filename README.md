@@ -82,13 +82,17 @@ It creates, in order: the R2 bucket `shelfkit-blobs`, with a bucket lock that re
 
 People sign in to the web UI with GitHub; nobody pastes a key into a browser. The last step of setup creates the deployment's GitHub App through GitHub's app-manifest flow:
 
-1. Setup prints a `http://127.0.0.1:<port>/` address and opens it. The page holds the app's manifest: no repository or organization permissions, no webhook, and the callback `https://<deployment>/auth/github/callback`.
+1. Setup prints a `http://127.0.0.1:<port>/` address and opens it. The page holds the app's manifest: no repository or organization permissions, no webhook, and a callback `https://<address>/auth/github/callback` for every address Wrangler reports for the deployment. The page answers only on that address, once.
 2. "Continue to GitHub" posts the manifest to github.com (`--github-org <org>` creates the app under an organization). Click **Create GitHub App**. GitHub may ask you to change the name if it is taken.
 3. GitHub sends the browser back to the local page with a code. Setup converts it, sets the app's client id and secret as the Worker secrets `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, and keeps nothing else: the app's private key and webhook secret are never written anywhere.
 
+Every secret setup makes is set after the deploy with `wrangler secret put`, on its standard input, so none is ever written to a file; until then the Worker authenticates nobody. If Wrangler cannot list the Worker's secrets for a reason other than the Worker not existing yet, setup stops instead of replacing them.
+
+GitHub sends the browser back only to a registered callback. A custom domain added after setup needs its `https://<domain>/auth/github/callback` added in the app's settings (Settings, Developer settings, GitHub Apps, your app, "Callback URL"); a GitHub App holds up to ten.
+
 The app is public so that the accounts you grant access can authorize it; installing it grants nothing, since it asks for no permissions. Instead of the app, you can create a GitHub OAuth App by hand (Settings, Developer settings, OAuth Apps), with the authorization callback URL `https://<deployment>/auth/github/callback`, and set its two values yourself with `wrangler secret put GITHUB_CLIENT_ID` and `wrangler secret put GITHUB_CLIENT_SECRET`. Setup then finds them and skips the app.
 
-Signing in as the owner's GitHub account is signing in as the owner. Anyone else holds what you grant their account, per shelf, in the shelf's Settings ("People"), with the scopes a key has; removing a grant takes effect at their next request. The browser's session cookie names the account and holds no GitHub token: the Worker uses GitHub's token once to learn who signed in, then revokes it. Sessions last 30 days. Rotating the signing secret (`moon run worker:setup -- --rotate-session-secret`) signs every browser out.
+Signing in as the owner's GitHub account is signing in as the owner. Setup records it with `gh api --hostname github.com user`, so a GitHub Enterprise login on the same machine is never taken for it, and prints the login and id before recording them. Anyone else holds what you grant their account, per shelf, in the shelf's Settings ("People"), with the scopes a key has; removing a grant takes effect at their next request. The browser's session cookie names the account and holds no GitHub token: the Worker uses GitHub's token once to learn who signed in, then revokes it. Granting access looks the login up with GitHub's API, using the app's client id and secret, which GitHub documents for OAuth apps as 5,000 requests an hour instead of 60 per IP address; if GitHub runs out, the grant says until when. Sessions last 30 days. Rotating the signing secret (`moon run worker:setup -- --rotate-session-secret`) signs every browser out.
 
 Then, from a shelf:
 

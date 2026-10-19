@@ -20,6 +20,7 @@ import type { APIRequestContext, Page } from "@playwright/test";
 import type { Profile } from "@shelfkit/schema";
 
 import { FAKE_ACCOUNTS } from "./github.ts";
+import { BASE_URL } from "./ports.ts";
 
 /**
  * Every spec's `test`: Playwright's, plus a check that runs on every page the spec opens and fails the test on any
@@ -52,8 +53,7 @@ export const test = base.extend<{ cspViolations: string[] }>({
 
 export { expect } from "@playwright/test";
 
-export const PORT = 8792;
-export const BASE_URL = `http://localhost:${PORT}`;
+export { BASE_URL, PORT } from "./ports.ts";
 
 /** A test value only: the Worker under test is given its hash, as `moon run worker:setup` does for a deployment. */
 export const OWNER_KEY = "sko_e2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee";

@@ -14,8 +14,12 @@ import {
   FAKE_GITHUB_PORT,
   FAKE_GITHUB_WEB,
 } from "./github.ts";
+import { BASE_URL } from "./ports.ts";
 
-const github = new FakeGitHub(FAKE_GITHUB_WEB, FAKE_GITHUB_API);
+// The app is registered with the Worker under test's callback only, as setup registers a deployment's.
+const github = new FakeGitHub(FAKE_GITHUB_WEB, FAKE_GITHUB_API, [
+  `${BASE_URL}/auth/github/callback`,
+]);
 
 /** Answer one request with the stand-in. */
 async function answer(

@@ -164,6 +164,37 @@ export function sessionForGitHub(env: Env, identity: GitHubIdentity): Session {
     : { github: identity, kind: "github" };
 }
 
+/**
+ * Where the deployment lists the shelves that granted a GitHub account access: an empty object
+ * `grants/<github id>/<shelf>` per grant, written and removed by the shelf's object with the grant. It only says where
+ * to look, so a signed-in account's shelf list asks only those shelves; each shelf's object still decides access from
+ * its own `github_grant` table.
+ */
+export const GRANT_MARKERS = "grants/";
+
+export function grantMarker(githubId: string, shelf: string): string {
+  return `${GRANT_MARKERS}${githubId}/${shelf}`;
+}
+
+/** The shelves whose grant markers name a GitHub account, every page of them. */
+export async function grantedShelves(
+  env: Env,
+  githubId: string
+): Promise<string[]> {
+  const prefix = `${GRANT_MARKERS}${githubId}/`;
+  const shelves: string[] = [];
+  let cursor: string | undefined;
+  do {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- R2 lists a page at a time, each after the last.
+    const page = await env.BLOBS.list({ cursor, prefix });
+    shelves.push(
+      ...page.objects.map((object) => object.key.slice(prefix.length))
+    );
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor !== undefined);
+  return shelves;
+}
+
 /** Where the deployment lists the shelves it holds: an empty object per shelf, written by the shelf's first commit. */
 export const SHELF_MARKERS = "shelves/";
 
