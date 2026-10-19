@@ -1,18 +1,22 @@
 /**
  * Another ShelfKit instance (`docs/PRD.md` section 7.2): its public profiles and items, re-exported with provenance
- * pointing at it. A source's `url` is the instance and its `path` the shelf (its registry namespace).
+ * pointing at it. A source's `url` is the instance (over https) and its `path` the shelf (its registry namespace).
  *
  * - A **profile** imports as a reference to the package the instance publishes, `{shelf}/{profile}` on
- *   `{url}/apm`, pinned to a version and its digest. Nothing is copied, so it needs no licence; compiling it needs
- *   the instance declared in `shelf.json` as a `shelfkit` source, which the item's `source.id` names.
- * - An **item** keeps its own upstream when it has one (its repository, path, commit, licence, and credit travel
- *   with it), and its content when that licence permits copies. An item authored on the instance states no licence,
- *   so it imports as a link: provenance and a record URL, no content.
+ *   `{url}/apm`, pinned to a version and its digest. Nothing is copied, not even its description, since the instance
+ *   states no licence for it; compiling it needs the instance declared in `shelf.json` as a `shelfkit` source, which
+ *   the item's `source.id` names.
+ * - An **item** keeps its own upstream when it has one (its repository and commit, licence, and credit travel with
+ *   it) and is pinned to what the instance holds: its revision there is `source.digest`, its page there is
+ *   `recordUrl`. Its content is copied only when its own licence permits copies. An item authored on the instance
+ *   states no licence, so it imports as a link: the fields its kind cannot be without (an MCP server's endpoint, a
+ *   stack's markers), provenance, and no text or files. Discovery reads only ids, titles, and provenance, so nothing
+ *   unlicensed is fetched before it is needed.
  *
  * Drift: a profile has `moved` when the instance publishes a newer version; an item when its revision there changed.
  */
 import { ItemKindSchema, SourceSchema } from "@shelfkit/schema";
-import type { Source } from "@shelfkit/schema";
+import type { ItemKind, Source } from "@shelfkit/schema";
 import * as v from "valibot";
 
 import { byCodePoint, getJson, graphql } from "../http.ts";
@@ -53,34 +57,40 @@ const VersionsSchema = v.object({
 
 type Published = v.InferOutput<typeof VersionsSchema>["versions"][number];
 
-/** An item.json as the instance serves it: the fields this adapter reads, and the rest kept as they are. */
+/** What discovery reads of an item: who it is and where it came from, never its content. */
+const SummarySchema = v.object({
+  id: v.string(),
+  kind: ItemKindSchema,
+  revision: v.string(),
+  source: v.nullish(SourceSchema),
+  title: v.string(),
+});
+
+type Summary = v.InferOutput<typeof SummarySchema>;
+
+const ShelfSchema = v.object({
+  shelf: v.nullable(
+    v.object({
+      items: v.object({ nodes: v.array(v.object({ item: SummarySchema })) }),
+      profiles: v.array(v.object({ id: v.string(), title: v.string() })),
+    })
+  ),
+});
+
+const SummaryAnswerSchema = v.object({
+  shelf: v.nullable(v.object({ item: v.nullable(SummarySchema) })),
+});
+
+/** An item.json as the instance serves it; the adapter keeps it whole only under a licence that permits copies. */
 const DocumentSchema = v.looseObject({
   id: v.string(),
   kind: ItemKindSchema,
-  source: v.optional(SourceSchema),
   title: v.string(),
 });
 
 type Document = v.InferOutput<typeof DocumentSchema>;
 
-const ShelfSchema = v.object({
-  shelf: v.nullable(
-    v.object({
-      items: v.object({
-        nodes: v.array(
-          v.object({
-            item: v.object({ document: DocumentSchema, revision: v.string() }),
-          })
-        ),
-      }),
-      profiles: v.array(
-        v.object({ description: v.string(), id: v.string(), title: v.string() })
-      ),
-    })
-  ),
-});
-
-const ItemSchema = v.object({
+const ContentSchema = v.object({
   shelf: v.nullable(
     v.object({
       item: v.nullable(
@@ -108,12 +118,16 @@ const RevisionSchema = v.object({
 
 const SHELF_QUERY = `query Shelf($shelf: ID!) {
   shelf(id: $shelf) {
-    profiles { id title description }
-    items(limit: 500) { nodes { item { revision document } } }
+    profiles { id title }
+    items(limit: 500) { nodes { item { id kind title revision source } } }
   }
 }`;
 
-const ITEM_QUERY = `query Item($shelf: ID!, $item: ID!) {
+const SUMMARY_QUERY = `query ItemSummary($shelf: ID!, $item: ID!) {
+  shelf(id: $shelf) { item(id: $item) { id kind title revision source } }
+}`;
+
+const CONTENT_QUERY = `query ItemContent($shelf: ID!, $item: ID!) {
   shelf(id: $shelf) { item(id: $item) { revision document files { path contents encoding } } }
 }`;
 
@@ -122,11 +136,28 @@ const ITEM_REVISION_QUERY = `query ItemRevision($shelf: ID!, $item: ID!) {
   shelf(id: $shelf) { item(id: $item) { revision } }
 }`;
 
-function base(url: string | undefined): string {
+/** The fields each kind cannot be without; a link keeps these and nothing else of the document. */
+const REQUIRED_FIELDS = new Map<ItemKind, readonly string[]>([
+  ["lsp", ["command", "name", "extensionToLanguage", "transport"]],
+  ["mcp", ["flavour", "name", "url", "transport", "command", "args"]],
+  ["stack", ["markers"]],
+]);
+
+/** The instance's base URL. Only https: an instance's answers become a shelf's content. */
+export function instanceBase(url: string | undefined): string {
   if (url === undefined) {
     throw new Error("a shelfkit source needs `url`, the instance");
   }
   const parsed = new URL(url);
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username !== "" ||
+    parsed.password !== ""
+  ) {
+    throw new Error(
+      `\`${url}\` is not an https URL without credentials; an instance is read over https only`
+    );
+  }
   return `${parsed.origin}${parsed.pathname.replace(/\/+$/u, "")}`;
 }
 
@@ -146,9 +177,13 @@ export function packageVersionsUrl(
   return `${instance}/apm/v1/packages/${shelf}/${profile}/versions`;
 }
 
-/** Where a person reads an item on the instance. */
-function itemRecordUrl(instance: string, shelf: string, id: string): string {
-  return `${instance}/item?shelf=${encodeURIComponent(shelf)}&id=${encodeURIComponent(id)}`;
+/** Where a person reads an item on the instance: its page in the instance's web UI. */
+export function itemRecordUrl(
+  instance: string,
+  shelf: string,
+  id: string
+): string {
+  return `${instance}/shelves/${encodeURIComponent(shelf)}/items/${encodeURIComponent(id)}`;
 }
 
 /** The newest published version: the latest `published_at`, else the last listed. */
@@ -170,11 +205,10 @@ interface Carried {
   readonly permitsCopy: boolean;
 }
 
-function carriedLicence(document: Document): Carried {
-  const id = document.source?.licenseId;
+function carriedLicence(source: Source | null | undefined): Carried {
+  const id = source?.licenseId;
   const known = id === undefined ? undefined : fromSpdx(id);
-  const statement =
-    document.source?.license ?? known?.statement ?? NO_LICENCE.statement;
+  const statement = source?.license ?? known?.statement ?? NO_LICENCE.statement;
   return { id: known?.id ?? id, permitsCopy: known !== undefined, statement };
 }
 
@@ -198,7 +232,7 @@ async function profileCandidates(
   context: AdapterContext,
   instance: string,
   shelf: string,
-  profiles: readonly { id: string; title: string; description: string }[]
+  profiles: readonly { id: string; title: string }[]
 ): Promise<{ candidates: Omit<Candidate, "id">[]; warnings: string[] }> {
   const versions = await Promise.all(
     profiles.map(
@@ -215,7 +249,7 @@ async function profileCandidates(
       );
       continue;
     }
-    const candidate: Omit<Candidate, "id"> = {
+    candidates.push({
       key: `profile:${profile.id}`,
       kind: "instructions",
       license: PROFILE_LICENCE,
@@ -227,11 +261,7 @@ async function profileCandidates(
         url: instance,
         version: latest.version,
       },
-    };
-    if (profile.description !== "") {
-      candidate.description = profile.description;
-    }
-    candidates.push(candidate);
+    });
   }
   return { candidates, warnings };
 }
@@ -240,18 +270,17 @@ async function profileCandidates(
 function itemCandidate(
   instance: string,
   shelf: string,
-  document: Document,
-  revision: string
+  summary: Summary
 ): Omit<Candidate, "id"> {
-  const licence = carriedLicence(document);
+  const licence = carriedLicence(summary.source);
   const candidate: Omit<Candidate, "id"> = {
-    key: `item:${document.id}`,
-    kind: document.kind,
+    key: `item:${summary.id}`,
+    kind: summary.kind,
     license: licence.statement,
-    linkOnly: !licence.permitsCopy && document.kind !== "mcp",
-    path: `${shelf}/${document.id}`,
-    title: document.title,
-    upstream: { digest: revisionDigest(revision), url: instance },
+    linkOnly: !licence.permitsCopy,
+    path: `${shelf}/${summary.id}`,
+    title: summary.title,
+    upstream: { digest: revisionDigest(summary.revision), url: instance },
   };
   if (licence.id !== undefined) {
     candidate.licenseId = licence.id;
@@ -263,7 +292,7 @@ async function discover(
   source: ImportSource,
   context: AdapterContext
 ): Promise<Discovery> {
-  const instance = base(source.url);
+  const instance = instanceBase(source.url);
   const shelf = shelfOf(source);
   const data = await graphql(
     context.fetch,
@@ -282,7 +311,7 @@ async function discover(
   const items =
     source.profile === undefined
       ? data.shelf.items.nodes.map(({ item }) =>
-          itemCandidate(instance, shelf, item.document, item.revision)
+          itemCandidate(instance, shelf, item)
         )
       : [];
   const pending = [...found.candidates, ...items];
@@ -317,7 +346,7 @@ async function fetchProfile(
   pick: Pick,
   context: AdapterContext
 ): Promise<ImportedItem> {
-  const instance = base(source.url);
+  const instance = instanceBase(source.url);
   const shelf = shelfOf(source);
   const profile = candidate.key.slice("profile:".length);
   const url = packageVersionsUrl(instance, shelf, profile);
@@ -341,7 +370,6 @@ async function fetchProfile(
   return importedItem({
     files: [],
     item: {
-      description: candidate.description,
       id,
       kind: "instructions",
       source: provenance({
@@ -356,32 +384,65 @@ async function fetchProfile(
       }),
       title: candidate.title,
     },
-    linkOnly: false,
+    linkOnly: true,
     warnings,
   });
 }
 
-/** The provenance of a re-exported item: its own upstream when it has one, else the instance. */
+/**
+ * The provenance of a re-exported item: its own upstream when it has one, pinned to what the instance holds (its
+ * revision there as the digest, its page there as the record).
+ */
 function reexported(
-  document: Document,
-  revision: string,
+  summary: Summary,
   instance: string,
   shelf: string,
-  sourceId?: string
+  sourceId: string | undefined
 ): Source {
-  const upstream = document.source ?? {};
+  const upstream = summary.source ?? {};
   const fromInstance =
     upstream.repo === undefined && upstream.url === undefined;
   return provenance({
     ...upstream,
-    digest: fromInstance ? revisionDigest(revision) : upstream.digest,
+    digest: revisionDigest(summary.revision),
     id: sourceId,
-    license: carriedLicence(document).statement,
+    license: carriedLicence(summary.source).statement,
     linkTarget: upstream.linkTarget ?? instance,
-    path: fromInstance ? `${shelf}/${document.id}` : upstream.path,
-    recordUrl: itemRecordUrl(instance, shelf, document.id),
+    path: fromInstance ? `${shelf}/${summary.id}` : upstream.path,
+    recordUrl: itemRecordUrl(instance, shelf, summary.id),
     url: fromInstance ? instance : upstream.url,
   });
+}
+
+/** The item's document and files at the revision discovery saw. */
+async function content(
+  context: AdapterContext,
+  instance: string,
+  shelf: string,
+  summary: Summary
+) {
+  const data = await graphql(
+    context.fetch,
+    `${instance}/graphql`,
+    CONTENT_QUERY,
+    { item: summary.id, shelf },
+    ContentSchema
+  );
+  const found = data.shelf?.item ?? null;
+  if (found === null || found.revision !== summary.revision) {
+    throw new Error(
+      `${instance}/${shelf}/${summary.id} changed while it was imported; import it again`
+    );
+  }
+  return found;
+}
+
+/** A link's fields: the identifying fields its kind requires, from the document. */
+function required(kind: ItemKind, document: Document): Map<string, unknown> {
+  const keep = REQUIRED_FIELDS.get(kind) ?? [];
+  return new Map(
+    Object.entries(document).filter(([key]) => keep.includes(key))
+  );
 }
 
 /** An item, re-exported: its content when its own licence permits copies, else a link. */
@@ -391,53 +452,57 @@ async function fetchItem(
   pick: Pick,
   context: AdapterContext
 ): Promise<ImportedItem> {
-  const instance = base(source.url);
+  const instance = instanceBase(source.url);
   const shelf = shelfOf(source);
   const itemId = candidate.key.slice("item:".length);
   const data = await graphql(
     context.fetch,
     `${instance}/graphql`,
-    ITEM_QUERY,
+    SUMMARY_QUERY,
     { item: itemId, shelf },
-    ItemSchema
+    SummaryAnswerSchema
   );
-  const found = data.shelf?.item ?? null;
-  if (found === null) {
+  const summary = data.shelf?.item ?? null;
+  if (summary === null) {
     throw new Error(`${instance} has no public item \`${shelf}/${itemId}\``);
   }
-  const { document } = found;
   const id = pick.id ?? candidate.id;
-  const linkOnly =
-    !carriedLicence(document).permitsCopy && document.kind !== "mcp";
-  const files: ImportedFile[] = found.files.filter(
-    (file) => file.path !== "item.json"
-  );
-  const provenanceOf = reexported(
-    document,
-    found.revision,
-    instance,
-    shelf,
-    source.sourceId
-  );
-  // A link carries only what identifies the item; a copy keeps the whole document.
-  const item = linkOnly
-    ? { id, kind: document.kind, source: provenanceOf, title: document.title }
-    : { ...document, id, source: provenanceOf };
+  const provenanceOf = reexported(summary, instance, shelf, source.sourceId);
   const record = itemRecordUrl(instance, shelf, itemId);
-  return importedItem({
-    files,
-    item,
-    linkOnly,
-    warnings: linkOnly
-      ? [
-          linkOnlyWarning(
-            id,
-            `${instance}/${shelf} states no licence for it`,
-            record
-          ),
-        ]
-      : [],
-  });
+  const linkOnly = !carriedLicence(summary.source).permitsCopy;
+  const base = {
+    id,
+    kind: summary.kind,
+    source: provenanceOf,
+    title: summary.title,
+  };
+  if (linkOnly && !REQUIRED_FIELDS.has(summary.kind)) {
+    const reason = `${instance}/${shelf} states no licence for it`;
+    return importedItem({
+      files: [],
+      item: base,
+      linkOnly,
+      warnings: [linkOnlyWarning(id, reason, record)],
+    });
+  }
+  const found = await content(context, instance, shelf, summary);
+  const { id: _id, source: _source, ...document } = found.document;
+  const files: ImportedFile[] = linkOnly
+    ? []
+    : found.files.filter((file) => file.path !== "item.json");
+  const item = linkOnly
+    ? { ...Object.fromEntries(required(summary.kind, found.document)), ...base }
+    : { ...document, ...base };
+  const warnings = linkOnly
+    ? [
+        linkOnlyWarning(
+          id,
+          `${instance}/${shelf} states no licence for it`,
+          record
+        ),
+      ]
+    : [];
+  return importedItem({ files, item, linkOnly, warnings });
 }
 
 /** An item imported from a ShelfKit instance: the instance, the shelf, and the profile or item it names. */
@@ -459,7 +524,7 @@ export function shelfkitRef(item: Item): ShelfkitRef | undefined {
     return undefined;
   }
   return {
-    instance: base(source.url),
+    instance: instanceBase(source.url),
     name,
     profile: source.version !== undefined,
     shelf,

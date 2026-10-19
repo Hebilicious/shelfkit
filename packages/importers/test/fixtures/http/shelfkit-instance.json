@@ -1,47 +1,8 @@
 {
   "recorded": "2026-10-19",
   "responses": {
-    "POST https://shelfkit.hebilicious.workers.dev/graphql {\"query\":\"query Item($shelf: ID!, $item: ID!) {\\n  shelf(id: $shelf) { item(id: $item) { revision document files { path contents encoding } } }\\n}\",\"variables\":{\"item\":\"commit-style\",\"shelf\":\"hebilicious\"}}": {
-      "contentType": "application/json; charset=utf-8",
-      "status": 200,
-      "json": {
-        "data": {
-          "shelf": {
-            "item": {
-              "revision": "sha256-e6f6820f03519e7e1928fefb50a2cd6206d17d48a608376b89448becf7db18b4",
-              "document": {
-                "description": "Write a conventional commit for the staged changes.",
-                "id": "commit-style",
-                "tags": ["git"],
-                "title": "Commit message",
-                "asCommand": true,
-                "kind": "prompt",
-                "variables": [
-                  {
-                    "name": "scope"
-                  }
-                ]
-              },
-              "files": [
-                {
-                  "path": "item.json",
-                  "contents": "{\n  \"id\": \"commit-style\",\n  \"kind\": \"prompt\",\n  \"title\": \"Commit message\",\n  \"description\": \"Write a conventional commit for the staged changes.\",\n  \"asCommand\": true,\n  \"variables\": [{ \"name\": \"scope\", \"required\": false }],\n  \"tags\": [\"git\"]\n}\n",
-                  "encoding": "utf-8"
-                },
-                {
-                  "path": "prompt.md",
-                  "contents": "---\ndescription: Write a conventional commit message for the staged changes.\nargument-hint: \"[scope]\"\n---\n\nRead the staged diff and write one conventional commit message.\n\nRules:\n- Subject line in the imperative mood, no trailing period, at most 72 characters.\n- Type is one of feat, fix, chore, docs, refactor, test, perf, build, ci.\n- Include a body only when the change needs a reason that the subject cannot carry.\n- Do not mention that the change was generated, and do not list files.\n",
-                  "encoding": "utf-8"
-                }
-              ]
-            }
-          }
-        }
-      }
-    },
     "POST https://shelfkit.hebilicious.workers.dev/graphql {\"query\":\"query ItemRevision($shelf: ID!, $item: ID!) {\\n  shelf(id: $shelf) { item(id: $item) { revision } }\\n}\",\"variables\":{\"item\":\"commit-style\",\"shelf\":\"hebilicious\"}}": {
       "contentType": "application/json; charset=utf-8",
-      "status": 200,
       "json": {
         "data": {
           "shelf": {
@@ -50,125 +11,86 @@
             }
           }
         }
-      }
+      },
+      "status": 200
     },
     "POST https://shelfkit.hebilicious.workers.dev/graphql {\"query\":\"query ItemRevision($shelf: ID!, $item: ID!) {\\n  shelf(id: $shelf) { item(id: $item) { revision } }\\n}\",\"variables\":{\"item\":\"no-such-item\",\"shelf\":\"hebilicious\"}}": {
       "contentType": "application/json; charset=utf-8",
-      "status": 200,
       "json": {
         "data": {
           "shelf": {
             "item": null
           }
         }
-      }
+      },
+      "status": 200
     },
-    "POST https://shelfkit.hebilicious.workers.dev/graphql {\"query\":\"query Shelf($shelf: ID!) {\\n  shelf(id: $shelf) {\\n    profiles { id title description }\\n    items(limit: 500) { nodes { item { revision document } } }\\n  }\\n}\",\"variables\":{\"shelf\":\"hebilicious\"}}": {
+    "POST https://shelfkit.hebilicious.workers.dev/graphql {\"query\":\"query ItemSummary($shelf: ID!, $item: ID!) {\\n  shelf(id: $shelf) { item(id: $item) { id kind title revision source } }\\n}\",\"variables\":{\"item\":\"commit-style\",\"shelf\":\"hebilicious\"}}": {
       "contentType": "application/json; charset=utf-8",
-      "status": 200,
+      "json": {
+        "data": {
+          "shelf": {
+            "item": {
+              "id": "commit-style",
+              "kind": "prompt",
+              "title": "Commit message",
+              "revision": "sha256-e6f6820f03519e7e1928fefb50a2cd6206d17d48a608376b89448becf7db18b4",
+              "source": null
+            }
+          }
+        }
+      },
+      "status": 200
+    },
+    "POST https://shelfkit.hebilicious.workers.dev/graphql {\"query\":\"query Shelf($shelf: ID!) {\\n  shelf(id: $shelf) {\\n    profiles { id title }\\n    items(limit: 500) { nodes { item { id kind title revision source } } }\\n  }\\n}\",\"variables\":{\"shelf\":\"hebilicious\"}}": {
+      "contentType": "application/json; charset=utf-8",
       "json": {
         "data": {
           "shelf": {
             "profiles": [
               {
                 "id": "default",
-                "title": "ShelfKit development",
-                "description": "The conventions this repository is built to."
+                "title": "ShelfKit development"
               }
             ],
             "items": {
               "nodes": [
                 {
                   "item": {
+                    "id": "typescript-strict",
+                    "kind": "library",
+                    "title": "TypeScript strictness",
                     "revision": "sha256-c7601ef15701cb30d9f483b72a5fb06477ed7e70b6d3d7afe069da6700d065d9",
-                    "document": {
-                      "description": "The compiler settings this repository relies on.",
-                      "id": "typescript-strict",
-                      "tags": ["typescript"],
-                      "title": "TypeScript strictness",
-                      "detect": {
-                        "files": ["tsconfig.json"]
-                      },
-                      "kind": "library",
-                      "notes": [
-                        "strict, noUncheckedIndexedAccess, noImplicitOverride, and verbatimModuleSyntax are on. Do not relax them to make code compile.",
-                        "Type-only imports must be marked with `import type`.",
-                        "No enums and no parameter properties: erasableSyntaxOnly is enabled."
-                      ]
-                    }
+                    "source": null
                   }
                 },
                 {
                   "item": {
+                    "id": "commit-style",
+                    "kind": "prompt",
+                    "title": "Commit message",
                     "revision": "sha256-e6f6820f03519e7e1928fefb50a2cd6206d17d48a608376b89448becf7db18b4",
-                    "document": {
-                      "description": "Write a conventional commit for the staged changes.",
-                      "id": "commit-style",
-                      "tags": ["git"],
-                      "title": "Commit message",
-                      "asCommand": true,
-                      "kind": "prompt",
-                      "variables": [
-                        {
-                          "name": "scope"
-                        }
-                      ]
-                    }
+                    "source": null
                   }
                 },
                 {
                   "item": {
+                    "id": "shelfkit-stack",
+                    "kind": "stack",
+                    "title": "TypeScript on Cloudflare Workers with Rust core",
                     "revision": "sha256-fe854ffafad0ce416b6fac3edca2028d5c58da6361b1f3826c128bde723c476f",
-                    "document": {
-                      "description": "How ShelfKit itself is built.",
-                      "id": "shelfkit-stack",
-                      "tags": ["cloudflare", "rust", "typescript"],
-                      "title": "TypeScript on Cloudflare Workers with Rust core",
-                      "conventions": [
-                        {
-                          "body": "moon orchestrates tasks and proto pins every toolchain from .prototools. Do not add a task moon does not know about.",
-                          "heading": "Repository"
-                        },
-                        {
-                          "body": "The shelf format, validation, revision hashing, and profile resolution live in Rust under crates/. They compile native for the CLI and to WASM for the Worker, so the browser preview and the CLI cannot disagree.",
-                          "heading": "Core logic"
-                        },
-                        {
-                          "body": "One Durable Object per shelf with its own SQLite database, accessed through drizzle-orm/durable-sqlite. There is no D1 database and no cross-shelf query. Content lives in R2 keyed by sha256.",
-                          "heading": "Storage"
-                        },
-                        {
-                          "body": "APM owns install, resolution, and the lockfile. ShelfKit writes apm.yml and stops. Never parse human-oriented apm output: only audit, deps why, pack, policy status, targets, and lock export emit structured data.",
-                          "heading": "APM"
-                        },
-                        {
-                          "body": "Use APM's target slugs verbatim. Emit only the OpenAPM v0.1 canonical producer set by default; anything outside it is an explicit opt-in that check must report.",
-                          "heading": "Targets"
-                        }
-                      ],
-                      "kind": "stack",
-                      "markers": {
-                        "dependencies": ["wrangler", "vue"],
-                        "files": [
-                          "wrangler.jsonc",
-                          "Cargo.toml",
-                          ".prototools"
-                        ],
-                        "packageManager": "pnpm"
-                      },
-                      "recommends": ["typescript-strict", "commit-style"]
-                    }
+                    "source": null
                   }
                 }
               ]
             }
           }
         }
-      }
+      },
+      "status": 200
     },
     "https://shelfkit.hebilicious.workers.dev/apm/v1/packages/hebilicious/default/versions": {
       "contentType": "application/json; charset=utf-8",
-      "status": 200,
       "json": {
         "package": "hebilicious/default",
         "versions": [
@@ -179,7 +101,8 @@
             "version": "0.0.0+sha256.5442bb8baa8df9529c0fb9ec3a2522aad89704c95f5455ac5b109386c7219de6"
           }
         ]
-      }
+      },
+      "status": 200
     }
   }
 }

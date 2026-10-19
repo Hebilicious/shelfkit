@@ -80,6 +80,13 @@ type Server = v.InferOutput<typeof ServerSchema>;
 /** Whether a URL is this kind of catalog: the official registry, or a path under `/v0`. */
 export function isMcpRegistry(url: string): boolean {
   const parsed = new URL(url);
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username !== "" ||
+    parsed.password !== ""
+  ) {
+    return false;
+  }
   return (
     parsed.origin === OFFICIAL_REGISTRY || parsed.pathname.startsWith("/v0")
   );
@@ -311,7 +318,12 @@ export async function checkMcpRegistry(
     return { latest, status: "moved" };
   }
   const digest = await serverDigest(entry.server);
-  const unchanged = source.digest === undefined || source.digest === digest;
+  // The digest is the registry document's only when the item came straight from the registry; an item re-exported
+  // by another ShelfKit instance carries that instance's revision instead, and its record points there.
+  const fromRegistry =
+    source.recordUrl === undefined || source.recordUrl === source.url;
+  const unchanged =
+    !fromRegistry || source.digest === undefined || source.digest === digest;
   return {
     latest: { ...latest, digest },
     status: unchanged ? "current" : "moved",

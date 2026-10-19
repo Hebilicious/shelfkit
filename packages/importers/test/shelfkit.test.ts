@@ -2,6 +2,7 @@
  * The `shelfkit` adapter against recorded answers from the deployed instance, https://shelfkit.hebilicious.workers.dev
  * (fixtures/http/shelfkit-instance.json): read-only GraphQL queries and registry listings.
  */
+import * as v from "valibot";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { shelfkitAdapter } from "../src/adapters/shelfkit.ts";
@@ -81,8 +82,12 @@ describe("the shelfkit adapter", () => {
       { candidate: profile.key },
       context
     );
-    expect(imported.files).toStrictEqual([]);
-    expect(imported.warnings).toStrictEqual([]);
+    // The instance states no licence for the profile, so not even its description is copied.
+    expect([
+      imported.files,
+      imported.warnings,
+      imported.item.description,
+    ]).toStrictEqual([[], [], undefined]);
     expect(imported.item.source).toStrictEqual({
       digest: profile.upstream.digest,
       id: "hebilicious",
@@ -115,7 +120,7 @@ describe("the shelfkit adapter", () => {
         license: "none stated",
         linkTarget: INSTANCE,
         path: "hebilicious/commit-style",
-        recordUrl: `${INSTANCE}/item?shelf=hebilicious&id=commit-style`,
+        recordUrl: `${INSTANCE}/shelves/hebilicious/items/commit-style`,
         url: INSTANCE,
       },
       title: "Commit message",
@@ -150,5 +155,155 @@ describe("the shelfkit adapter", () => {
     ).resolves.toStrictEqual({
       status: "gone",
     });
+  });
+});
+
+/** A hand-written instance (not a recording) holding an unlicensed MCP server and an MIT skill imported from Git. */
+const REVISION = `sha256-${"1".repeat(64)}`;
+const SKILL_SOURCE = {
+  license: "MIT",
+  licenseId: "MIT",
+  path: "skills/pdf",
+  repo: "https://github.com/acme/kit",
+  resolvedCommit: "a".repeat(40),
+};
+const DOCUMENTS = new Map<
+  string,
+  { summary: object; document: object; files: object[] }
+>([
+  [
+    "linear",
+    {
+      document: {
+        description: "Linear's issues, as tools.",
+        flavour: "remote",
+        headers: { Authorization: { secret: "LINEAR_API_KEY" } },
+        id: "linear",
+        kind: "mcp",
+        title: "Linear",
+        tools: ["create_issue"],
+        transport: "streamable-http",
+        url: "https://mcp.linear.app/mcp",
+      },
+      files: [{ contents: "notes", encoding: "utf-8", path: "README.md" }],
+      summary: {
+        id: "linear",
+        kind: "mcp",
+        revision: REVISION,
+        source: null,
+        title: "Linear",
+      },
+    },
+  ],
+  [
+    "pdf",
+    {
+      document: {
+        description: "Read PDFs.",
+        id: "pdf",
+        kind: "skill",
+        source: SKILL_SOURCE,
+        title: "PDF",
+      },
+      files: [
+        {
+          contents: "---\nname: pdf\ndescription: Read PDFs.\n---\n",
+          encoding: "utf-8",
+          path: "SKILL.md",
+        },
+      ],
+      summary: {
+        id: "pdf",
+        kind: "skill",
+        revision: REVISION,
+        source: SKILL_SOURCE,
+        title: "PDF",
+      },
+    },
+  ],
+]);
+
+const fakeInstance: typeof fetch = async (_input, init) => {
+  const body = v.parse(
+    v.object({ query: v.string(), variables: v.object({ item: v.string() }) }),
+    JSON.parse(v.parse(v.string(), init?.body))
+  );
+  const found = DOCUMENTS.get(body.variables.item);
+  const item = body.query.includes("ItemContent")
+    ? { document: found?.document, files: found?.files, revision: REVISION }
+    : found?.summary;
+  return await Promise.resolve(
+    Response.json({ data: { shelf: { item: item ?? null } } })
+  );
+};
+
+/** A candidate for an item of the hand-written instance. */
+function pick(key: string): Candidate {
+  return {
+    id: key.slice(5),
+    key,
+    kind: "skill",
+    linkOnly: true,
+    title: key,
+    upstream: {},
+  };
+}
+
+describe("re-exporting from an instance", () => {
+  const fake: ImportSource = {
+    kind: "shelfkit",
+    path: "team",
+    url: "https://shelf.example",
+  };
+
+  it("keeps only an unlicensed MCP server's endpoint: no description, credentials, tools, or files", async () => {
+    const imported = await shelfkitAdapter.fetch(
+      fake,
+      pick("item:linear"),
+      { candidate: "item:linear" },
+      contextOf(fakeInstance)
+    );
+    expect(imported.files).toStrictEqual([]);
+    expect(imported.item).toStrictEqual({
+      flavour: "remote",
+      id: "linear",
+      kind: "mcp",
+      source: {
+        digest: `sha256:${"1".repeat(64)}`,
+        license: "none stated",
+        linkTarget: "https://shelf.example",
+        path: "team/linear",
+        recordUrl: "https://shelf.example/shelves/team/items/linear",
+        url: "https://shelf.example",
+      },
+      title: "Linear",
+      transport: "streamable-http",
+      url: "https://mcp.linear.app/mcp",
+    });
+  });
+
+  it("keeps a licensed item's upstream commit and pins the copy to the instance's revision", async () => {
+    const imported = await shelfkitAdapter.fetch(
+      fake,
+      pick("item:pdf"),
+      { candidate: "item:pdf" },
+      contextOf(fakeInstance)
+    );
+    expect(imported.files.map((file) => file.path)).toStrictEqual(["SKILL.md"]);
+    expect(imported.item.source).toStrictEqual({
+      ...SKILL_SOURCE,
+      digest: `sha256:${"1".repeat(64)}`,
+      linkTarget: "https://shelf.example",
+      recordUrl: "https://shelf.example/shelves/team/items/pdf",
+    });
+  });
+
+  it("refuses an instance that is not https", async () => {
+    await expect(
+      shelfkitAdapter.discover(
+        { kind: "shelfkit", path: "team", url: "http://shelf.example" },
+        contextOf(fakeInstance)
+      )
+    ).rejects.toThrow("https");
   });
 });

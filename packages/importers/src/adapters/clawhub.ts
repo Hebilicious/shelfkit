@@ -95,9 +95,16 @@ export interface SkillRef {
 }
 
 export function isClawHub(url: string): boolean {
-  const { hostname } = new URL(url);
-  return hostname === "clawhub.ai" || hostname.endsWith(".clawhub.ai");
+  const { hostname, protocol } = new URL(url);
+  return (
+    protocol === "https:" &&
+    (hostname === "clawhub.ai" || hostname.endsWith(".clawhub.ai"))
+  );
 }
+
+/** A ClawHub skill version is copied only up to this many files and bytes. */
+const MAX_FILES = 200;
+const MAX_BYTES = 5 * 1024 * 1024;
 
 /** `owner/slug` (or `@owner/slug`), or `undefined` for a search term. */
 function skillRef(path: string): SkillRef | undefined {
@@ -263,10 +270,16 @@ async function download(
   const listed = published.files.toSorted((a, b) =>
     byCodePoint(a.path, b.path)
   );
+  const declared = listed.reduce((sum, file) => sum + (file.size ?? 0), 0);
+  if (listed.length > MAX_FILES || declared > MAX_BYTES) {
+    throw new Error(
+      `${listingUrl(ref.owner, ref.slug)}@${published.version} lists ${listed.length} files and ${declared} bytes, more than ShelfKit copies`
+    );
+  }
   return await Promise.all(
     listed.map(async (file) => {
       const url = fileUrl(ref, published.version, file.path);
-      const bytes = await getBytes(context.fetch, url);
+      const bytes = await getBytes(context.fetch, url, { maxBytes: MAX_BYTES });
       if (bytes === null) {
         throw new Error(`${url}: listed in the version but not served`);
       }
