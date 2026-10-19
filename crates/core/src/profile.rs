@@ -164,11 +164,6 @@ pub struct ShelfSource {
     /// For a `shelfkit` source: the profile to import.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
-    /// The explicit opt-in to plain `http://` for a registry whose host is
-    /// neither loopback nor an RFC 1918 address (`docs/PRD.md` section 3.1).
-    /// It compiles to the registry's `insecure: true`.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub insecure: bool,
 }
 
 /// How the shelf appears as an OpenAPM registry. `namespace` is the
