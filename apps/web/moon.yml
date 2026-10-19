@@ -33,12 +33,20 @@ tasks:
       - "tokens:build"
     inputs:
       - "src/**/*"
+  # vize formats and lints the Vue components; oxfmt and oxlint, from the root
+  # project, own the TypeScript.
   lint:
-    command: "node_modules/.bin/vize fmt --check src"
+    command: "node_modules/.bin/vize lint --max-warnings 0 src"
+    deps:
+      - "format-check"
     inputs:
       - "src/**/*"
+  format-check:
+    command: "node_modules/.bin/vize fmt --check 'src/**/*.vue'"
+    inputs:
+      - "src/**/*.vue"
   fix:
-    command: "node_modules/.bin/vize fmt --write src"
+    command: "node_modules/.bin/vize fmt --write 'src/**/*.vue'"
     options:
       runInCI: false
   dev:
