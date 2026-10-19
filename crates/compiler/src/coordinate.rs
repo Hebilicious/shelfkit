@@ -130,6 +130,18 @@ pub fn upstream(
     if let Some(registry) = declared.filter(|s| s.kind == SourceKind::ApmRegistry) {
         return registry_ref(source, registry, pin).map(|r| Some(Upstream::Registry(r)));
     }
+    // Another ShelfKit instance publishes each profile as `{shelf}/{profile}`
+    // on its registry at `{url}/apm` (docs/PRD.md section 7.2).
+    if let Some(instance) = declared.filter(|s| s.kind == SourceKind::Shelfkit) {
+        let registry = ShelfSource {
+            url: instance
+                .url
+                .as_deref()
+                .map(|url| format!("{}/apm", url.trim_end_matches('/'))),
+            ..instance.clone()
+        };
+        return registry_ref(source, &registry, pin).map(|r| Some(Upstream::Registry(r)));
+    }
 
     let Some(repo) = source.repo.as_deref() else {
         return Ok(None);
@@ -544,6 +556,43 @@ mod tests {
         };
         let error = upstream(ItemKind::Skill, &inner, &sources, Pin::Revision).unwrap_err();
         assert!(error.contains("whole package"), "{error}");
+    }
+
+    #[test]
+    fn a_shelfkit_instance_is_referenced_through_its_registry() {
+        // docs/PRD.md section 7.2: another instance's public profile is imported as its
+        // registry package, `{shelf}/{profile}` on `{url}/apm`.
+        let source = Source {
+            id: Some("team".into()),
+            path: Some("team/default".into()),
+            version: Some("1.0.0".into()),
+            ..Source::default()
+        };
+        let sources = [ShelfSource {
+            id: "team".into(),
+            kind: SourceKind::Shelfkit,
+            ..registry("https://shelf.team.dev/")
+        }];
+        let found = upstream(ItemKind::Instructions, &source, &sources, Pin::Revision)
+            .unwrap()
+            .unwrap();
+        let Upstream::Registry(r) = found else {
+            panic!("a shelfkit item must be a registry reference")
+        };
+        assert_eq!(
+            (
+                r.registry.as_str(),
+                r.url.as_str(),
+                r.id.as_str(),
+                r.version.as_str()
+            ),
+            (
+                "team",
+                "https://shelf.team.dev/apm",
+                "team/default",
+                "1.0.0"
+            )
+        );
     }
 
     #[test]
