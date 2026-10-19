@@ -23,6 +23,10 @@ interface Fixture {
   readonly responses: Record<string, Answer>;
 }
 
+function byCodePoint(a: string, b: string): number {
+  return a === b ? 0 : a < b ? -1 : 1;
+}
+
 const DIRECTORY = join(import.meta.dirname, "fixtures", "http");
 
 export const recording = process.env.SHELFKIT_RECORD === "1";
@@ -197,7 +201,7 @@ export function recorded(name: string): Recorded {
       const keys = Object.keys(responses);
       const sorted = Object.fromEntries(
         Object.entries(responses)
-          .toSorted(([a], [b]) => a.localeCompare(b))
+          .toSorted(([a], [b]) => byCodePoint(a, b))
           .map(([key, answer]) => [
             key,
             answer.json === undefined

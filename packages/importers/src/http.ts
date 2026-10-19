@@ -181,3 +181,11 @@ export function canonicalJson(value: unknown): string {
   }
   return JSON.stringify(value) ?? "null";
 }
+
+/** Order strings by code point, as the shelf loader orders paths; `localeCompare` would fold case. */
+export function byCodePoint(a: string, b: string): number {
+  if (a === b) {
+    return 0;
+  }
+  return a < b ? -1 : 1;
+}

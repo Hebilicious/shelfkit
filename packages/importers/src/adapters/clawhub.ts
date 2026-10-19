@@ -11,7 +11,13 @@
 import * as v from "valibot";
 
 import { frontmatter, skillProblem, stringField } from "../frontmatter.ts";
-import { fileContents, getBytes, getJson, sha256Hex } from "../http.ts";
+import {
+  byCodePoint,
+  fileContents,
+  getBytes,
+  getJson,
+  sha256Hex,
+} from "../http.ts";
 import { kebab, uniqueIds } from "../ids.ts";
 import {
   importedItem,
@@ -240,7 +246,7 @@ export async function fetchClawHub(
   const published = v.parse(VersionSchema, found).version;
   const files: ImportedFile[] = [];
   for (const listed of published.files.toSorted((a, b) =>
-    a.path.localeCompare(b.path)
+    byCodePoint(a.path, b.path)
   )) {
     const fileUrl = api(
       `/skills/${encodeURIComponent(ref.slug)}/file?path=${encodeURIComponent(listed.path)}&version=${encodeURIComponent(

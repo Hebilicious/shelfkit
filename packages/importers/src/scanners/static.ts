@@ -1,3 +1,4 @@
+import { byCodePoint } from "../http.ts";
 /**
  * ShelfKit's own scanner: deterministic, non-AI, and reading bytes only (`docs/PRD.md` section 11). It never runs,
  * installs, or fetches what it scans. The same revision always gets the same verdict, and the verdict is about the
@@ -119,7 +120,7 @@ function scanFile(file: ImportedFile): Finding[] {
 /** Scan files; exported for tests and for `scan` below. */
 export function staticFindings(files: readonly ImportedFile[]): Finding[] {
   return files
-    .toSorted((a, b) => a.path.localeCompare(b.path))
+    .toSorted((a, b) => byCodePoint(a.path, b.path))
     .flatMap((file) => scanFile(file));
 }
 

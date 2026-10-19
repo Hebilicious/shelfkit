@@ -13,7 +13,7 @@
  */
 import * as v from "valibot";
 
-import { getJson, graphql } from "../http.ts";
+import { byCodePoint, getJson, graphql } from "../http.ts";
 import { kebab, uniqueIds } from "../ids.ts";
 import {
   importedItem,
@@ -141,9 +141,7 @@ function newest(
   versions: v.InferOutput<typeof VersionsSchema>["versions"]
 ): (typeof versions)[number] | undefined {
   return versions
-    .toSorted((a, b) =>
-      (a.published_at ?? "").localeCompare(b.published_at ?? "")
-    )
+    .toSorted((a, b) => byCodePoint(a.published_at ?? "", b.published_at ?? ""))
     .at(-1);
 }
 

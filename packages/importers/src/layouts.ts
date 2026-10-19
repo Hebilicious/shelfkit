@@ -18,6 +18,7 @@
 import type { ItemKind } from "@shelfkit/schema";
 
 import type { TreeEntry } from "./github.ts";
+import { byCodePoint } from "./http.ts";
 
 /** One thing a repository offers, before its licence is known. */
 export interface Artifact {
@@ -129,7 +130,7 @@ export function findArtifacts(
       });
     }
   }
-  return artifacts.toSorted((a, b) => a.key.localeCompare(b.key));
+  return artifacts.toSorted((a, b) => byCodePoint(a.key, b.key));
 }
 
 /** The files at `base` that a layout needs read to know what they hold. */

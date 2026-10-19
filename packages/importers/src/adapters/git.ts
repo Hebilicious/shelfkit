@@ -16,7 +16,7 @@ import type { ItemKind } from "@shelfkit/schema";
 import { frontmatter, skillProblem, stringField } from "../frontmatter.ts";
 import { GitHub, parseRepository, repositoryUrl } from "../github.ts";
 import type { TreeEntry } from "../github.ts";
-import { fileContents } from "../http.ts";
+import { byCodePoint, fileContents } from "../http.ts";
 import { uniqueIds } from "../ids.ts";
 import {
   importedItem,
@@ -575,7 +575,7 @@ async function copy(
           "it has its own item.json, which the shelf's item.json would replace",
       };
     }
-    return { files: files.toSorted((a, b) => a.path.localeCompare(b.path)) };
+    return { files: files.toSorted((a, b) => byCodePoint(a.path, b.path)) };
   }
   const target = CONTENT_FILE[kind];
   if (target === undefined) {
