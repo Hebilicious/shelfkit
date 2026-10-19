@@ -6,7 +6,7 @@ import { sessionError, shelves, viewer } from "../composables/session.ts";
 
 const router = useRouter();
 
-// One shelf is the common case (a key belongs to one): go straight to it.
+// One shelf is the common case: go straight to it.
 watch(
   shelves,
   (list) => {
@@ -24,9 +24,15 @@ watch(
     <h1>Shelves</h1>
     <p v-if="sessionError !== null" class="error-text">{{ sessionError }}</p>
     <template v-else-if="viewer !== null && !viewer.authenticated && shelves.length === 0">
-      <p>Sign in with a key to open your shelf.</p>
+      <p>Sign in with GitHub to open your shelf.</p>
       <p><RouterLink class="button primary" :to='{ name: "sign-in" }'>Sign in</RouterLink></p>
     </template>
+    <p v-else-if="viewer !== null && shelves.length === 0 && viewer.owner" class="muted">
+      There is no shelf yet. Push one with <code>shelfkit push</code>, or import one.
+    </p>
+    <p v-else-if="viewer?.login && shelves.length === 0" class="muted" data-testid="no-access">
+      @{{ viewer.login }} has no access to a shelf here yet. The owner can grant it in a shelf's Settings.
+    </p>
     <p v-else-if="viewer !== null && shelves.length === 0" class="muted">
       This key reaches no shelf yet. Push one with <code>shelfkit push</code>, or import one.
     </p>

@@ -1,6 +1,7 @@
 /**
- * What the Playwright specs share: the deployment they run against, the owner key it trusts, the CLI built from this
- * repository, and seeding a shelf through `shelfkit push`, the way a person would.
+ * What the Playwright specs share: the deployment they run against, the owner key the CLI uses with it, the CLI built
+ * from this repository, seeding a shelf through `shelfkit push`, and signing the browser in with GitHub, the way a
+ * person would.
  */
 import { execFileSync } from "node:child_process";
 import {
@@ -17,6 +18,8 @@ import path from "node:path";
 import { test as base, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import type { Profile } from "@shelfkit/schema";
+
+import { FAKE_ACCOUNTS } from "./github.ts";
 
 /**
  * Every spec's `test`: Playwright's, plus a check that runs on every page the spec opens and fails the test on any
@@ -104,6 +107,18 @@ export function seedShelf(
   return root;
 }
 
+/** A `seedShelf` preparation that makes the shelf private, so only the owner and its grants read it. */
+export function makePrivate(root: string): void {
+  const manifestPath = path.join(root, "shelf.json");
+  writeFileSync(
+    manifestPath,
+    readFileSync(manifestPath, "utf-8").replace(
+      /"public":\s*true/u,
+      '"public": false'
+    )
+  );
+}
+
 /** `shelfkit compile --dry-run --json`: the plan exactly as the CLI prints it. */
 export function dryRun(shelfRoot: string, profile: string): string {
   return shelfkit([
@@ -147,16 +162,18 @@ export function sortedTree(root: string): [string, string][] {
   return [...readTree(root)].toSorted(([a], [b]) => a.localeCompare(b));
 }
 
-/** Sign in through the sign-in screen, with the owner key unless another is given; the browser keeps it in the HttpOnly cookie. */
+/**
+ * Sign in through the sign-in screen, as a person does: "Sign in with GitHub", then the stand-in GitHub's authorize
+ * page, as the owner's account unless another is given. The browser ends up with the HttpOnly session cookie.
+ */
 export async function signIn(
   page: Page,
-  key = OWNER_KEY,
-  viewer = "Owner"
+  login: string = FAKE_ACCOUNTS.owner.login
 ): Promise<void> {
   await page.goto("/sign-in");
-  await page.getByLabel("Key").fill(key);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByTestId("viewer")).toHaveText(viewer);
+  await page.getByRole("button", { name: "Sign in with GitHub" }).click();
+  await page.getByRole("link", { name: `Authorize as @${login}` }).click();
+  await expect(page.getByTestId("viewer")).toHaveText(`@${login}`);
 }
 
 /** The clipboard's text. */

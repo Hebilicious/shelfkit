@@ -5,8 +5,9 @@
  * web:graphql-types` writes the introspection types this module reads, and `moon run web:graphql-check` fails the gate
  * when an operation no longer validates against the schema.
  *
- * Requests are same-origin `application/json` POSTs. The browser holds its key in the `HttpOnly` cookie `signIn` sets,
- * and sends this origin's `Origin` header itself, which the Worker requires of a cookie-authenticated POST.
+ * Requests are same-origin `application/json` POSTs. The browser holds its session in the `HttpOnly` cookie that
+ * signing in with GitHub sets, and sends this origin's `Origin` header itself, which the Worker requires of a
+ * cookie-authenticated POST.
  */
 import { print } from "@0no-co/graphql.web";
 import { initGraphQLTada } from "gql.tada";

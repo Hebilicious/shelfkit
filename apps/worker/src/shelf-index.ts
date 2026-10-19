@@ -61,11 +61,13 @@ import {
 import { parseScope } from "./auth/scopes.ts";
 import {
   access,
+  githubKeyId,
+  grantSession,
   mayEditProfile,
   mayRelay,
   registryAccess,
 } from "./auth/session.ts";
-import type { Session, ShelfAccess } from "./auth/session.ts";
+import type { GitHubIdentity, Session, ShelfAccess } from "./auth/session.ts";
 import { migrateDatabase, openDatabase } from "./db/migrate.ts";
 import type { ShelfDatabase } from "./db/migrate.ts";
 import * as table from "./db/schema.ts";
@@ -402,7 +404,30 @@ export class ShelfIndex extends DurableObject<Env> {
     if (shelf === null) {
       return null;
     }
-    return access(session, shelf, this.isPublic());
+    return access(this.effectiveSession(session), shelf, this.isPublic());
+  }
+
+  /**
+   * The session as this shelf sees it. A browser signed in with GitHub as an account that is not the owner holds
+   * this shelf's grant to that account, read now, so a removed grant takes effect at once: a key session with the
+   * grant's scopes, or anonymous when there is none. Every other session is itself.
+   */
+  effectiveSession(session: Session): Session {
+    const shelf = this.shelfId();
+    if (session.kind !== "github") {
+      return session;
+    }
+    const grant =
+      shelf === null
+        ? undefined
+        : this.db
+            .select({ scopes: table.githubGrant.scopes })
+            .from(table.githubGrant)
+            .where(eq(table.githubGrant.githubId, session.github.id))
+            .get();
+    return shelf === null || grant === undefined
+      ? { kind: "anonymous" }
+      : grantSession(shelf, session.github, grant.scopes);
   }
 
   /** The access a reader needs, or the failure that hides the shelf. */
@@ -530,6 +555,92 @@ export class ShelfIndex extends DurableObject<Env> {
       this.broadcast({ at: now(), id, kind: "keys" });
     }
     return revoked.length > 0;
+  }
+
+  // --- GitHub accounts ---------------------------------------------------------------------------------------------
+
+  /** What the owner granted GitHub accounts on this shelf. The owner only. */
+  listGrants(session: Session): GrantRecord[] | null {
+    if (this.granted(session)?.owner !== true) {
+      return null;
+    }
+    return this.db
+      .select()
+      .from(table.githubGrant)
+      .orderBy(asc(table.githubGrant.createdAt))
+      .all()
+      .map((row) => ({
+        createdAt: row.createdAt,
+        githubId: row.githubId,
+        login: row.login,
+        scopes: row.scopes,
+      }));
+  }
+
+  /**
+   * Grant a GitHub account scopes on this shelf, the same scopes a key holds, replacing any it had. The owner only.
+   * The account is named by its id, which the caller resolved from a login with GitHub's API.
+   */
+  grantAccess(
+    session: Session,
+    input: {
+      readonly account: GitHubIdentity;
+      readonly scopes: readonly string[];
+    }
+  ):
+    | { readonly ok: true; readonly grant: GrantRecord }
+    | { readonly ok: false; readonly errors: readonly string[] } {
+    const shelf = this.shelfId();
+    if (shelf === null || this.granted(session)?.owner !== true) {
+      return { errors: ["only the owner grants access"], ok: false };
+    }
+    const errors = input.scopes.flatMap((scope) => {
+      const parsed = parseScope(shelf, scope);
+      return "error" in parsed ? [parsed.error] : [];
+    });
+    if (input.scopes.length === 0) {
+      errors.push("a grant needs at least one scope");
+    }
+    if (errors.length > 0) {
+      return { errors, ok: false };
+    }
+    const grant: GrantRecord = {
+      createdAt: now(),
+      githubId: input.account.id,
+      login: input.account.login,
+      scopes: [...new Set(input.scopes)],
+    };
+    this.db
+      .insert(table.githubGrant)
+      .values({ ...grant, scopes: [...grant.scopes] })
+      .onConflictDoUpdate({
+        set: { login: grant.login, scopes: [...grant.scopes] },
+        target: table.githubGrant.githubId,
+      })
+      .run();
+    this.broadcast({
+      at: grant.createdAt,
+      id: githubKeyId(input.account),
+      kind: "keys",
+    });
+    return { grant, ok: true };
+  }
+
+  /** Remove a GitHub account's grant. A browser signed in as it loses the access at its next request. The owner only. */
+  revokeAccess(session: Session, githubId: string): boolean {
+    if (this.granted(session)?.owner !== true) {
+      return false;
+    }
+    const removed = this.db
+      .delete(table.githubGrant)
+      .where(eq(table.githubGrant.githubId, githubId))
+      .returning({ githubId: table.githubGrant.githubId })
+      .all();
+    if (removed.length > 0) {
+      // The event also closes the account's open streams, which no longer pass `stillGranted`.
+      this.broadcast({ at: now(), id: `github:${githubId}`, kind: "keys" });
+    }
+    return removed.length > 0;
   }
 
   // --- The shelf ---------------------------------------------------------------------------------------------------
@@ -2202,13 +2313,14 @@ export class ShelfIndex extends DurableObject<Env> {
     if ("respond" in prepared) {
       return this.answer(prepared.respond);
     }
+    const effective = this.effectiveSession(session);
     const respond = () =>
       shelfEngine.registry.respond({
-        access: registryAccess(session, prepared.ownerKey),
+        access: registryAccess(effective, prepared.ownerKey),
         body: request.body,
         contentType: request.contentType,
         context: {
-          shelf: this.registryShelf(session, prepared.ownerKey),
+          shelf: this.registryShelf(effective, prepared.ownerKey),
           versions: this.versions(prepared.packageKey),
         },
         ifNoneMatch: request.ifNoneMatch,
@@ -3181,6 +3293,14 @@ export class ShelfIndex extends DurableObject<Env> {
   }
 }
 
+/** A GitHub account's grant on the shelf. */
+export interface GrantRecord {
+  readonly githubId: string;
+  readonly login: string;
+  readonly scopes: readonly string[];
+  readonly createdAt: string;
+}
+
 /** A header's `{ "secret": "NAME" }`, as against a literal value. */
 const SecretReferenceSchema = v.strictObject({ secret: v.string() });
 
@@ -3249,6 +3369,9 @@ function forbidden(): Committed {
 function keyIdOf(session: Session): string | null {
   if (session.kind === "owner" || session.kind === "key") {
     return session.keyId;
+  }
+  if (session.kind === "github") {
+    return githubKeyId(session.github);
   }
   return session.kind === "system" ? "system" : null;
 }

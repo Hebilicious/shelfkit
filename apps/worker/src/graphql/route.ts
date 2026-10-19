@@ -3,8 +3,8 @@
  *
  * Before Yoga sees a request:
  * - It is authenticated. A header credential that is not a valid key is `401`, so a revoked key fails here at once,
- *   as on the registry and `/mcp`. A cookie holding a key that is no longer valid is cleared and the request is
- *   anonymous, so the browser can sign in again.
+ *   as on the registry and `/mcp`. A session cookie that is no longer valid (tampered with, expired, or signed with a
+ *   rotated secret) is cleared and the request is anonymous, so the browser can sign in again.
  * - It is checked against cross-site use. The SPA is same-origin, so there is no CORS. A `POST` must be
  *   `application/json` (no form or multipart body, which a page on another site could send), a request from another
  *   origin must carry its own `Authorization` header, and a `POST` the cookie authenticates must come from this

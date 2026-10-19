@@ -1,37 +1,40 @@
 /**
  * The one place a request becomes a `Session`: GraphQL, the registry routes, the raw object routes, and `/mcp` all
- * call `authenticate`, so a key revoked in its shelf's Durable Object fails on every surface at once. Nothing caches a
- * key's resolution.
+ * call it, so a key revoked in its shelf's Durable Object, or a grant removed from it, fails on every surface at once.
+ * Nothing caches a key's or a grant's resolution.
  *
- * A key arrives as `Authorization: Bearer <key>`, as HTTP Basic with the key as the password (the registry's
- * alternative form), or, from the browser, in the `HttpOnly` cookie `shelfkit_key`, which the `signIn` mutation sets
- * so the SPA never holds the key. An `Authorization` header wins over the cookie. There are no accounts, sessions, or
- * `/api/auth` routes (`docs/PRD.md` section 10.3).
+ * Programs present a key: `Authorization: Bearer <key>`, or HTTP Basic with the key as the password (the registry's
+ * alternative form). A browser presents the session cookie that signing in with GitHub sets (`browser.ts`,
+ * `github.ts`), which names a GitHub account and holds no key and no GitHub token. An `Authorization` header wins over
+ * the cookie. `/mcp` is for programs and reads the header only (`authenticateHeader`). See `docs/PRD.md` section 10.3.
  */
 import { ShelfIdSchema } from "@shelfkit/schema";
 import * as v from "valibot";
 
+import { readCookie, SESSION_COOKIE, verifySession } from "./browser.ts";
 import { parseSecret, sameHash, secretHash } from "./keys.ts";
-import type { Session } from "./session.ts";
+import type { GitHubIdentity, Session } from "./session.ts";
 
-export type { Session, ShelfAccess } from "./session.ts";
-export { access, mayEditProfile, mayRelay, registryAccess } from "./session.ts";
+export type { GitHubIdentity, Session, ShelfAccess } from "./session.ts";
+export {
+  access,
+  githubKeyId,
+  grantSession,
+  mayEditProfile,
+  mayRelay,
+  registryAccess,
+} from "./session.ts";
+export { sessionCookie, signOutCookie } from "./browser.ts";
 
-/** The cookie the browser holds its key in. */
-export const KEY_COOKIE = "shelfkit_key";
-
-/** The key a request presents, read from its headers without looking anything up. */
+/** The credential a request presents, read from its headers without looking anything up. */
 export type Presented =
   | { readonly kind: "none" }
   | { readonly kind: "unreadable" }
-  | { readonly kind: "key"; readonly key: string };
+  | { readonly kind: "key"; readonly key: string }
+  | { readonly kind: "session"; readonly token: string };
 
-/** Where a presented key came from: the `Authorization` header, or the browser's cookie. */
+/** Where a presented credential came from: the `Authorization` header, or the browser's cookie. */
 export type CredentialSource = "header" | "cookie";
-
-export function presentedKey(request: Request): Presented {
-  return presented(request).credential;
-}
 
 /** A request's credential and where it came from. */
 interface PresentedCredential {
@@ -44,10 +47,10 @@ function presented(request: Request): PresentedCredential {
   if (header !== null) {
     return { credential: readAuthorization(header), source: "header" };
   }
-  const cookie = readCookie(request.headers.get("cookie"), KEY_COOKIE);
+  const cookie = readCookie(request.headers.get("cookie"), SESSION_COOKIE);
   return cookie === undefined || cookie === ""
     ? { credential: { kind: "none" }, source: null }
-    : { credential: { key: cookie, kind: "key" }, source: "cookie" };
+    : { credential: { kind: "session", token: cookie }, source: "cookie" };
 }
 
 /** `Bearer <key>`, or Basic with the key as the password, as the registry reads them. */
@@ -76,26 +79,13 @@ export function readAuthorization(header: string): Presented {
   return { kind: "unreadable" };
 }
 
-function readCookie(header: string | null, name: string): string | undefined {
-  if (header === null) {
-    return undefined;
-  }
-  for (const part of header.split(";")) {
-    const [key, ...value] = part.trim().split("=");
-    if (key === name) {
-      return value.join("=");
-    }
-  }
-  return undefined;
-}
-
 /** A request's session, where its credential came from, and whether the browser's cookie should be cleared. */
 export interface Authenticated {
   readonly session: Session;
   readonly source: CredentialSource | null;
   /**
-   * The cookie held a key that is no longer valid. The request is anonymous instead, so a browser holding a revoked
-   * key can still sign in again, and the response clears the cookie.
+   * The cookie held a session that is no longer valid: tampered with, expired, or signed with a rotated secret. The
+   * request is anonymous instead, so the browser can sign in again, and the response clears the cookie.
    */
   readonly clearCookie: boolean;
 }
@@ -112,11 +102,17 @@ export async function authenticateRequest(
   if (credential.kind === "unreadable") {
     return { clearCookie: false, session: { kind: "invalid" }, source };
   }
-  const session = await sessionForKey(env, credential.key);
-  if (session.kind === "invalid" && source === "cookie") {
-    return { clearCookie: true, session: { kind: "anonymous" }, source };
+  if (credential.kind === "session") {
+    const session = await sessionForCookie(env, credential.token);
+    return session === null
+      ? { clearCookie: true, session: { kind: "anonymous" }, source }
+      : { clearCookie: false, session, source };
   }
-  return { clearCookie: false, session, source };
+  return {
+    clearCookie: false,
+    session: await sessionForKey(env, credential.key),
+    source,
+  };
 }
 
 /** Resolve the request's credential to a session. A stale cookie is anonymous; a bad header is `invalid`. */
@@ -126,6 +122,46 @@ export async function authenticate(
 ): Promise<Session> {
   const authenticated = await authenticateRequest(request, env);
   return authenticated.session;
+}
+
+/** Resolve the request's `Authorization` header alone, for surfaces only programs use: the cookie is not read. */
+export async function authenticateHeader(
+  request: Request,
+  env: Env
+): Promise<Session> {
+  const header = request.headers.get("authorization");
+  if (header === null) {
+    return { kind: "anonymous" };
+  }
+  const credential = readAuthorization(header);
+  return credential.kind === "key"
+    ? await sessionForKey(env, credential.key)
+    : { kind: "invalid" };
+}
+
+/**
+ * Resolve the browser's session cookie: the owner when it names the deployment's owner account (`OWNER_GITHUB_ID`),
+ * else a `github` session that each shelf's object resolves to its grant. `null` when the cookie is not a valid
+ * session, or the deployment has no `SESSION_SECRET` to check it with.
+ */
+export async function sessionForCookie(
+  env: Env,
+  token: string
+): Promise<Session | null> {
+  const secret = env.SESSION_SECRET;
+  if (secret === undefined || secret === "") {
+    return null;
+  }
+  const identity = await verifySession(secret, token);
+  return identity === null ? null : sessionForGitHub(env, identity);
+}
+
+/** The session of a GitHub account: the owner's when it is the deployment's owner account. */
+export function sessionForGitHub(env: Env, identity: GitHubIdentity): Session {
+  const owner = env.OWNER_GITHUB_ID?.trim();
+  return owner !== undefined && owner !== "" && owner === identity.id
+    ? { github: identity, keyId: "owner", kind: "owner" }
+    : { github: identity, kind: "github" };
 }
 
 /** Where the deployment lists the shelves it holds: an empty object per shelf, written by the shelf's first commit. */
@@ -203,16 +239,6 @@ export async function sessionForKey(env: Env, key: string): Promise<Session> {
     scopes: found.scopes,
     shelf: parsed.shelf,
   };
-}
-
-/** `Set-Cookie` for signing in: the key, `HttpOnly`, `Secure`, `SameSite=Strict`, for a year. */
-export function signInCookie(key: string): string {
-  return `${KEY_COOKIE}=${key}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=31536000`;
-}
-
-/** `Set-Cookie` for signing out. */
-export function signOutCookie(): string {
-  return `${KEY_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
 }
 
 /**

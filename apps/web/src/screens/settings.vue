@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 
 import { execute, messageOf } from "../api/graphql.ts";
 import { readSources } from "../api/json.ts";
 import type { ShelfSourceEntry } from "../api/json.ts";
 import {
+  AccessQuery,
   CreateKeyMutation,
+  GrantAccessMutation,
   CreateShareLinkMutation,
   PutSecretNameMutation,
   PutSourceMutation,
   RemoveSecretNameMutation,
   RemoveSourceMutation,
+  RevokeAccessMutation,
   RevokeKeyMutation,
   RevokeShareLinkMutation,
   SetVisibilityMutation,
@@ -18,6 +22,7 @@ import {
 } from "../api/operations.ts";
 import QueryState from "../components/query-state.vue";
 import { copyToClipboard } from "../composables/clipboard.ts";
+import { signOut, viewer, viewerName } from "../composables/session.ts";
 import { useShelfId } from "../composables/shelf-context.ts";
 import { notify, notifyError } from "../composables/toasts.ts";
 import { useQuery } from "../composables/use-query.ts";
@@ -31,6 +36,28 @@ const query = useQuery(async () => {
 
 const settings = computed(() => query.data.value?.shelf ?? null);
 const owner = computed(() => settings.value?.viewerAccess.owner === true);
+
+// Keys and grants are the owner's business, read only when the viewer is the owner.
+const accessQuery = useQuery(async () => {
+  if (!owner.value) {
+    return null;
+  }
+  const data = await execute(AccessQuery, { shelf: shelf.value });
+  return data.shelf;
+}, [shelf, owner]);
+const keys = computed(() => accessQuery.data.value?.keys ?? []);
+const grants = computed(() => accessQuery.data.value?.grants ?? []);
+
+const router = useRouter();
+
+async function leave(): Promise<void> {
+  try {
+    await signOut();
+    await router.push({ name: "sign-in" });
+  } catch (error) {
+    notifyError(error);
+  }
+}
 const canWrite = computed(() => settings.value?.viewerAccess.write === true);
 const sources = computed(() => readSources(settings.value?.sources ?? null));
 const shareLinks = computed(() => query.data.value?.shareLinks ?? []);
@@ -118,7 +145,7 @@ async function createKey(): Promise<void> {
     newSecret.value = data.createKey.secret;
     keyForm.name = "";
     keyForm.scopes = [];
-    await query.refresh();
+    await accessQuery.refresh();
   } catch (error) {
     notifyError(error);
   }
@@ -131,7 +158,40 @@ async function revokeKey(id: string): Promise<void> {
   try {
     await execute(RevokeKeyMutation, { id, shelf: shelf.value });
     notify("Key revoked. It fails everywhere from the next request.");
-    await query.refresh();
+    await accessQuery.refresh();
+  } catch (error) {
+    notifyError(error);
+  }
+}
+
+// GitHub accounts: who else may sign in to this shelf in the browser, with which scopes.
+
+const grantForm = reactive<{ login: string; scopes: string[] }>({ login: "", scopes: [] });
+
+async function grantAccess(): Promise<void> {
+  try {
+    const data = await execute(GrantAccessMutation, {
+      login: grantForm.login.trim().replace(/^@/u, ""),
+      scopes: grantForm.scopes,
+      shelf: shelf.value,
+    });
+    notify(`@${data.grantAccess.login} can now sign in to this shelf.`);
+    grantForm.login = "";
+    grantForm.scopes = [];
+    await accessQuery.refresh();
+  } catch (error) {
+    notifyError(error);
+  }
+}
+
+async function revokeAccess(githubId: string, login: string): Promise<void> {
+  if (!confirmFirst(`grant:${githubId}`)) {
+    return;
+  }
+  try {
+    await execute(RevokeAccessMutation, { githubId, shelf: shelf.value });
+    notify(`@${login} no longer has access. It ends at their next request.`);
+    await accessQuery.refresh();
   } catch (error) {
     notifyError(error);
   }
@@ -288,6 +348,15 @@ async function removeSecretName(
 <template>
   <main class="page settings">
     <h1>Settings</h1>
+    <section v-if="viewer?.authenticated" class="panel">
+      <h2>Account</h2>
+      <div class="row">
+        <span data-testid="account">Signed in as <strong>{{ viewerName(viewer) }}</strong></span>
+        <span v-if="viewer.owner" class="badge">owner</span>
+        <span class="spacer"></span>
+        <button class="quiet small" type="button" @click="leave">Sign out</button>
+      </div>
+    </section>
     <QueryState :loading="query.loading.value" :error="query.error.value" :empty="settings === null" />
     <template v-if="settings !== null">
       <section class="panel">
@@ -314,9 +383,65 @@ async function removeSecretName(
         <p class="small muted">Storage used by the shelf's database: {{ Math.round(settings.databaseBytes / 1024) }} KiB.</p>
       </section>
       <section v-if="owner" class="panel">
+        <h2>People</h2>
+        <p class="small muted">
+          GitHub accounts that may sign in to this shelf in the browser, with the same scopes a key holds. Removing one
+          takes effect at their next request.
+        </p>
+        <table class="table" data-testid="grants">
+          <thead>
+            <tr>
+              <th>Account</th>
+              <th>Scopes</th>
+              <th>Since</th>
+              <th><span class="visually-hidden">Remove</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="grant in grants" :key="grant.githubId">
+              <td>@{{ grant.login }}</td>
+              <td class="mono small">{{ grant.scopes.join(" ") }}</td>
+              <td class="small">{{ when(grant.createdAt) }}</td>
+              <td>
+                <button
+                  class="danger small"
+                  type="button"
+                  @click="revokeAccess(grant.githubId, grant.login)"
+                >
+                  {{ armed === `grant:${grant.githubId}` ? "Remove: sure?" : "Remove" }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <form aria-label="Grant access" class="stack" @submit.prevent="grantAccess">
+          <label class="field">
+            GitHub account
+            <input
+              v-model="grantForm.login"
+              autocomplete="off"
+              placeholder="octocat"
+              required
+              spellcheck="false"
+            />
+          </label>
+          <fieldset>
+            <legend>Scopes</legend>
+            <label v-for="choice in scopeChoices" :key="choice.scope" class="row small">
+              <input v-model="grantForm.scopes" type="checkbox" :value="choice.scope" />
+              {{ choice.label }} <code class="muted">{{ choice.scope }}</code>
+            </label>
+          </fieldset>
+          <div class="row">
+            <button class="primary" type="submit" :disabled="grantForm.scopes.length === 0">Grant access</button>
+          </div>
+        </form>
+      </section>
+      <section v-if="owner" class="panel">
         <h2>Keys</h2>
         <p class="small muted">
-          A key is shown once, when it is created. Give the CLI or an agent one with only the scopes it needs.
+          Keys are for programs: the CLI, an agent, CI, or APM's registry client. People sign in with GitHub instead. A
+          key is shown once, when it is created; give each program one with only the scopes it needs.
         </p>
         <div v-if="newSecret !== null" class="panel secret" role="status">
           <strong>Copy this key now; it is not shown again.</strong>
@@ -337,7 +462,7 @@ async function removeSecretName(
             </tr>
           </thead>
           <tbody>
-            <tr v-for="key in settings.keys" :key="key.id">
+            <tr v-for="key in keys" :key="key.id">
               <td>{{ key.name }}</td>
               <td class="mono">{{ key.prefix }}…</td>
               <td class="mono small">{{ key.scopes.join(" ") }}</td>
@@ -351,7 +476,7 @@ async function removeSecretName(
             </tr>
           </tbody>
         </table>
-        <form class="stack" @submit.prevent="createKey">
+        <form aria-label="New key" class="stack" @submit.prevent="createKey">
           <label class="field">New key's name <input v-model="keyForm.name" placeholder="laptop CLI" required /></label>
           <fieldset>
             <legend>Scopes</legend>

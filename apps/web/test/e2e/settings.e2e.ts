@@ -1,11 +1,13 @@
 /**
- * Settings and sharing: a key is shown once and revoked on a second click, registry visibility is undoable, and a
- * share link renders the profile read-only to a browser that holds no key.
+ * Settings and sharing: a key is shown once and revoked on a second click, registry visibility is undoable, a share
+ * link renders the profile read-only to a browser that is not signed in, and the owner grants and removes another
+ * GitHub account's access.
  */
 
 import {
   FIXTURES,
   dryRun,
+  makePrivate,
   seedShelf,
   signIn,
   expect,
@@ -13,10 +15,13 @@ import {
 } from "./support.ts";
 
 const SHELF = "settings-e2e";
+/** A private shelf, so a GitHub account reads it only while the owner grants it access. */
+const PRIVATE = "people-e2e";
 let seeded = "";
 
 test.beforeAll(() => {
   seeded = seedShelf(FIXTURES.allKinds, SHELF);
+  seedShelf(FIXTURES.allKinds, PRIVATE, makePrivate);
 });
 
 test("creates a key that is shown once, and revokes it after a second click", async ({
@@ -24,9 +29,10 @@ test("creates a key that is shown once, and revokes it after a second click", as
 }) => {
   await signIn(page);
   await page.goto(`/shelves/${SHELF}/settings`);
-  await page.getByLabel("New key's name").fill("laptop CLI");
-  await page.getByLabel("Read the shelf").check();
-  await page.getByRole("button", { name: "Create key" }).click();
+  const form = page.getByRole("form", { name: "New key" });
+  await form.getByLabel("New key's name").fill("laptop CLI");
+  await form.getByLabel("Read the shelf").check();
+  await form.getByRole("button", { name: "Create key" }).click();
   await expect(page.getByTestId("new-key")).toHaveText(
     new RegExp(`^sks_${SHELF}_[A-Za-z0-9_-]{43}$`, "u")
   );
@@ -73,34 +79,39 @@ test("a share link shows the profile read-only to a browser with no key", async 
   await anonymous.close();
 });
 
-test("a browser signed in with a key that is revoked shows itself signed out at its next refusal", async ({
+test("the owner grants a second GitHub account access, and removing it ends that access at its next request", async ({
   browser,
   page,
 }) => {
   await signIn(page);
-  await page.goto(`/shelves/${SHELF}/settings`);
-  await page.getByLabel("New key's name").fill("phone");
-  await page.getByLabel("Read the shelf").check();
-  await page.getByRole("button", { name: "Create key" }).click();
-  const key = (await page.getByTestId("new-key").textContent()) ?? "";
-  await page.getByRole("button", { name: "Done" }).first().click();
+  await page.goto(`/shelves/${PRIVATE}/settings`);
+  const grant = page.getByRole("form", { name: "Grant access" });
+  await grant.getByLabel("GitHub account").fill("@ada");
+  await grant.getByLabel("Read the shelf").check();
+  await grant.getByRole("button", { name: "Grant access" }).click();
+  const row = page
+    .getByTestId("grants")
+    .getByRole("row")
+    .filter({ hasText: "@ada" });
+  await expect(row).toContainText("read");
 
-  const phone = await browser.newContext({
+  const other = await browser.newContext({
     permissions: ["clipboard-read", "clipboard-write"],
   });
-  const holder = await phone.newPage();
-  await signIn(holder, key, "phone");
-  await holder.goto(`/shelves/${SHELF}/prompts/pr-description`);
-  await expect(holder.getByTestId("prompt-title")).toHaveText("PR description");
+  const ada = await other.newPage();
+  await signIn(ada, "ada");
+  await ada.goto(`/shelves/${PRIVATE}/prompts/pr-description`);
+  await expect(ada.getByTestId("prompt-title")).toHaveText("PR description");
+  // Read access is not ownership: no keys, no people, but an account of its own.
+  await ada.goto(`/shelves/${PRIVATE}/settings`);
+  await expect(ada.getByTestId("account")).toHaveText("Signed in as @ada");
+  await expect(ada.getByRole("heading", { name: "Keys" })).toHaveCount(0);
 
-  const row = page.getByRole("row").filter({ hasText: "phone" });
-  await row.getByRole("button", { name: "Revoke" }).click();
-  await row.getByRole("button", { name: "Revoke: sure?" }).click();
-  await expect(row.getByText("revoked")).toBeVisible();
+  await row.getByRole("button", { name: "Remove" }).click();
+  await row.getByRole("button", { name: "Remove: sure?" }).click();
+  await expect(row).toHaveCount(0);
 
-  // The revoked cookie makes the next request anonymous; the first refusal brings the header up to date.
-  await holder.getByRole("button", { exact: true, name: "☆" }).click();
-  await expect(holder.getByTestId("viewer")).toHaveCount(0);
-  await expect(holder.getByRole("link", { name: "Sign in" })).toBeVisible();
-  await phone.close();
+  await ada.goto(`/shelves/${PRIVATE}/prompts/pr-description`);
+  await expect(ada.getByText("You cannot read it as @ada")).toBeVisible();
+  await other.close();
 });

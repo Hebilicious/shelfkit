@@ -6,7 +6,7 @@ import { execute } from "../api/graphql.ts";
 import { ShelfSummaryQuery } from "../api/operations.ts";
 import { useQuery } from "../composables/use-query.ts";
 import { followShelf, liveState } from "../composables/use-shelf-events.ts";
-import { shelves, viewer } from "../composables/session.ts";
+import { shelves, viewer, viewerName } from "../composables/session.ts";
 import { useShelfId } from "../composables/shelf-context.ts";
 import { SECTIONS } from "../router.ts";
 
@@ -63,7 +63,7 @@ function active(name: string): boolean {
         It may be private.
         <RouterLink :to='{ name: "sign-in", query: { next: route.fullPath } }'>Sign in</RouterLink> to read it.
       </p>
-      <p v-else class="muted">This key cannot read it, or the deployment does not hold it.</p>
+      <p v-else class="muted">You cannot read it as {{ viewer ? viewerName(viewer) : "this account" }}, or the deployment does not hold it.</p>
     </main>
     <RouterView v-else />
   </div>

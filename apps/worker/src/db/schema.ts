@@ -181,7 +181,19 @@ export const apiKey = sqliteTable(
   (table) => [uniqueIndex("api_key_hash").on(table.hash)]
 );
 
-/** Favourite items, per key. The owner key's id is `owner`. */
+/**
+ * What the owner granted a GitHub account on this shelf, for the browser: the same scopes a key holds. Keyed by the
+ * account's numeric id, which GitHub never reassigns; the login is what it was when granted, for display. Revoking
+ * deletes the row, and a browser signed in as that account loses the access at its next request.
+ */
+export const githubGrant = sqliteTable("github_grant", {
+  createdAt: text("created_at").notNull(),
+  githubId: text("github_id").primaryKey(),
+  login: text().notNull(),
+  scopes: text({ mode: "json" }).$type<string[]>().notNull(),
+});
+
+/** Favourite items, per key. The owner key's id is `owner`; a GitHub account's is `github:<id>`. */
 export const favourite = sqliteTable(
   "favourite",
   {

@@ -5,13 +5,32 @@
  */
 import { parseScopes, registryScopes } from "./scopes.ts";
 
+/** A GitHub account: its numeric id, which GitHub never reassigns, and its login when it signed in, for display. */
+export interface GitHubIdentity {
+  readonly id: string;
+  readonly login: string;
+}
+
 export type Session =
   /** No credential was presented. */
   | { readonly kind: "anonymous" }
   /** A credential was presented and is not a key the service knows: malformed, unknown, or revoked. */
   | { readonly kind: "invalid" }
-  /** The owner key: every scope on every shelf, and key and settings management. */
-  | { readonly kind: "owner"; readonly keyId: "owner" }
+  /**
+   * The owner: every scope on every shelf, and key, grant, and settings management. Presented as the owner key, or as
+   * the browser's session cookie for the GitHub account the deployment names as its owner (`github`).
+   */
+  | {
+      readonly kind: "owner";
+      readonly keyId: "owner";
+      readonly github?: GitHubIdentity;
+    }
+  /**
+   * A browser signed in with GitHub as an account that is not the owner. What it may do on a shelf is that shelf's
+   * grant to the account, which the shelf's object looks up on every call and turns into a `key` session
+   * (`grantSession`), so a revoked grant fails at once. Without a grant, it is anonymous there.
+   */
+  | { readonly kind: "github"; readonly github: GitHubIdentity }
   /**
    * The Worker itself, running a queued job or the cron (an import, an upstream check, a scan). Never resolved from a
    * request: only the job code makes one, and only it may record discoveries, drift, and verdicts.
@@ -44,6 +63,30 @@ export interface ShelfAccess {
   readonly relay: "all" | ReadonlySet<string>;
 }
 
+/** The id a GitHub account's favourites, recents, and records are kept under on a shelf. */
+export function githubKeyId(identity: GitHubIdentity): string {
+  return `github:${identity.id}`;
+}
+
+/** A GitHub account's session on one shelf, from the scopes that shelf granted it: a key session, as a key's would be. */
+export function grantSession(
+  shelf: string,
+  identity: GitHubIdentity,
+  scopes: readonly string[]
+): Session {
+  return {
+    keyId: githubKeyId(identity),
+    kind: "key",
+    name: `@${identity.login}`,
+    scopes,
+    shelf,
+  };
+}
+
+/**
+ * What a session may do on one shelf. A `github` session is resolved to its grant by the shelf's object before it
+ * gets here; one that was not is treated as anonymous.
+ */
 export function access(
   session: Session,
   shelf: string,
@@ -108,7 +151,8 @@ export function mayRelay(granted: ShelfAccess, item: string): boolean {
  * private shelf exists.
  */
 export function registryAccess(session: Session, owner: string) {
-  if (session.kind === "anonymous") {
+  // A `github` session the shelf's object did not resolve to its grant holds nothing here.
+  if (session.kind === "anonymous" || session.kind === "github") {
     return { credential: "anonymous" } as const;
   }
   if (session.kind === "owner" || session.kind === "system") {

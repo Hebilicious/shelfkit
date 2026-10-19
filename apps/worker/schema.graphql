@@ -115,6 +115,20 @@ enum DriftStatus {
 }
 
 """
+A GitHub account the owner let sign in to this shelf in the browser, with the scopes a key would hold.
+"""
+type Grant {
+  createdAt: DateTime!
+
+  """The account's numeric id, which GitHub never reassigns."""
+  githubId: ID!
+
+  """The account's login when it was granted."""
+  login: String!
+  scopes: [String!]!
+}
+
+"""
 An import: a source, the candidates it offers, what was picked with which pins, and how it went.
 """
 type ImportJob {
@@ -278,6 +292,20 @@ type Mutation {
   deleteProfile(id: ID!, shelf: ID!): CommitResult!
 
   """
+  Let a GitHub account sign in to the shelf in the browser with these scopes, replacing any it had. The owner only.
+  """
+  grantAccess(
+    """The GitHub login, resolved to the account's numeric id now."""
+    login: String!
+
+    """
+    read, read:{shelf}/{profile}, publish:{shelf}/{profile}, publish:{shelf}/*, mcp:{shelf}/{item}.
+    """
+    scopes: [String!]!
+    shelf: ID!
+  ): Grant!
+
+  """
   Queue indexing a shelf from a GitHub repository through the REST API; the result arrives as a `snapshot` event.
   """
   indexRepository(
@@ -330,6 +358,11 @@ type Mutation {
   ): JSON!
 
   """
+  Remove a GitHub account's grant. A browser signed in as it loses the access from its next request. The owner only.
+  """
+  revokeAccess(githubId: ID!, shelf: ID!): Boolean!
+
+  """
   Revoke a key. It fails on GraphQL, the registry, and /mcp from the next request. The owner only.
   """
   revokeKey(id: ID!, shelf: ID!): Boolean!
@@ -347,9 +380,8 @@ type Mutation {
   setVisibility(public: Boolean!, shelf: ID!): CommitResult!
 
   """
-  Hold a key in an HttpOnly cookie for the browser, so the SPA never reads it.
+  Sign the browser out: clear its session cookie. A program's key is not affected.
   """
-  signIn(key: String!): Viewer!
   signOut: Boolean!
 
   """
@@ -448,7 +480,7 @@ type Query {
   shelf(id: ID!): Shelf
 
   """
-  The shelves the viewer can reach: every shelf for the owner, a key's own shelf otherwise.
+  The shelves the viewer can reach: every shelf for the owner, a key's own shelf, or the shelves that granted a signed-in GitHub account access.
   """
   shelves: [Shelf!]!
   viewer: Viewer!
@@ -614,6 +646,11 @@ type Shelf {
 
   """The current snapshot's files: what `shelfkit fetch` downloads."""
   files: [SnapshotFile!]!
+
+  """
+  The GitHub accounts granted access to the shelf in the browser. The owner only.
+  """
+  grants: [Grant!]!
   id: ID!
   importJob(id: ID!): ImportJob
   importJobs: [ImportJob!]!
@@ -782,12 +819,26 @@ type TagCount {
   tag: String!
 }
 
-"""Who the request is: the owner, a scoped key, or nobody."""
+"""
+Who the request is: the owner, a scoped key, a GitHub account signed in in the browser, or nobody.
+"""
 type Viewer {
   authenticated: Boolean!
+
+  """The GitHub account the browser signed in as, by its numeric id."""
+  githubId: ID
   keyId: String
   keyName: String
+
+  """
+  The login of the GitHub account the browser signed in as, when it signed in.
+  """
+  login: String
   owner: Boolean!
+
+  """
+  A scoped key's scopes. A GitHub account's are per shelf: `Shelf.viewerAccess`.
+  """
   scopes: [String!]!
 
   """The shelf a scoped key belongs to."""

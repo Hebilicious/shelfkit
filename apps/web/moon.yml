@@ -123,7 +123,7 @@ tasks:
       - "test/unit/**/*"
       - "vitest.config.ts"
   e2e:
-    description: "Playwright against `wrangler dev` serving the built SPA: the prompt copy flow, the composer's preview against `shelfkit compile --dry-run`, and compiling into a repository."
+    description: "Playwright against `wrangler dev` serving the built SPA, signed in with GitHub through a stand-in GitHub: the prompt copy flow, the composer's preview against `shelfkit compile --dry-run`, and compiling into a repository."
     command: "node_modules/.bin/playwright test"
     deps:
       - "build"
@@ -134,6 +134,7 @@ tasks:
       - "test/e2e/**/*"
       - "playwright.config.ts"
       - "/apps/worker/src/**/*"
+      - "/apps/worker/test/fake-github.ts"
       - "/apps/worker/wrangler.jsonc"
       - "/target/debug/shelfkit"
       - "/shelf/**/*"

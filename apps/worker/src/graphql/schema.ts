@@ -23,18 +23,19 @@ import { GraphQLError, valueFromASTUntyped } from "graphql";
 import type { GraphQLSchema } from "graphql";
 import * as v from "valibot";
 
+import { lookUpAccount } from "../auth/github.ts";
 import {
   access,
   listShelves,
   shelfExists,
-  sessionForKey,
   shelfStub,
-  signInCookie,
   signOutCookie,
 } from "../auth/index.ts";
+import type { Session } from "../auth/index.ts";
 import { parseSecret, secretHash } from "../auth/keys.ts";
 import type { JobMessage } from "../jobs/messages.ts";
 import type {
+  GrantRecord,
   ImportJobRecord,
   ItemDetail,
   RevisionRecord,
@@ -206,6 +207,26 @@ async function existingShelf(context: GraphQLContext, shelf: string) {
   return exists ? shelfStub(context.env, shelf) : null;
 }
 
+/**
+ * The session as one shelf sees it: for a browser signed in with GitHub, that shelf's grant to the account (a key
+ * session) or anonymous, asked of the shelf's object once per request. Any other session is itself.
+ */
+async function shelfSession(
+  context: GraphQLContext,
+  shelf: string
+): Promise<Session> {
+  const { session } = context;
+  if (session.kind !== "github") {
+    return session;
+  }
+  return await context.memo(`session ${shelf}`, async () => {
+    const target = await existingShelf(context, shelf);
+    return target === null
+      ? { kind: "anonymous" }
+      : await target.effectiveSession(session);
+  });
+}
+
 /** The shelf's object for a mutation, or `NOT_FOUND` when the deployment holds no such shelf. */
 async function held(context: GraphQLContext, shelf: string) {
   const target = await existingShelf(context, shelf);
@@ -227,9 +248,18 @@ function encoding(value: string | null | undefined): "utf-8" | "base64" {
   throw badInput(`\`${value}\` is not an encoding: use utf-8 or base64`);
 }
 
+/** Whether the session is someone: a key, or a browser signed in with GitHub. */
+function signedIn(session: Session): boolean {
+  return (
+    session.kind === "owner" ||
+    session.kind === "key" ||
+    session.kind === "github"
+  );
+}
+
 function requireKey(context: GraphQLContext): void {
-  if (context.session.kind !== "owner" && context.session.kind !== "key") {
-    throw new GraphQLError("this needs a key", {
+  if (!signedIn(context.session)) {
+    throw new GraphQLError("this needs a key, or signing in", {
       extensions: { code: "UNAUTHENTICATED" },
     });
   }
@@ -1220,6 +1250,24 @@ export function buildSchema(): GraphQLSchema {
     }),
   });
 
+  const Grant = builder.objectRef<GrantRecord>("Grant").implement({
+    description:
+      "A GitHub account the owner let sign in to this shelf in the browser, with the scopes a key would hold.",
+    fields: (t) => ({
+      createdAt: t.field({
+        resolve: (row) => row.createdAt,
+        type: "DateTime",
+      }),
+      githubId: t.exposeID("githubId", {
+        description: "The account's numeric id, which GitHub never reassigns.",
+      }),
+      login: t.exposeString("login", {
+        description: "The account's login when it was granted.",
+      }),
+      scopes: t.exposeStringList("scopes"),
+    }),
+  });
+
   const ApiKey = builder
     .objectRef<{
       readonly id: string;
@@ -1454,6 +1502,20 @@ export function buildSchema(): GraphQLSchema {
           return snapshot?.files ?? [];
         },
         type: [SnapshotFile],
+      }),
+      grants: t.field({
+        description:
+          "The GitHub accounts granted access to the shelf in the browser. The owner only.",
+        resolve: async (shelf, _args, context) => {
+          const found = await stub(context, shelf.id).listGrants(
+            context.session
+          );
+          if (found === null) {
+            throw forbidden("only the owner lists grants");
+          }
+          return found;
+        },
+        type: [Grant],
       }),
       id: t.id({ resolve: (shelf) => shelf.id }),
       importJob: t.field({
@@ -1817,8 +1879,12 @@ export function buildSchema(): GraphQLSchema {
         ],
       }),
       viewerAccess: t.field({
-        resolve: (shelf, _args, context) =>
-          access(context.session, shelf.id, shelf.summary.public),
+        resolve: async (shelf, _args, context) =>
+          access(
+            await shelfSession(context, shelf.id),
+            shelf.id,
+            shelf.summary.public
+          ),
         type: Access,
       }),
     }),
@@ -1827,11 +1893,18 @@ export function buildSchema(): GraphQLSchema {
   const Viewer = builder
     .objectRef<GraphQLContext["session"]>("Viewer")
     .implement({
-      description: "Who the request is: the owner, a scoped key, or nobody.",
+      description:
+        "Who the request is: the owner, a scoped key, a GitHub account signed in in the browser, or nobody.",
       fields: (t) => ({
-        authenticated: t.boolean({
+        authenticated: t.boolean({ resolve: signedIn }),
+        githubId: t.id({
+          description:
+            "The GitHub account the browser signed in as, by its numeric id.",
+          nullable: true,
           resolve: (session) =>
-            session.kind === "owner" || session.kind === "key",
+            session.kind === "owner" || session.kind === "github"
+              ? (session.github?.id ?? null)
+              : null,
         }),
         keyId: t.string({
           nullable: true,
@@ -1844,8 +1917,19 @@ export function buildSchema(): GraphQLSchema {
           nullable: true,
           resolve: (session) => (session.kind === "key" ? session.name : null),
         }),
+        login: t.string({
+          description:
+            "The login of the GitHub account the browser signed in as, when it signed in.",
+          nullable: true,
+          resolve: (session) =>
+            session.kind === "owner" || session.kind === "github"
+              ? (session.github?.login ?? null)
+              : null,
+        }),
         owner: t.boolean({ resolve: (session) => session.kind === "owner" }),
         scopes: t.stringList({
+          description:
+            "A scoped key's scopes. A GitHub account's are per shelf: `Shelf.viewerAccess`.",
           resolve: (session) => (session.kind === "key" ? session.scopes : []),
         }),
         shelf: t.string({
@@ -1898,19 +1982,28 @@ export function buildSchema(): GraphQLSchema {
       }),
       shelves: t.field({
         description:
-          "The shelves the viewer can reach: every shelf for the owner, a key's own shelf otherwise.",
+          "The shelves the viewer can reach: every shelf for the owner, a key's own shelf, or the shelves that granted a signed-in GitHub account access.",
         resolve: async (_root, _args, context) => {
           const { session } = context;
           if (session.kind === "key") {
             const own = await loadShelf(context, session.shelf);
             return own === null ? [] : [own];
           }
-          if (session.kind !== "owner") {
+          if (session.kind !== "owner" && session.kind !== "github") {
             return [];
           }
+          // Each shelf's own object answers for itself; nothing is queried across shelves.
           const listed = await listShelves(context.env);
           const found = await Promise.all(
-            listed.map(async (id) => await loadShelf(context, id))
+            listed.map(async (id) => {
+              if (session.kind === "github") {
+                const there = await shelfSession(context, id);
+                if (there.kind !== "key") {
+                  return null;
+                }
+              }
+              return await loadShelf(context, id);
+            })
           );
           return found.filter((shelf): shelf is ShelfNode => shelf !== null);
         },
@@ -2058,6 +2151,48 @@ export function buildSchema(): GraphQLSchema {
           );
         },
         type: Commit,
+      }),
+      grantAccess: t.field({
+        args: {
+          login: t.arg.string({
+            description:
+              "The GitHub login, resolved to the account's numeric id now.",
+            required: true,
+          }),
+          scopes: t.arg.stringList({
+            description:
+              "read, read:{shelf}/{profile}, publish:{shelf}/{profile}, publish:{shelf}/*, mcp:{shelf}/{item}.",
+            required: true,
+          }),
+          shelf: t.arg.id({ required: true }),
+        },
+        description:
+          "Let a GitHub account sign in to the shelf in the browser with these scopes, replacing any it had. The owner only.",
+        resolve: async (_root, args, context) => {
+          if (context.session.kind !== "owner") {
+            throw forbidden("only the owner grants access");
+          }
+          const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
+          const account = await lookUpAccount(context.env, args.login.trim());
+          if (account === null) {
+            throw badInput(`GitHub has no account \`${args.login.trim()}\``);
+          }
+          if (account.id === context.env.OWNER_GITHUB_ID?.trim()) {
+            throw badInput(
+              `@${account.login} owns this deployment and already holds every scope`
+            );
+          }
+          const granted = await target.grantAccess(context.session, {
+            account,
+            scopes: args.scopes,
+          });
+          if (!granted.ok) {
+            throw badInput(granted.errors.join("; "));
+          }
+          return granted.grant;
+        },
+        type: Grant,
       }),
       indexRepository: t.boolean({
         args: {
@@ -2246,6 +2381,21 @@ export function buildSchema(): GraphQLSchema {
         },
         type: "JSON",
       }),
+      revokeAccess: t.boolean({
+        args: {
+          githubId: t.arg.id({ required: true }),
+          shelf: t.arg.id({ required: true }),
+        },
+        description:
+          "Remove a GitHub account's grant. A browser signed in as it loses the access from its next request. The owner only.",
+        resolve: async (_root, args, context) => {
+          if (context.session.kind !== "owner") {
+            throw forbidden("only the owner revokes access");
+          }
+          const target = await held(context, shelfArg(args.shelf));
+          return await target.revokeAccess(context.session, args.githubId);
+        },
+      }),
       revokeKey: t.boolean({
         args: {
           id: t.arg.id({ required: true }),
@@ -2331,23 +2481,9 @@ export function buildSchema(): GraphQLSchema {
         },
         type: Commit,
       }),
-      signIn: t.field({
-        args: { key: t.arg.string({ required: true }) },
-        description:
-          "Hold a key in an HttpOnly cookie for the browser, so the SPA never reads it.",
-        resolve: async (_root, args, context) => {
-          const session = await sessionForKey(context.env, args.key);
-          if (session.kind !== "owner" && session.kind !== "key") {
-            throw new GraphQLError("the key is not valid", {
-              extensions: { code: "UNAUTHENTICATED" },
-            });
-          }
-          context.cookies.push(signInCookie(args.key));
-          return session;
-        },
-        type: Viewer,
-      }),
       signOut: t.boolean({
+        description:
+          "Sign the browser out: clear its session cookie. A program's key is not affected.",
         resolve: (_root, _args, context) => {
           context.cookies.push(signOutCookie());
           return true;

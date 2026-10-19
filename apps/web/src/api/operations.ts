@@ -11,6 +11,8 @@ export const ViewerQuery = graphql(`
     viewer {
       authenticated
       owner
+      login
+      githubId
       keyId
       keyName
       scopes
@@ -23,17 +25,6 @@ export const ViewerQuery = graphql(`
       itemCount
       profileCount
       public
-    }
-  }
-`);
-
-export const SignInMutation = graphql(`
-  mutation SignIn($key: String!) {
-    signIn(key: $key) {
-      authenticated
-      owner
-      keyName
-      shelf
     }
   }
 `);
@@ -722,15 +713,6 @@ export const SettingsQuery = graphql(`
         id
         title
       }
-      keys {
-        id
-        name
-        prefix
-        scopes
-        createdAt
-        lastUsedAt
-        revokedAt
-      }
       secretNames {
         name
         origin
@@ -745,6 +727,47 @@ export const SettingsQuery = graphql(`
       createdAt
       revokedAt
     }
+  }
+`);
+
+// What only the owner sees: the shelf's keys for programs, and the GitHub accounts granted access in the browser.
+
+export const AccessQuery = graphql(`
+  query Access($shelf: ID!) {
+    shelf(id: $shelf) {
+      id
+      keys {
+        id
+        name
+        prefix
+        scopes
+        createdAt
+        lastUsedAt
+        revokedAt
+      }
+      grants {
+        githubId
+        login
+        scopes
+        createdAt
+      }
+    }
+  }
+`);
+
+export const GrantAccessMutation = graphql(`
+  mutation GrantAccess($shelf: ID!, $login: String!, $scopes: [String!]!) {
+    grantAccess(shelf: $shelf, login: $login, scopes: $scopes) {
+      githubId
+      login
+      scopes
+    }
+  }
+`);
+
+export const RevokeAccessMutation = graphql(`
+  mutation RevokeAccess($shelf: ID!, $githubId: ID!) {
+    revokeAccess(shelf: $shelf, githubId: $githubId)
   }
 `);
 

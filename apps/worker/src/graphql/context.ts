@@ -7,7 +7,7 @@ export interface GraphQLContext {
   readonly execution?: ExecutionContext;
   readonly session: Session;
   readonly request: Request;
-  /** `Set-Cookie` values the response carries: `signIn` and `signOut` add them. */
+  /** `Set-Cookie` values the response carries: `signOut` adds one. */
   readonly cookies: string[];
   /** One answer per key per request, so a field that several objects share is fetched once. */
   readonly memo: <T>(key: string, make: () => Promise<T>) => Promise<T>;

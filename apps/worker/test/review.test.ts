@@ -13,6 +13,7 @@ import { env, exports } from "cloudflare:workers";
 import * as v from "valibot";
 import { beforeEach, describe, expect, inject, it } from "vitest";
 
+import { signSession } from "../src/auth/browser.ts";
 import { listShelves } from "../src/auth/index.ts";
 import type { Session } from "../src/auth/index.ts";
 import { displayPrefix } from "../src/auth/keys.ts";
@@ -22,6 +23,7 @@ import { runJob } from "../src/jobs/consumer.ts";
 import { once } from "../src/runtime/once.ts";
 import { resolveSecret } from "../src/secrets.ts";
 import type { ShelfIndex } from "../src/shelf-index.ts";
+import { FAKE_ACCOUNTS, TEST_SESSION_SECRET } from "./fake-github.ts";
 import {
   createKey,
   data,
@@ -33,6 +35,15 @@ import {
   shelfOf,
   TEST_OWNER_KEY,
 } from "./helpers.ts";
+
+/** The session cookie a browser holds once the owner's GitHub account signed in. */
+async function ownerSessionCookie(): Promise<string> {
+  const token = await signSession(TEST_SESSION_SECRET, {
+    id: String(FAKE_ACCOUNTS.owner.id),
+    login: FAKE_ACCOUNTS.owner.login,
+  });
+  return `__Host-shelfkit_session=${token}`;
+}
 
 const owner: Session = { keyId: "owner", kind: "owner" };
 const anonymous: Session = { kind: "anonymous" };
@@ -180,11 +191,9 @@ describe("2. an open event stream", () => {
   });
 });
 
-function signInBody(key: string): string {
-  return JSON.stringify({
-    query: "mutation($key: String!) { signIn(key: $key) { owner } }",
-    variables: { key },
-  });
+/** A mutation that sets a cookie when it runs: a cross-site request must never get that far. */
+function mutationBody(): string {
+  return JSON.stringify({ query: "mutation { signOut }" });
 }
 
 describe("3. cross-site requests to /graphql", () => {
@@ -193,14 +202,14 @@ describe("3. cross-site requests to /graphql", () => {
   it("refuse a form or multipart body, which another site's page could send", async () => {
     const form = await exports.default.fetch(`${ORIGIN}/graphql`, {
       body: new URLSearchParams({
-        query: `mutation { signIn(key: "${TEST_OWNER_KEY}") { owner } }`,
+        query: "mutation { signOut }",
       }),
       method: "POST",
     });
     expect(form.status).toBe(415);
     expect(form.headers.get("set-cookie")).toBeNull();
     const multipart = new FormData();
-    multipart.append("operations", signInBody(TEST_OWNER_KEY));
+    multipart.append("operations", mutationBody());
     const parts = await exports.default.fetch(`${ORIGIN}/graphql`, {
       body: multipart,
       method: "POST",
@@ -211,7 +220,7 @@ describe("3. cross-site requests to /graphql", () => {
 
   it("refuse a request from another origin that does not bring its own key, and reflect no CORS", async () => {
     const foreign = await exports.default.fetch(`${ORIGIN}/graphql`, {
-      body: signInBody(TEST_OWNER_KEY),
+      body: mutationBody(),
       headers: {
         "content-type": "application/json",
         origin: "https://evil.example",
@@ -236,9 +245,8 @@ describe("3. cross-site requests to /graphql", () => {
 
   it("refuse a POST the cookie authenticates unless it comes from this origin", async () => {
     await push("acme", shelfOf("acme", false));
-    const key = await createKey("acme", ["read"]);
-    const query = JSON.stringify({ query: "{ viewer { shelf } }" });
-    const cookie = `shelfkit_key=${key.secret}`;
+    const query = JSON.stringify({ query: "{ viewer { owner } }" });
+    const cookie = await ownerSessionCookie();
     const noOrigin = await exports.default.fetch(`${ORIGIN}/graphql`, {
       body: query,
       headers: { "content-type": "application/json", cookie },
@@ -254,18 +262,19 @@ describe("3. cross-site requests to /graphql", () => {
   });
 });
 
-describe("4. a revoked key in the browser's cookie", () => {
+describe("4. a stale session in the browser's cookie", () => {
   beforeEach(fresh);
 
   it("is cleared, and the request is anonymous, so the browser can sign in again", async () => {
-    await push("acme", shelfOf("acme", false));
-    const old = await createKey("acme", ["read"], "old");
-    const next = await createKey("acme", ["read"], "next");
-    await data(
-      v.unknown(),
-      `mutation { revokeKey(shelf: "acme", id: "${old.id}") }`
-    );
-    const headers = { cookie: `shelfkit_key=${old.secret}`, origin: ORIGIN };
+    // Signed with a secret the deployment no longer has: what every browser holds after `SESSION_SECRET` rotates.
+    const stale = await signSession("a-rotated-secret", {
+      id: String(FAKE_ACCOUNTS.owner.id),
+      login: FAKE_ACCOUNTS.owner.login,
+    });
+    const headers = {
+      cookie: `__Host-shelfkit_session=${stale}`,
+      origin: ORIGIN,
+    };
     const viewer = await graphql(
       "{ viewer { authenticated } }",
       {},
@@ -275,16 +284,12 @@ describe("4. a revoked key in the browser's cookie", () => {
     expect(viewer.status).toBe(200);
     expect(viewer.data).toStrictEqual({ viewer: { authenticated: false } });
     expect(viewer.headers.get("set-cookie")).toContain("Max-Age=0");
-    const signedIn = await graphql(
-      "mutation($key: String!) { signIn(key: $key) { shelf } }",
-      { key: next.secret },
-      undefined,
-      headers
-    );
-    expect(signedIn.status).toBe(200);
-    expect(signedIn.headers.get("set-cookie")).toContain(
-      `shelfkit_key=${next.secret}`
-    );
+    const again = await exports.default.fetch(`${ORIGIN}/auth/github/start`, {
+      headers,
+      redirect: "manual",
+    });
+    expect(again.status).toBe(302);
+    expect(again.headers.get("location")).toContain("/login/oauth/authorize?");
   });
 });
 
