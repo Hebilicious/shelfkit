@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Adapters run in the Worker and use its web platform APIs (`fetch`, `URL`); the DOM library declares them.
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

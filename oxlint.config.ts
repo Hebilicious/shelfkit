@@ -23,6 +23,7 @@ export default defineConfig({
     "**/dist-worker/**",
     "crates/**",
     "apps/worker/worker-configuration.d.ts",
+    "apps/worker/drizzle/**",
     "packages/tokens/.cssforge/**",
     "tools/oxlint/anti-slop/**",
   ],

@@ -3,20 +3,28 @@ layer: application
 stack: backend
 tags: ["worker", "cloudflare"]
 
+fileGroups:
+  sources:
+    - "src/**/*"
+    - "drizzle/**/*"
+    - "wrangler.jsonc"
+    - "tsconfig.json"
+    - "/tsconfig.base.json"
+
+# Binaries are invoked by their path in node_modules/.bin; tsx is the workspace root's.
 tasks:
   build:
     command: "node_modules/.bin/wrangler deploy --dry-run --outdir dist-worker"
     # The Worker serves the SPA through its assets binding, so the SPA has to be
     # built before wrangler validates the assets directory. A task-level dep
     # rather than dependsOn, because dependsOn orders projects, not tasks.
-    # The engine's build places the WASM module the MCP tools import as
+    # The engine's build places the WASM module the Worker imports as
     # `@shelfkit/engine/shelfkit.wasm`.
     deps:
       - "web:build"
       - "engine:build"
     inputs:
-      - "src/**/*"
-      - "wrangler.jsonc"
+      - "@group(sources)"
     outputs:
       - "dist-worker/**/*"
   typegen:
@@ -29,17 +37,101 @@ tasks:
     command: "node_modules/.bin/tsc --noEmit"
     deps:
       - "typegen"
+      - "graphql-schema-check"
+      - "do-migrations-check"
+      - "db-check"
+      - "startup-check"
+      - "check-scripts"
     inputs:
-      - "src/**/*"
-      - "wrangler.jsonc"
+      - "@group(sources)"
+      - "test/**/*"
+  check-scripts:
+    description: "Typecheck the Worker's Node scripts and configuration files."
+    command: "node_modules/.bin/tsc --noEmit -p scripts/tsconfig.json"
+    inputs:
+      - "@group(sources)"
+      - "scripts/**/*"
+      - "drizzle.config.ts"
+      - "vitest.config.ts"
   typediff:
     command: "node_modules/.bin/wrangler types --check"
     deps:
       - "typegen"
     inputs:
       - "wrangler.jsonc"
+  test:
+    description: "Run the Worker in workerd with Miniflare's bindings: the registry conformance suite, auth on every surface, the shelf object, and the jobs."
+    command: "node_modules/.bin/vitest run"
+    deps:
+      - "web:build"
+      - "engine:build"
+    inputs:
+      - "@group(sources)"
+      - "test/**/*"
+      - "vitest.config.ts"
+      - "/crates/registry/conformance/**/*"
+      - "/crates/core/tests/fixtures/all-kinds/**/*"
+      - "/shelf/**/*"
+
+  graphql-schema:
+    description: "Print the GraphQL schema to schema.graphql, the SDL clients build against."
+    command: "../../node_modules/.bin/tsx scripts/graphql-schema.ts"
+    options:
+      cache: false
+      runInCI: false
+  graphql-schema-check:
+    description: "Fail when schema.graphql is stale against the schema."
+    command: "../../node_modules/.bin/tsx scripts/graphql-schema.ts --check"
+    inputs:
+      - "@group(sources)"
+      - "schema.graphql"
+  do-migrations:
+    description: "Write wrangler.jsonc's Durable Object bindings and migration entries from src/durable-objects.ts."
+    command: "../../node_modules/.bin/tsx scripts/durable-objects.ts"
+    options:
+      cache: false
+      runInCI: false
+  do-migrations-check:
+    description: "Fail when wrangler.jsonc's Durable Object bindings or migrations disagree with the exported classes."
+    command: "../../node_modules/.bin/tsx scripts/durable-objects.ts --check"
+    inputs:
+      - "src/durable-objects.ts"
+      - "src/index.ts"
+      - "wrangler.jsonc"
+  db-generate:
+    description: "Generate the shelf object's next migration from src/db/schema.ts with Drizzle Kit. Commit it."
+    command: "node_modules/.bin/drizzle-kit generate"
+    options:
+      cache: false
+      runInCI: false
+  db-check:
+    description: "Fail when src/db/schema.ts has changes no committed migration covers."
+    command: "../../node_modules/.bin/tsx scripts/db-check.ts"
+    inputs:
+      - "src/db/**/*"
+      - "drizzle/**/*"
+      - "drizzle.config.ts"
+  startup-check:
+    description: "`wrangler check startup` with a CPU budget, so module scope stays light."
+    command: "../../node_modules/.bin/tsx scripts/startup-check.ts"
+    deps:
+      - "web:build"
+      - "engine:build"
+    inputs:
+      - "@group(sources)"
+
+  conformance-remote:
+    description: "Run the registry conformance suite against a deployment: SHELFKIT_URL, and its owner key in SHELFKIT_KEY."
+    command: "../../node_modules/.bin/tsx scripts/conformance-remote.ts"
+    options:
+      cache: false
+      runInCI: false
+
   dev:
     command: "node_modules/.bin/wrangler dev"
+    deps:
+      - "web:build"
+      - "engine:build"
     options:
       persistent: true
       runInCI: false
@@ -55,6 +147,11 @@ tasks:
     options:
       runInCI: false
   setup:
+    description: "Provision R2, the bucket lock, the queues, and the owner key, then deploy and check /health. Idempotent. Pass options after `--`: --dry-run, --keychain, --rotate-owner-key."
     command: "../../node_modules/.bin/tsx ../../scripts/setup.ts"
+    deps:
+      - "web:build"
+      - "engine:build"
     options:
+      cache: false
       runInCI: false

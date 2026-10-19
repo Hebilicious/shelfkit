@@ -1,0 +1,204 @@
+#!/usr/bin/env tsx
+/**
+ * Run the registry conformance suite (`crates/registry/conformance/cases.json`) against a deployed Worker:
+ * `moon run worker:conformance-remote` with `SHELFKIT_URL` and an owner key in `SHELFKIT_KEY`.
+ *
+ * Each scenario needs an empty registry, and a deployment keeps what it publishes, so each scenario gets a shelf of its
+ * own, `conformance-<run>-<n>`, created with the owner key and given the scenario's keys. The suite addresses its owner
+ * as `acme`; requests are rewritten to the scenario's shelf, and its name is written back to `acme` in answers, so the
+ * suite's expectations hold unchanged. The shelves are left behind: their archives are under the bucket lock.
+ */
+import { createHash, randomBytes } from "node:crypto";
+
+import { runConformance } from "@shelfkit/engine/conformance";
+import type {
+  ConformanceRequest,
+  ConformanceResponse,
+} from "@shelfkit/engine/conformance";
+import { loadConformanceSuite } from "@shelfkit/engine/node";
+import * as v from "valibot";
+
+const url = (process.env.SHELFKIT_URL ?? "").replace(/\/+$/u, "");
+const ownerKey = process.env.SHELFKIT_KEY ?? "";
+if (!url.startsWith("https://") || ownerKey === "") {
+  console.error(
+    "set SHELFKIT_URL to the deployment (https://...) and SHELFKIT_KEY to its owner key"
+  );
+  process.exit(2);
+}
+
+const run = randomBytes(3).toString("hex");
+
+const AnswerSchema = v.object({
+  data: v.optional(v.unknown()),
+  errors: v.optional(v.array(v.unknown())),
+});
+
+/** Run an operation with the owner key, and parse its `data` with `schema`. */
+async function graphql<const TSchema extends v.GenericSchema>(
+  query: string,
+  variables: Readonly<Record<string, string | boolean | readonly unknown[]>>,
+  schema: TSchema
+): Promise<v.InferOutput<TSchema>> {
+  const response = await fetch(`${url}/graphql`, {
+    body: JSON.stringify({ query, variables }),
+    headers: {
+      authorization: `Bearer ${ownerKey}`,
+      "content-type": "application/json",
+    },
+    method: "POST",
+  });
+  const answer = v.parse(AnswerSchema, await response.json());
+  if (answer.errors !== undefined) {
+    throw new Error(
+      `GraphQL answered ${response.status}: ${JSON.stringify(answer.errors)}`
+    );
+  }
+  return v.parse(schema, answer.data);
+}
+
+/** Create the scenario's shelf: one shelf.json, public or not. */
+async function createShelf(shelf: string, isPublic: boolean): Promise<void> {
+  const bytes = new TextEncoder().encode(
+    `${JSON.stringify({ name: shelf, registry: { namespace: shelf, public: isPublic } }, null, 2)}\n`
+  );
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const uploaded = await fetch(`${url}/raw/${shelf}/objects/${sha256}`, {
+    body: bytes,
+    headers: { authorization: `Bearer ${ownerKey}` },
+    method: "PUT",
+  });
+  if (uploaded.status !== 204) {
+    throw new Error(
+      `uploading ${shelf}'s shelf.json answered ${uploaded.status}`
+    );
+  }
+  const data = await graphql(
+    "mutation Create($shelf: ID!, $files: [SnapshotFileInput!]!) { commitSnapshot(shelf: $shelf, files: $files) { ok errors { path message } } }",
+    { files: [{ path: "shelf.json", sha256, size: bytes.length }], shelf },
+    v.object({
+      commitSnapshot: v.object({
+        errors: v.array(v.unknown()),
+        ok: v.boolean(),
+      }),
+    })
+  );
+  if (!data.commitSnapshot.ok) {
+    throw new Error(
+      `creating ${shelf}: ${JSON.stringify(data.commitSnapshot.errors)}`
+    );
+  }
+}
+
+async function createKey(
+  shelf: string,
+  name: string,
+  scopes: readonly string[]
+): Promise<string> {
+  const data = await graphql(
+    "mutation Key($shelf: ID!, $name: String!, $scopes: [String!]!) { createKey(shelf: $shelf, name: $name, scopes: $scopes) { secret } }",
+    { name, scopes, shelf },
+    v.object({ createKey: v.object({ secret: v.string() }) })
+  );
+  return data.createKey.secret;
+}
+
+function rewriteAuthorization(
+  value: string,
+  keys: ReadonlyMap<string, string>
+): string {
+  const [scheme = "", rest = ""] = value.split(" ", 2);
+  if (scheme === "Bearer") {
+    return `Bearer ${keys.get(rest) ?? rest}`;
+  }
+  if (scheme === "Basic") {
+    const decoded = Buffer.from(rest, "base64").toString("utf-8");
+    const colon = decoded.indexOf(":");
+    const real = keys.get(decoded.slice(colon + 1));
+    return real === undefined
+      ? value
+      : `Basic ${Buffer.from(`${decoded.slice(0, colon)}:${real}`).toString("base64")}`;
+  }
+  return value;
+}
+
+async function send(
+  request: ConformanceRequest,
+  shelf: string,
+  owner: string,
+  keys: ReadonlyMap<string, string>
+): Promise<ConformanceResponse> {
+  const headers = new Headers();
+  for (const [name, value] of request.headers) {
+    headers.append(
+      name,
+      name.toLowerCase() === "authorization"
+        ? rewriteAuthorization(value, keys)
+        : value
+    );
+  }
+  const path = request.path.replace(
+    new RegExp(`^/v1/packages/(${owner})(?=/|%2F)`, "iu"),
+    (_match, written: string) => `/v1/packages/${sameCase(written, shelf)}`
+  );
+  const response = await fetch(`${url}/apm${path}`, {
+    body: request.body === undefined ? undefined : new Uint8Array(request.body),
+    headers,
+    method: request.method,
+    redirect: "manual",
+  });
+  const body = new Uint8Array(await response.arrayBuffer());
+  const answered = new Headers();
+  for (const [name, value] of response.headers) {
+    answered.append(name, value.replaceAll(shelf, owner));
+  }
+  const media = response.headers.get("content-type") ?? "";
+  const restored = media.includes("json")
+    ? new TextEncoder().encode(
+        new TextDecoder().decode(body).replaceAll(shelf, owner)
+      )
+    : body;
+  return { body: restored, headers: answered, status: response.status };
+}
+
+async function main(): Promise<void> {
+  const { suite, archives } = await loadConformanceSuite();
+  let index = 0;
+  const failures = await runConformance(suite, archives, async (scenario) => {
+    index += 1;
+    const shelf = `conformance-${run}-${index}`;
+    await createShelf(shelf, scenario.public);
+    const keys = new Map<string, string>();
+    for (const key of scenario.keys) {
+      const scopes = key.scopes.map((scope) =>
+        scope.replace(`:${suite.owner}/`, `:${shelf}/`)
+      );
+      // oxlint-disable-next-line eslint/no-await-in-loop -- keys are created in the scenario's order.
+      keys.set(key.key, await createKey(shelf, key.name, scopes));
+    }
+    console.log(`scenario ${index}: ${scenario.name} on ${shelf}`);
+    return {
+      send: async (request) => await send(request, shelf, suite.owner, keys),
+    };
+  });
+  if (failures.length > 0) {
+    console.error(failures.join("\n"));
+    process.exit(1);
+  }
+  console.log(
+    `${url}: every registry conformance scenario passes (${suite.scenarios.length} scenarios).`
+  );
+}
+
+/** `name` in the case `written` uses: all upper, capitalized, or as it is. */
+function sameCase(written: string, name: string): string {
+  if (written === written.toUpperCase()) {
+    return name.toUpperCase();
+  }
+  if (written.startsWith(written[0]?.toUpperCase() ?? "")) {
+    return `${name[0]?.toUpperCase() ?? ""}${name.slice(1)}`;
+  }
+  return name;
+}
+
+await main();

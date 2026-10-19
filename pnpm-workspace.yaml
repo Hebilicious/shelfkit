@@ -11,10 +11,15 @@ catalog:
   "@gommage/cli": 0.1.0
   "@hebilicious/cssforge": jsr:0.4.1
   "@oxlint/plugins": 1.86.0
+  "@pothos/core": 4.15.1
   "@types/node": 26.6.1
   "@valibot/to-json-schema": 1.8.0
   "@vitejs/plugin-vue": 6.0.9
   "@vizejs/vite-plugin": 0.424.10
+  drizzle-kit: 1.0.0-rc.4
+  drizzle-orm: 1.0.0-rc.4
+  graphql: 17.0.2
+  graphql-yoga: 5.24.6
   lefthook: 2.1.15
   oxfmt: 0.71.0
   oxlint: 1.86.0

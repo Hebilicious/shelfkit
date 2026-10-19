@@ -466,6 +466,7 @@ export type Inventory = v.InferOutput<typeof InventorySchema>;
 export type Recommendation = v.InferOutput<typeof RecommendationSchema>;
 export type ShelfManifest = v.InferOutput<typeof ShelfManifestSchema>;
 export type ShelfSource = v.InferOutput<typeof ShelfSourceSchema>;
+export type SourceKind = v.InferOutput<typeof SourceKindSchema>;
 export type ItemKind = v.InferOutput<typeof ItemKindSchema>;
 export type Item = v.InferOutput<typeof ItemSchema>;
 export type ItemSummary = v.InferOutput<typeof ItemSummarySchema>;

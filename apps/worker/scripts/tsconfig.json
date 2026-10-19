@@ -1,0 +1,16 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    // The scripts run in Node with tsx; the schema they print imports Worker modules, whose globals the Worker's
+    // generated types declare.
+    "types": ["node"]
+  },
+  "include": [
+    "*.ts",
+    "../drizzle.config.ts",
+    "../vitest.config.ts",
+    "../worker-configuration.d.ts",
+    "../src/env.d.ts",
+    "../src/modules.d.ts"
+  ]
+}
