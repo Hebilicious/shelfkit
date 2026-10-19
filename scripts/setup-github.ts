@@ -25,21 +25,37 @@ export type SecretListing =
   | { readonly kind: "listed"; readonly names: ReadonlySet<string> }
   | { readonly kind: "no-worker" };
 
-/** Cloudflare's API error code for a Worker that does not exist, which Wrangler prints with the error. */
-const WORKER_NOT_FOUND = /\[code: 10007\]/u;
+/** Terminal colour and style sequences, which Wrangler puts around its errors. */
+// oxlint-disable-next-line eslint/no-control-regex -- the escape character is what this matches.
+const ANSI = /\u001B\[[0-9;]*[A-Za-z]/gu;
+
+/**
+ * Whether Wrangler's output says the Worker does not exist: `Worker "<name>" not found.` (Wrangler 4.134.0), or
+ * Cloudflare's API error code for it, `[code: 10007]`, which other versions print.
+ */
+function workerMissing(output: string, worker: string): boolean {
+  const plain = output.replaceAll(ANSI, "");
+  return (
+    plain.includes(`Worker "${worker}" not found.`) ||
+    plain.includes("[code: 10007]")
+  );
+}
 
 /**
  * Read `wrangler secret list --format json`. A Worker that does not exist has no secrets. Any other failure stops
  * setup: taking it for "no secrets" would replace the owner key, the session secret, and the owner's account, and
  * create a second GitHub App.
  */
-export function readSecretListing(ran: {
-  readonly status: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}): SecretListing {
+export function readSecretListing(
+  ran: {
+    readonly status: number;
+    readonly stdout: string;
+    readonly stderr: string;
+  },
+  worker: string
+): SecretListing {
   if (ran.status !== 0) {
-    if (WORKER_NOT_FOUND.test(`${ran.stdout}\n${ran.stderr}`)) {
+    if (workerMissing(`${ran.stdout}\n${ran.stderr}`, worker)) {
       return { kind: "no-worker" };
     }
     throw new Error(

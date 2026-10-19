@@ -37,30 +37,58 @@ describe("the deploy", () => {
 describe("listing the Worker's secrets", () => {
   it("reads the names, and a Worker that does not exist as having none", () => {
     expect([
-      readSecretListing({
-        status: 0,
-        stderr: "",
-        stdout: '[{"name":"SESSION_SECRET","type":"secret_text"}]',
-      }),
-      readSecretListing({
-        status: 1,
-        stderr: "This Worker does not exist on your account. [code: 10007]",
-        stdout: "",
-      }),
+      readSecretListing(
+        {
+          status: 0,
+          stderr: "",
+          stdout: '[{"name":"SESSION_SECRET","type":"secret_text"}]',
+        },
+        "shelfkit"
+      ),
+      // What Wrangler 4.134.0 prints for a Worker that does not exist, colours included.
+      readSecretListing(
+        {
+          status: 1,
+          stderr: `\u001B[31m✘ \u001B[41;31m[\u001B[41;97mERROR\u001B[41;31m]\u001B[0m \u001B[1mWorker "shelfkit" not found.\u001B[0m\n\n  If this is a new Worker, run \`wrangler deploy\` first to create it.\n`,
+          stdout: "",
+        },
+        "shelfkit"
+      ),
+      // Colours inside the message, wherever a version puts them, are stripped before it is read.
+      readSecretListing(
+        {
+          status: 1,
+          stderr: 'Worker \u001B[33m"shelfkit"\u001B[0m not found.',
+          stdout: "",
+        },
+        "shelfkit"
+      ),
+      // What other versions print: Cloudflare's API error code for it.
+      readSecretListing(
+        {
+          status: 1,
+          stderr: "This Worker does not exist on your account. [code: 10007]",
+          stdout: "",
+        },
+        "shelfkit"
+      ),
     ]).toStrictEqual([
       { kind: "listed", names: new Set(["SESSION_SECRET"]) },
+      { kind: "no-worker" },
+      { kind: "no-worker" },
       { kind: "no-worker" },
     ]);
   });
 
-  it("stops setup on any other failure, rather than replace every secret", () => {
-    expect(() =>
-      readSecretListing({
-        status: 1,
-        stderr: "Authentication error [code: 10000]",
-        stdout: "",
-      })
-    ).toThrow(/cannot tell which exist/u);
+  it("stops setup on any other failure, another Worker's included, rather than replace every secret", () => {
+    for (const stderr of [
+      "Authentication error [code: 10000]",
+      'Worker "shelfkit-staging" not found.',
+    ]) {
+      expect(() =>
+        readSecretListing({ status: 1, stderr, stdout: "" }, "shelfkit")
+      ).toThrow(/cannot tell which exist/u);
+    }
   });
 });
 

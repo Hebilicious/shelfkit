@@ -26,7 +26,8 @@
  *    private key and webhook secret are never kept. It is public so that accounts the owner grants access can
  *    authorize it; installing it grants nothing.
  *
- * If Wrangler cannot list the Worker's secrets for any reason but the Worker not existing, setup stops rather than
+ * If Wrangler cannot list the Worker's secrets for any reason but the Worker not existing (`Worker "<name>" not found.`),
+ * setup stops rather than
  * take that for "no secrets" and replace them.
  *
  * A new owner key is shown once, here, and stored nowhere else. With `--keychain`, it is handed to `shelfkit login`
@@ -214,10 +215,21 @@ function ensureQueue(name: string): void {
   must(wrangler(["queues", "create", name]), `creating the queue ${name}`);
 }
 
+/** The Worker's name: the top-level `name` in `wrangler.jsonc`, which Wrangler names it by in its errors. */
+function workerName(): string {
+  const config = readFileSync(path.join(worker, "wrangler.jsonc"), "utf-8");
+  const name = /^ {2}"name": "(?<name>[^"]+)",?$/mu.exec(config)?.groups?.name;
+  if (name === undefined) {
+    throw new Error("wrangler.jsonc has no top-level `name`");
+  }
+  return name;
+}
+
 /** The names of the deployed Worker's secrets: none when the Worker does not exist yet. Any other failure stops setup. */
 function workerSecrets(): ReadonlySet<string> {
   const listing = readSecretListing(
-    wrangler(["secret", "list", "--format", "json"], { quiet: true })
+    wrangler(["secret", "list", "--format", "json"], { quiet: true }),
+    workerName()
   );
   return listing.kind === "listed" ? listing.names : new Set();
 }
