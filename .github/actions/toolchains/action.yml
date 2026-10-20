@@ -25,6 +25,9 @@ runs:
       run: |
         rust="$(sed -n 's/^rust *= *"\(.*\)"/\1/p' .prototools)"
         rustup default "$rust"
+        # proto installs the pin with rustup's minimal profile; the gate
+        # runs clippy and rustfmt, so they are added to that toolchain.
+        rustup component add --toolchain "$rust" clippy rustfmt
         echo "RUSTUP_TOOLCHAIN=$rust" >> "$GITHUB_ENV"
 
     - name: Show resolved tool versions
