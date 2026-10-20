@@ -91,7 +91,16 @@ test("a recompile removes stale vendored files and prunes the directories they e
 
   // First compile: `minimal` vendors the prompt under vendor/minimal/.apm/prompts/.
   await page.getByTestId("open-repository").click();
+  // The write reports its activity, and the live update that follows fetches the compile query again with an equal
+  // plan. What was written must still be shown after that.
+  const refetched = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/graphql") &&
+      (response.request().postData() ?? "").includes("query Compile")
+  );
   await page.getByTestId("write-repository").click();
+  await expect(page.getByTestId("written")).toBeVisible();
+  await refetched;
   await expect(page.getByTestId("written")).toBeVisible();
   shelfkit([
     "--shelf",

@@ -159,10 +159,15 @@ async function open(): Promise<void> {
   }
 }
 
-watch(plan, async () => {
-  written.value = false;
-  await plannedOutput();
-});
+// A refetch hands back an equal plan as a new object (a live update after the write reports its activity does), so
+// the write is forgotten only when what would be written changes.
+watch(
+  () => (plan.value === null ? null : `${plan.value.profileRevision} ${plan.value.apmYmlDigest}`),
+  async () => {
+    written.value = false;
+    await plannedOutput();
+  },
+);
 
 /** Write the compile into the repository, then record it as activity: which repository compiled which revision. */
 async function write(): Promise<void> {
