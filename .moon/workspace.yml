@@ -16,10 +16,12 @@ vcs:
 # The Worker serves the SPA through its assets binding, so its build has to run
 # after the SPA's. Moon's default layer rules forbid an application depending on
 # another application, so this tag relationship expresses the one ordering we
-# need without relaxing layer rules in general.
+# need without relaxing layer rules in general. The Worker also runs the WASM
+# engine, for the MCP `shelf.compile.plan` tool.
 constraints:
   enforceLayerRelationships: true
   tagRelationships:
     worker:
       - "web"
       - "schema"
+      - "engine"

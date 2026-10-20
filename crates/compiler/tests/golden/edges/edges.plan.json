@@ -1,0 +1,28 @@
+{
+  "profile": "edges",
+  "profileRevision": "sha256-5807b6ad2368510f6185f2acec2517203acb1b6eb87b77fd8886090228c0e266",
+  "apmYml": "name: edges\nversion: \"0.0.0\"\ndependencies:\n  apm:\n    - ./vendor/edges\n  lsp:\n    - name: precise\n      command: precise-ls\n      extensionToLanguage:\n        \".p\": precise\n      initializationOptions:\n        a: 604.0210212384299\n        b: 0.1\n        c: 1e+300\n",
+  "apmYmlDigest": "sha256:87ff9eef8b5f78d9ad81d072a3d61d71e1977bb150b64be8b4333ca76e3b457c",
+  "files": [
+    {
+      "path": "vendor/edges/.apm/agents/bom-agent.agent.md",
+      "contents": "﻿---\ndescription: An agent file with a byte-order mark.\n---\n\nYou help.\n"
+    },
+    {
+      "path": "vendor/edges/.apm/prompts/bom-prompt.prompt.md",
+      "contents": "---\ndescription: A prompt whose file starts with a byte-order mark.\n---\n\nSay hello.\n"
+    },
+    {
+      "path": "vendor/edges/apm.yml",
+      "contents": "name: edges\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile edges, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\nx-shelfkit-vendored-for: edges\n"
+    }
+  ],
+  "installCommand": "apm install",
+  "notes": [
+    {
+      "path": "profiles/edges.json",
+      "code": "unratified-lsp",
+      "message": "`precise` compiles to `dependencies.lsp`, which is absent from the published OpenAPM v0.1 schema: it passes validation without being defined by it"
+    }
+  ]
+}

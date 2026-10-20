@@ -1,0 +1,33 @@
+{
+  "profile": "team",
+  "profileRevision": "sha256-3f77b14861c7018b2d44bcf81641eb78337c25a73d0974387ae60c6b1c9132ff",
+  "apmYml": "name: team\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - copilot\nregistries:\n  acme:\n    url: \"http://127.0.0.1:8787/apm\"\n  default: acme\ndependencies:\n  apm:\n    - id: acme/deploy-skill\n      version: \"2.0.1\"\n      targets:\n        - claude\n    - git: acme/agent-kit/prompts/review.prompt.md\n      ref: \"89abcdef0123456789abcdef0123456789abcdef\"\n    - id: acme/team-conventions\n      version: \"1.2.0\"\n    - ./vendor/team\n",
+  "apmYmlDigest": "sha256:11faa9abfeb31a3bb47e249840f65053b46fa3028ed42b95bffc5e9e85a171da",
+  "files": [
+    {
+      "path": "vendor/team/.apm/hooks/lint-on-stop.json",
+      "contents": "{\n  \"Stop\": [\n    { \"hooks\": [{ \"type\": \"command\", \"command\": \"pnpm lint\" }] }\n  ]\n}\n"
+    },
+    {
+      "path": "vendor/team/.apm/skills/logo-kit/SKILL.md",
+      "contents": "---\nname: logo-kit\ndescription: Place the team logo in generated documents.\n---\n\nUse `logo.png` beside this file.\n"
+    },
+    {
+      "path": "vendor/team/.apm/skills/logo-kit/logo.png",
+      "contents": "iVBORw0KGgoAAAANSUhEUgAAAAE=",
+      "encoding": "base64"
+    },
+    {
+      "path": "vendor/team/apm.yml",
+      "contents": "name: team\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile team, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\nx-shelfkit-vendored-for: team\n"
+    }
+  ],
+  "installCommand": "apm experimental enable registries && apm install",
+  "notes": [
+    {
+      "path": "items/hooks/lint-on-stop/item.json",
+      "code": "hook-approval",
+      "message": "`lint-on-stop` is a hook: it runs commands on harness lifecycle events. It compiles into the vendored package, and APM holds hooks from a dependency until `apm approve` allows them when its executable gate is on. Read it before installing."
+    }
+  ]
+}

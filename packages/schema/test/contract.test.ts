@@ -24,6 +24,7 @@ import {
 
 const repository = path.resolve(import.meta.dirname, "../../..");
 const coreTests = path.join(repository, "crates/core/tests");
+const compilerGolden = path.join(repository, "crates/compiler/tests/golden");
 
 /** Every `item.json` under a shelf's `items/`. */
 function itemFiles(shelf: string): string[] {
@@ -197,5 +198,24 @@ describe("the compile plan", () => {
     expect(
       v.safeParse(CompilePlanSchema, { ...plan, apm_yml: plan.apmYml }).success
     ).toBeFalsy();
+  });
+});
+
+describe("the compiler's golden plans", () => {
+  it("each parse with CompilePlanSchema, as the Rust CompiledManifest serializes them", () => {
+    const plans = readdirSync(compilerGolden, {
+      encoding: "utf-8",
+      recursive: true,
+    })
+      .filter((file) => file.endsWith(".plan.json"))
+      .toSorted();
+    expect(plans.length).toBeGreaterThanOrEqual(6);
+    for (const file of plans) {
+      const { issues } = v.safeParse(
+        CompilePlanSchema,
+        readJson(path.join(compilerGolden, file))
+      );
+      expect({ file, issues }).toStrictEqual({ file, issues: undefined });
+    }
   });
 });

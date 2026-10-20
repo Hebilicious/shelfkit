@@ -1,0 +1,10 @@
+name: shelfkit
+version: "0.0.0"
+targets:
+  - claude
+  - codex
+  - copilot
+  - cursor
+dependencies:
+  apm:
+    - ./vendor/default

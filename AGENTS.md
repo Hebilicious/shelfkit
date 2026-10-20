@@ -27,10 +27,12 @@ moon run root:hooks-install # install the git hooks, once per clone
 | Path | Holds |
 | --- | --- |
 | `crates/core` | The shelf format: item kinds, profiles, revisions, resolution. **The product.** |
-| `crates/compiler` | Profile to `apm.yml`, plus the `shelfkit` binary. |
+| `crates/compiler` | Profile to `apm.yml`, plus the `shelfkit` binary (its `cli` feature). The OpenAPM manifest schema is vendored in `schemas/`. |
+| `crates/wasm` | The core and compiler as a `wasm32-unknown-unknown` module with a JSON ABI. No bindings generator. |
 | `apps/worker` | Cloudflare Worker: registry, MCP, GraphQL, static assets. |
 | `apps/web` | Vue 3 SPA. |
 | `packages/schema` | Boundary validation shared by the Worker and the CLI. |
+| `packages/engine` | `@shelfkit/engine`: the typed port over the WASM module, for the Worker, the browser, and Node. |
 | `packages/tokens` | CSSForge tokens, generated and committed. |
 | `shelf/` | ShelfKit's own shelf. |
 
@@ -69,4 +71,4 @@ CI runners ship their own rustup default, which can be newer than the pin; a car
 
 ## Testing
 
-`moon run :test` runs every project's tests. Rust tests live beside the code they cover; the compiler's golden-file tests assert the `apm.yml` shape and are what catch an APM change. Prefer a test that fails for a real reason over one that restates the implementation: the revision test for CRLF normalization caught a genuine hashing bug before the first commit.
+`moon run :test` runs every project's tests. Rust tests live beside the code they cover; the compiler's golden-file tests assert the `apm.yml` shape and are what catch an APM change. Regenerate goldens with `SHELFKIT_UPDATE_GOLDEN=1 cargo test --package <crate>` and review the diff. The compiler's plans are parsed by `CompilePlanSchema` in `packages/schema`, and `packages/engine` checks that the WASM module returns `shelfkit compile --dry-run --json` byte for byte. The test that runs `apm install` skips without an `apm` on `PATH`; `SHELFKIT_TEST_APM_UVX=1` runs it through the pinned `uvx`. Prefer a test that fails for a real reason over one that restates the implementation: the revision test for CRLF normalization caught a genuine hashing bug before the first commit.

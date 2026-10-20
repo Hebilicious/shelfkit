@@ -150,6 +150,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@shelfkit/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
       '@shelfkit/schema':
         specifier: workspace:*
         version: link:../../packages/schema
@@ -166,6 +169,25 @@ importers:
       wrangler:
         specifier: 'catalog:'
         version: 4.134.0(@cloudflare/workers-types@5.20260918.1)(@types/node@26.6.1)
+
+  packages/engine:
+    dependencies:
+      '@shelfkit/schema':
+        specifier: workspace:*
+        version: link:../schema
+      valibot:
+        specifier: 'catalog:'
+        version: 1.5.0(typescript@5.9.3)
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.1
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@26.6.1)(vite@8.3.0(@types/node@26.6.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))
 
   packages/schema:
     dependencies:

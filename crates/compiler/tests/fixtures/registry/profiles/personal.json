@@ -1,0 +1,7 @@
+{
+  "id": "personal",
+  "title": "Personal",
+  "description": "The same selection, unpinned.",
+  "items": ["team-conventions", "deploy", "review"],
+  "compile": { "pin": "latest" }
+}

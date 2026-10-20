@@ -1,0 +1,6 @@
+{
+  "id": "review",
+  "kind": "prompt",
+  "title": "Review",
+  "source": { "id": "upstream", "repo": "https://github.com/acme/agent-kit.git", "path": "prompts/review.prompt.md", "ref": "v3", "resolvedCommit": "89abcdef0123456789abcdef0123456789abcdef" }
+}

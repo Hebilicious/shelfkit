@@ -1,0 +1,5 @@
+{
+  "name": "edges",
+  "description": "A compiler fixture for bytes that differ between runtimes when handled carelessly: a float that needs round-trip parsing, and files that start with a UTF-8 byte-order mark.",
+  "defaultProfile": "edges"
+}

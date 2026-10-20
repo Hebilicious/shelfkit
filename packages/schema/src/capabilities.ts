@@ -188,7 +188,9 @@ export const shelfItemGet = {
 
 /**
  * Something the user must be told about a compile. The first two codes are the resolver's notices; `hook-approval`
- * says the profile vendors hooks, which APM runs only after the user approves them.
+ * says the profile vendors a hook, which APM gates behind approval; `hosted-mcp` says a server ShelfKit relays compiles
+ * to no `dependencies.mcp` entry; and `mcp-schema-mismatch` says an MCP entry uses the object form APM documents, which
+ * the published OpenAPM v0.1 JSON Schema rejects.
  */
 export const CompileNoteSchema = v.strictObject({
   ...NoticeSchema.entries,
@@ -196,6 +198,8 @@ export const CompileNoteSchema = v.strictObject({
     "producer-nonconformant-target",
     "unratified-lsp",
     "hook-approval",
+    "hosted-mcp",
+    "mcp-schema-mismatch",
   ]),
 });
 
@@ -209,8 +213,17 @@ export const CompilePlanSchema = v.strictObject({
   apmYml: v.string(),
   /** `sha256:<hex>` over the bytes of `apmYml`, for `shelf.report`. */
   apmYmlDigest: DigestSchema,
-  /** The vendored files to write, paths relative to the repository root, sorted by path. */
-  files: v.array(v.strictObject({ contents: v.string(), path: v.string() })),
+  /**
+   * The vendored files to write, paths relative to the repository root, sorted by path. `contents` is text unless
+   * `encoding` is `base64`, for a file that is not UTF-8 (an image in a skill).
+   */
+  files: v.array(
+    v.strictObject({
+      contents: v.string(),
+      encoding: v.optional(v.picklist(["utf-8", "base64"])),
+      path: v.string(),
+    })
+  ),
   /** The command to run after writing the files. Printed, never run by ShelfKit. */
   installCommand: v.string(),
   /** What the user must be told: an unratified `lsp` key, Producer-nonconformant targets, hooks to approve. */

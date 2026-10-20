@@ -1,0 +1,9 @@
+{
+  "profile": "personal",
+  "profileRevision": "sha256-95db2dc96267a9bc1aadbfc2868d24364dbbbd3bf72b2ce03a462b872a8f2e5a",
+  "apmYml": "name: personal\nversion: \"0.0.0\"\nregistries:\n  acme:\n    url: \"http://127.0.0.1:8787/apm\"\n  default: acme\ndependencies:\n  apm:\n    - id: acme/deploy-skill\n      version: \"*\"\n      targets:\n        - claude\n    - git: acme/agent-kit/prompts/review.prompt.md\n      ref: v3\n    - id: acme/team-conventions\n      version: \"*\"\n",
+  "apmYmlDigest": "sha256:bf96715432c8d1bb5a0b4a84329c8a4e70806d40d47ba98a5f6e008e92d709c5",
+  "files": [],
+  "installCommand": "apm experimental enable registries && apm install",
+  "notes": []
+}

@@ -1,0 +1,6 @@
+{
+  "id": "lint-on-stop",
+  "kind": "hook",
+  "title": "Lint on stop",
+  "source": { "id": "upstream", "repo": "https://github.com/acme/agent-kit", "path": "hooks/lint-on-stop.json", "ref": "v3" }
+}

@@ -1,0 +1,45 @@
+language: rust
+layer: library
+tags: ["crate", "wasm"]
+
+project:
+  title: "WASM engine"
+  description: "The shelf loader, resolver, and compiler as a wasm32-unknown-unknown module with a JSON ABI."
+
+dependsOn:
+  - "core"
+  - "compiler"
+
+tasks:
+  build:
+    description: "Build the module for wasm32-unknown-unknown with the size-tuned `wasm` profile. Its output is gitignored."
+    command: "cargo build --package shelfkit-wasm --target wasm32-unknown-unknown --profile wasm"
+    deps:
+      - "core:wasm-target"
+    inputs:
+      - "src/**/*"
+      - "Cargo.toml"
+      - "/crates/core/src/**/*"
+      - "/crates/compiler/src/**/*"
+      - "/crates/compiler/schemas/**/*"
+      - "/crates/compiler/Cargo.toml"
+      - "/crates/core/Cargo.toml"
+      - "/Cargo.toml"
+      - "/Cargo.lock"
+    outputs:
+      - "/target/wasm32-unknown-unknown/wasm/shelfkit_wasm.wasm"
+  check:
+    command: "cargo clippy --package shelfkit-wasm --all-targets -- -D warnings"
+    deps:
+      - "check-wasm"
+  check-wasm:
+    description: "Lint the crate as it is built: for wasm32-unknown-unknown."
+    command: "cargo clippy --package shelfkit-wasm --target wasm32-unknown-unknown -- -D warnings"
+    deps:
+      - "core:wasm-target"
+  lint:
+    command: "cargo fmt --package shelfkit-wasm --check"
+  test:
+    command: "cargo test --package shelfkit-wasm"
+  fmt:
+    command: "cargo fmt --package shelfkit-wasm"

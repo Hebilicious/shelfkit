@@ -1,0 +1,43 @@
+name: full-stack
+version: "0.0.0"
+targets:
+  - claude
+  - codex
+  - copilot
+  - cursor
+  - kiro
+dependencies:
+  apm:
+    - git: anthropics/skills/skills/frontend-design
+      ref: "0123456789abcdef0123456789abcdef01234567"
+      targets:
+        - agent-skills
+        - claude
+    - ./vendor/full
+    - ./vendor/full--plugin-release-tools
+  mcp:
+    - name: io.github.upstash/context7
+      registry: false
+      transport: http
+      url: "https://mcp.context7.com/mcp"
+      headers:
+        CONTEXT7_API_KEY: "${CONTEXT7_API_KEY}"
+    - name: microsoft/playwright-mcp
+      registry: false
+      transport: stdio
+      command: npx
+      args:
+        - "-y"
+        - "@playwright/mcp@latest"
+      env:
+        BROWSER_TOKEN: "${BROWSER_TOKEN}"
+        LOG_LEVEL: info
+  lsp:
+    - name: typescript
+      command: typescript-language-server
+      args:
+        - "--stdio"
+      extensionToLanguage:
+        ".ts": typescript
+        ".tsx": typescriptreact
+      transport: stdio

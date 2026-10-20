@@ -1,0 +1,48 @@
+language: typescript
+layer: library
+tags: ["engine"]
+
+project:
+  title: "Engine"
+  description: "The WASM shelf engine behind one typed port, for the Worker, the browser, and Node."
+
+dependsOn:
+  - "schema"
+  - "wasm"
+
+fileGroups:
+  sources:
+    - "src/**/*"
+    - "test/**/*"
+    - "tsconfig.json"
+    - "/tsconfig.base.json"
+
+tasks:
+  build:
+    description: "Place the WASM module at wasm/shelfkit.wasm, where `@shelfkit/engine/shelfkit.wasm` resolves. Gitignored."
+    script: "mkdir -p wasm && cp ../../target/wasm32-unknown-unknown/wasm/shelfkit_wasm.wasm wasm/shelfkit.wasm"
+    deps:
+      - "wasm:build"
+    inputs:
+      - "/target/wasm32-unknown-unknown/wasm/shelfkit_wasm.wasm"
+    outputs:
+      - "wasm/shelfkit.wasm"
+  check:
+    command: "node_modules/.bin/tsc --noEmit"
+    inputs: ["@group(sources)"]
+  lint:
+    command: "node_modules/.bin/tsc --noEmit"
+    inputs: ["@group(sources)"]
+  test:
+    description: "Compare the WASM engine's plans with `shelfkit compile --dry-run --json`, byte for byte."
+    command: "node_modules/.bin/vitest run"
+    deps:
+      - "build"
+      - "compiler:build"
+    inputs:
+      - "@group(sources)"
+      - "wasm/shelfkit.wasm"
+      - "/target/debug/shelfkit"
+      - "/crates/core/tests/fixtures/**/*"
+      - "/crates/compiler/tests/fixtures/**/*"
+      - "/shelf/**/*"

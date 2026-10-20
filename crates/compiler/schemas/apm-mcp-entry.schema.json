@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shelfkit.dev/schemas/apm-mcp-entry.schema.json",
+  "title": "APM 0.33.0 object-form dependencies.mcp entry",
+  "description": "Written by ShelfKit from APM 0.33.0: src/apm_cli/models/dependency/mcp.py (MCPDependency.from_dict and validate: _KNOWN_DICT_KEYS, _NAME_REGEX, _VALID_TRANSPORTS, _ALLOWED_URL_SCHEMES, the header CR/LF check, the command and cwd traversal checks, and the self-defined rules) and docs/src/content/docs/reference/manifest-schema.md section 4.2. Unknown keys are passthrough fields, as APM keeps them.",
+  "type": "object",
+  "required": ["name"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9@_][a-zA-Z0-9._@/:=-]{0,127}$",
+      "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+    },
+    "transport": { "enum": ["stdio", "sse", "http", "streamable-http"] },
+    "type": { "enum": ["stdio", "sse", "http", "streamable-http"] },
+    "registry": { "type": ["boolean", "string"] },
+    "url": { "type": "string", "pattern": "^[hH][tT][tT][pP][sS]?://" },
+    "command": { "$ref": "#/$defs/noTraversal" },
+    "cwd": { "$ref": "#/$defs/noTraversal" },
+    "args": {
+      "oneOf": [{ "type": "array", "items": { "type": "string" } }, { "type": "object" }]
+    },
+    "env": { "type": "object", "additionalProperties": { "type": "string" } },
+    "headers": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[^\\r\\n]*$" },
+      "additionalProperties": { "type": "string", "pattern": "^[^\\r\\n]*$" }
+    },
+    "tools": { "type": "array", "items": { "type": "string" } },
+    "version": { "type": "string" },
+    "package": { "enum": ["npm", "pypi", "oci"] },
+    "extra": { "type": "object" }
+  },
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": { "required": ["registry"], "properties": { "registry": { "const": false } } },
+      "then": {
+        "anyOf": [{ "required": ["transport"] }, { "required": ["type"] }],
+        "allOf": [
+          {
+            "if": { "properties": { "transport": { "enum": ["http", "sse", "streamable-http"] } }, "required": ["transport"] },
+            "then": { "required": ["url"] }
+          },
+          {
+            "if": { "properties": { "transport": { "const": "stdio" } }, "required": ["transport"] },
+            "then": {
+              "required": ["command"],
+              "if": { "properties": { "command": { "pattern": "\\s" } } },
+              "then": { "required": ["args"] }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "noTraversal": {
+      "type": "string",
+      "not": { "pattern": "(^|[/\\\\])\\.\\.([/\\\\]|$)" }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "id": "edges",
+  "title": "Edges",
+  "items": ["precise", "bom-prompt", "bom-agent"]
+}

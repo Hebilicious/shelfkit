@@ -1,0 +1,9 @@
+{
+  "id": "precise",
+  "kind": "lsp",
+  "title": "Precise",
+  "name": "precise",
+  "command": "precise-ls",
+  "extensionToLanguage": { ".p": "precise" },
+  "initializationOptions": { "a": 604.02102123842989, "b": 0.1, "c": 1e300 }
+}

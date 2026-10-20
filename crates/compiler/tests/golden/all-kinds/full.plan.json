@@ -1,0 +1,81 @@
+{
+  "profile": "full",
+  "profileRevision": "sha256-04dd5e97077489cb42319e9ade109ce0da1c698b3f0f6e68faafe80c5a1f38e7",
+  "apmYml": "name: full-stack\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - codex\n  - copilot\n  - cursor\n  - kiro\ndependencies:\n  apm:\n    - git: anthropics/skills/skills/frontend-design\n      ref: \"0123456789abcdef0123456789abcdef01234567\"\n      targets:\n        - agent-skills\n        - claude\n    - ./vendor/full\n    - ./vendor/full--plugin-release-tools\n  mcp:\n    - name: io.github.upstash/context7\n      registry: false\n      transport: http\n      url: \"https://mcp.context7.com/mcp\"\n      headers:\n        CONTEXT7_API_KEY: \"${CONTEXT7_API_KEY}\"\n    - name: microsoft/playwright-mcp\n      registry: false\n      transport: stdio\n      command: npx\n      args:\n        - \"-y\"\n        - \"@playwright/mcp@latest\"\n      env:\n        BROWSER_TOKEN: \"${BROWSER_TOKEN}\"\n        LOG_LEVEL: info\n  lsp:\n    - name: typescript\n      command: typescript-language-server\n      args:\n        - \"--stdio\"\n      extensionToLanguage:\n        \".ts\": typescript\n        \".tsx\": typescriptreact\n      transport: stdio\n",
+  "apmYmlDigest": "sha256:0fba18699598c8f0b37bef80fff2e7d84e53d144b4f887ddaf394d02498a21fd",
+  "files": [
+    {
+      "path": "vendor/full--plugin-release-tools/apm.yml",
+      "contents": "name: full--plugin-release-tools\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile full, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\nx-shelfkit-vendored-for: full\n"
+    },
+    {
+      "path": "vendor/full--plugin-release-tools/plugin.json",
+      "contents": "{\n  \"name\": \"release-tools\",\n  \"version\": \"1.0.0\",\n  \"description\": \"Release helpers.\"\n}\n"
+    },
+    {
+      "path": "vendor/full/.apm/agents/api-architect.agent.md",
+      "contents": "---\ndescription: Designs HTTP APIs.\n---\n\nYou design HTTP APIs.\n"
+    },
+    {
+      "path": "vendor/full/.apm/hooks/format-on-save.json",
+      "contents": "{\n  \"hooks\": {\n    \"PostToolUse\": [\n      {\n        \"matcher\": \"Edit\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"pnpm format\"\n          }\n        ]\n      }\n    ]\n  }\n}\n"
+    },
+    {
+      "path": "vendor/full/.apm/instructions/drizzle.instructions.md",
+      "contents": "---\ndescription: \"Schema-first ORM. Use the relational query builder, not string SQL.\"\n---\n\n# Drizzle ORM\n\nDocumentation: https://orm.drizzle.team/docs/overview\n\n- Migrations are generated, never hand-written.\n- Prefer `db.query` over `db.select`.\n"
+    },
+    {
+      "path": "vendor/full/.apm/instructions/vue-cloudflare.instructions.md",
+      "contents": "---\ndescription: Vue on Cloudflare Workers\n---\n\n# Vue on Cloudflare Workers\n\n## Runtime\n\nWorkers. No Node built-ins.\n"
+    },
+    {
+      "path": "vendor/full/.apm/instructions/vue-sfc-patterns.instructions.md",
+      "contents": "---\ndescription: Vue SFC patterns\n---\n\n# Vue SFC patterns\n\n## Script\n\nUse <script setup lang=\"ts\">.\n\n## Components\n\nOne component per file.\n"
+    },
+    {
+      "path": "vendor/full/.apm/prompts/pr-description.prompt.md",
+      "contents": "---\ndescription: Write a PR description from the staged diff\ninput:\n  - ticket\n  - audience\n---\n\nWrite a pull request description for the staged diff.\n\nAudience: ${input:audience}\nTicket: ${input:ticket}\n"
+    },
+    {
+      "path": "vendor/full/.apm/skills/review-checklist/SKILL.md",
+      "contents": "---\nname: review-checklist\ndescription: Review a change against the team's checklist before approving it.\ncompatibility: Any agent that reads SKILL.md\nallowed-tools: Read Grep\nmetadata:\n  owner: platform\n---\n\n1. Tests cover the change.\n2. Names say what things are.\n"
+    },
+    {
+      "path": "vendor/full/apm.yml",
+      "contents": "name: full\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile full, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\nx-shelfkit-vendored-for: full\n"
+    }
+  ],
+  "installCommand": "apm install",
+  "notes": [
+    {
+      "path": "items/hooks/format-on-save/item.json",
+      "code": "hook-approval",
+      "message": "`format-on-save` is a hook: it runs commands on harness lifecycle events. It compiles into the vendored package, and APM holds hooks from a dependency until `apm approve` allows them when its executable gate is on. Read it before installing."
+    },
+    {
+      "path": "items/mcp/context7/item.json",
+      "code": "mcp-schema-mismatch",
+      "message": "`context7` compiles to a `dependencies.mcp` object, the form APM documents, which the published OpenAPM v0.1 JSON Schema rejects for every MCP object; the spec's prose is authoritative, so the entry is validated against APM 0.33.0's own MCP entry rules (schemas/apm-mcp-entry.schema.json) instead"
+    },
+    {
+      "path": "items/mcp/linear/item.json",
+      "code": "hosted-mcp",
+      "message": "`linear` is relayed by ShelfKit, so it compiles to no `dependencies.mcp` entry: an agent reaches its tools through the shelf's `/mcp` endpoint, as `linear__<tool>`"
+    },
+    {
+      "path": "items/mcp/playwright/item.json",
+      "code": "mcp-schema-mismatch",
+      "message": "`playwright` compiles to a `dependencies.mcp` object, the form APM documents, which the published OpenAPM v0.1 JSON Schema rejects for every MCP object; the spec's prose is authoritative, so the entry is validated against APM 0.33.0's own MCP entry rules (schemas/apm-mcp-entry.schema.json) instead"
+    },
+    {
+      "path": "profiles/full.json",
+      "code": "producer-nonconformant-target",
+      "message": "target `kiro` is outside the OpenAPM v0.1 producer set, so this profile's manifest is Producer-nonconformant (opted in)"
+    },
+    {
+      "path": "profiles/full.json",
+      "code": "unratified-lsp",
+      "message": "`typescript-language-server` compiles to `dependencies.lsp`, which is absent from the published OpenAPM v0.1 schema: it passes validation without being defined by it"
+    }
+  ]
+}

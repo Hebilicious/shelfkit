@@ -1,0 +1,6 @@
+# Every other process is reached through `shelfkit_compiler::cli::System`
+# (crates/compiler/src/cli/system.rs), the one seam a test double replaces,
+# which is how the tests prove `compile` never runs APM.
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "spawn processes only through cli::System (cli/system.rs)" },
+]

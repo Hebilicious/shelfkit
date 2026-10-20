@@ -1,0 +1,6 @@
+{
+  "id": "bom-prompt",
+  "kind": "prompt",
+  "title": "BOM prompt",
+  "description": "A prompt whose file starts with a byte-order mark."
+}

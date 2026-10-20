@@ -1,0 +1,16 @@
+name: personal
+version: "0.0.0"
+registries:
+  acme:
+    url: "http://127.0.0.1:8787/apm"
+  default: acme
+dependencies:
+  apm:
+    - id: acme/deploy-skill
+      version: "*"
+      targets:
+        - claude
+    - git: acme/agent-kit/prompts/review.prompt.md
+      ref: v3
+    - id: acme/team-conventions
+      version: "*"

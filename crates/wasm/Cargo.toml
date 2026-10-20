@@ -1,0 +1,31 @@
+[package]
+name = "shelfkit-wasm"
+description = "The shelf loader, resolver, and compiler as a WebAssembly module, for the Worker and the browser."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+shelfkit-core.workspace = true
+# No default features: the module carries no CLI, no filesystem, no process,
+# and no JSON Schema validator (see crates/compiler/src/schema.rs).
+shelfkit-compiler.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# The workspace lints, except that `unsafe_code` is `deny` rather than
+# `forbid`: exporting a symbol (`#[unsafe(no_mangle)]`) is what the lint
+# catches, and each export allows it on its own line. There is no `unsafe`
+# block in the crate.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = { level = "warn", priority = -1 }
+expect_used = { level = "warn", priority = -1 }

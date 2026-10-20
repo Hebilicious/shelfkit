@@ -1,5 +1,7 @@
 language: rust
-layer: application
+# A library first: the WASM engine (`crates/wasm`) builds on it. The `shelfkit`
+# binary is its `cli` feature.
+layer: library
 tags: ["crate", "compiler"]
 
 dependsOn:
@@ -10,9 +12,25 @@ tasks:
     command: "cargo build --package shelfkit-compiler"
   check:
     command: "cargo clippy --package shelfkit-compiler --all-targets -- -D warnings"
+    deps:
+      - "check-lib"
+  check-lib:
+    description: "Lint the library as the WASM engine builds it: no default features, for wasm32-unknown-unknown."
+    command: "cargo clippy --package shelfkit-compiler --no-default-features --target wasm32-unknown-unknown -- -D warnings"
+    deps:
+      - "core:wasm-target"
   lint:
     command: "cargo fmt --package shelfkit-compiler --check"
   test:
     command: "cargo test --package shelfkit-compiler"
+    # The golden tests compile ShelfKit's own shelf and the core fixtures too.
+    inputs:
+      - "**/*"
+      - "/crates/core/src/**/*"
+      - "/crates/core/tests/fixtures/**/*"
+      - "/shelf/**/*"
+      - "/packages/schema/acidcat.catalog.json"
+      - "/Cargo.toml"
+      - "/Cargo.lock"
   fmt:
     command: "cargo fmt --package shelfkit-compiler"

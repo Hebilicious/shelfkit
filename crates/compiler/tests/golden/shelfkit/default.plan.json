@@ -1,0 +1,26 @@
+{
+  "profile": "default",
+  "profileRevision": "sha256-5442bb8baa8df9529c0fb9ec3a2522aad89704c95f5455ac5b109386c7219de6",
+  "apmYml": "name: shelfkit\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - codex\n  - copilot\n  - cursor\ndependencies:\n  apm:\n    - ./vendor/default\n",
+  "apmYmlDigest": "sha256:d944e754b3b8b98aee553c26e326dd5a6904bc996d01bdfe15ccb2bad43b1492",
+  "files": [
+    {
+      "path": "vendor/default/.apm/instructions/shelfkit-stack.instructions.md",
+      "contents": "---\ndescription: How ShelfKit itself is built.\n---\n\n# TypeScript on Cloudflare Workers with Rust core\n\n## Repository\n\nmoon orchestrates tasks and proto pins every toolchain from .prototools. Do not add a task moon does not know about.\n\n## Core logic\n\nThe shelf format, validation, revision hashing, and profile resolution live in Rust under crates/. They compile native for the CLI and to WASM for the Worker, so the browser preview and the CLI cannot disagree.\n\n## Storage\n\nOne Durable Object per shelf with its own SQLite database, accessed through drizzle-orm/durable-sqlite. There is no D1 database and no cross-shelf query. Content lives in R2 keyed by sha256.\n\n## APM\n\nAPM owns install, resolution, and the lockfile. ShelfKit writes apm.yml and stops. Never parse human-oriented apm output: only audit, deps why, pack, policy status, targets, and lock export emit structured data.\n\n## Targets\n\nUse APM's target slugs verbatim. Emit only the OpenAPM v0.1 canonical producer set by default; anything outside it is an explicit opt-in that check must report.\n"
+    },
+    {
+      "path": "vendor/default/.apm/instructions/typescript-strict.instructions.md",
+      "contents": "---\ndescription: The compiler settings this repository relies on.\n---\n\n# TypeScript strictness\n\n- strict, noUncheckedIndexedAccess, noImplicitOverride, and verbatimModuleSyntax are on. Do not relax them to make code compile.\n- Type-only imports must be marked with `import type`.\n- No enums and no parameter properties: erasableSyntaxOnly is enabled.\n"
+    },
+    {
+      "path": "vendor/default/.apm/prompts/commit-style.prompt.md",
+      "contents": "---\ndescription: Write a conventional commit message for the staged changes.\nargument-hint: \"[scope]\"\n---\n\nRead the staged diff and write one conventional commit message.\n\nRules:\n- Subject line in the imperative mood, no trailing period, at most 72 characters.\n- Type is one of feat, fix, chore, docs, refactor, test, perf, build, ci.\n- Include a body only when the change needs a reason that the subject cannot carry.\n- Do not mention that the change was generated, and do not list files.\n"
+    },
+    {
+      "path": "vendor/default/apm.yml",
+      "contents": "name: default\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile default, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\nx-shelfkit-vendored-for: default\n"
+    }
+  ],
+  "installCommand": "apm install",
+  "notes": []
+}

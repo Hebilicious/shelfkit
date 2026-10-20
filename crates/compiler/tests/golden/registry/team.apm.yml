@@ -1,0 +1,20 @@
+name: team
+version: "0.0.0"
+targets:
+  - claude
+  - copilot
+registries:
+  acme:
+    url: "http://127.0.0.1:8787/apm"
+  default: acme
+dependencies:
+  apm:
+    - id: acme/deploy-skill
+      version: "2.0.1"
+      targets:
+        - claude
+    - git: acme/agent-kit/prompts/review.prompt.md
+      ref: "89abcdef0123456789abcdef0123456789abcdef"
+    - id: acme/team-conventions
+      version: "1.2.0"
+    - ./vendor/team

@@ -83,7 +83,7 @@ Three things worth noting. A ShelfKit instance can be declared as a **registry**
 
 Two parser rules the compiler must respect, because getting either wrong produces a manifest APM rejects. A Git pin is `#<ref>` and nothing else, where the ref is a tag, branch, or commit. That object form also accepts a semver range in `ref:` resolved against remote tags. `@` is never a ref separator, though it may appear inside a literal ref.
 
-Registry URLs are `https://` by requirement, and plain `http://` is refused unless the host is loopback or an RFC 1918 private address, or the dependency explicitly opts into insecure transport. That private-range allowance is what lets a self-hosted `shelfkit serve` run on a LAN or a laptop without a certificate.
+Registry URLs are `https://` by requirement. APM 0.33.0 allows plain `http://` only for a loopback host and has no insecure opt-in, so ShelfKit refuses plain `http://` to any other host, RFC 1918 addresses included. That loopback allowance is what lets a self-hosted `shelfkit serve` run on a laptop without a certificate; on a LAN, use https or a loopback tunnel.
 
 ---
 
