@@ -13,6 +13,7 @@ rust-version = "1.98"
 # Internal
 shelfkit-core = { path = "crates/core", version = "0.0.0" }
 shelfkit-compiler = { path = "crates/compiler", version = "0.0.0", default-features = false }
+shelfkit-registry = { path = "crates/registry", version = "0.0.0" }
 
 # Shared
 serde = { version = "1", features = ["derive"] }
@@ -28,6 +29,11 @@ walkdir = "2"
 # without wasm-bindgen imports (its hasher seeds from `getrandom`).
 jsonschema = { version = "0.59", default-features = false }
 clap = { version = "4", features = ["derive"] }
+# gzip for registry archives, through the pure-Rust backend only, so the
+# same bytes come out natively and in WASM.
+flate2 = { version = "1", default-features = false, features = [
+  "rust_backend",
+] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

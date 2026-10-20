@@ -11,6 +11,8 @@
 //! - [`engine::plan`] loads, resolves, and compiles; the CLI and the WASM
 //!   engine both call it.
 //! - [`compile`] renders a [`CompiledManifest`] from a resolved profile.
+//! - [`package`] packs a profile into a registry archive, for `serve` and
+//!   the Worker.
 //! - [`merge`] fits a compiled manifest into a repository's existing
 //!   `apm.yml`, honouring `onConflict`.
 //! - `schema` (native builds) validates manifests against the vendored
@@ -21,11 +23,11 @@
 //! none of them, which leaves no dependency that touches the network, the
 //! filesystem, or a process.
 
-pub mod base64;
 pub mod coordinate;
 pub mod engine;
 pub mod manifest;
 pub mod merge;
+pub mod package;
 pub mod recommend;
 #[cfg(feature = "schema")]
 pub mod schema;
@@ -36,3 +38,5 @@ pub mod yaml;
 pub mod cli;
 
 pub use manifest::{CompiledManifest, Encoding, Note, NoteCode, VendorFile, compile};
+/// Standard base64, shared with the registry.
+pub use shelfkit_registry::base64;

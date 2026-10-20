@@ -9,6 +9,7 @@ project:
 dependsOn:
   - "core"
   - "compiler"
+  - "registry"
 
 tasks:
   build:
@@ -21,6 +22,8 @@ tasks:
       - "Cargo.toml"
       - "/crates/core/src/**/*"
       - "/crates/compiler/src/**/*"
+      - "/crates/registry/src/**/*"
+      - "/crates/registry/Cargo.toml"
       - "/crates/compiler/schemas/**/*"
       - "/crates/compiler/Cargo.toml"
       - "/crates/core/Cargo.toml"

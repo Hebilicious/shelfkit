@@ -33,11 +33,35 @@
 //! `compile --dry-run --json` prints it; otherwise it is `{ "errors": [{
 //! "path", "message" }] }`.
 //!
+//! Three more calls use the same buffers, each answering with status `0`
+//! (or `2` for a malformed request):
+//!
+//! - `shelfkit_package()`: the same request as `shelfkit_plan`; the output is
+//!   the profile packaged for a registry, as `crate::package` describes,
+//!   with the archive in base64 (`archive`), or `1` and the errors.
+//! - `shelfkit_registry_prepare()`: `{ "method", "path", "mount"?,
+//!   "authorization"? }`, where `path` is the whole request path and `mount`
+//!   the part the registry's base URL adds (`/apm`; empty by default).
+//!   The output is `{ "respond": <response> }` when the registry answers by
+//!   itself, or `{ "route": <route>, "credential": { "kind": "none" |
+//!   "unreadable" } | { "kind": "key", "key" } }` for the host to resolve.
+//! - `shelfkit_registry_respond()`: `{ "method", "path", "mount"?, "access", "context",
+//!   "contentType"?, "ifNoneMatch"?, "body"? (base64), "now" }`, where
+//!   `access` is `shelfkit_registry::Access` and `context` is
+//!   `shelfkit_registry::Context`. The output is `{ "response", "publish"? }`.
+//!
+//! A response is `{ "status", "headers": [[name, value]], "body": { "kind":
+//! "empty" } | { "kind": "json", "text" } | { "kind": "archive", "package",
+//! "version" } }`; `archive` means the host sends the stored bytes of that
+//! version. See `shelfkit_registry::protocol` for the two steps.
+//!
 //! `shelfkit_abi_version()` changes whenever any of this does.
 
 use serde::{Deserialize, Serialize};
-use shelfkit_compiler::engine::{Request, plan};
+use shelfkit_compiler::engine::{Request, package_profile, plan};
 use shelfkit_core::{Error, ErrorKind, Errors, FileSource, Listing, MemorySource};
+use shelfkit_registry::protocol::{self, Payload, Prepared};
+use shelfkit_registry::{Access, Context, Credential};
 use std::cell::RefCell;
 
 /// What `shelfkit_plan` returns.
@@ -53,7 +77,7 @@ pub enum Status {
 }
 
 /// The ABI's version, for a host to check before it calls anything else.
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 4;
 
 /// The largest request the module accepts, in bytes.
 pub const MAX_INPUT: u32 = 512 * 1024 * 1024;
@@ -93,9 +117,36 @@ pub extern "C" fn shelfkit_input(len: u32) -> *mut u8 {
 #[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
 #[unsafe(no_mangle)]
 pub extern "C" fn shelfkit_plan() -> u32 {
+    exchange(respond)
+}
+
+/// Package a profile for a registry; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_package() -> u32 {
+    exchange(package)
+}
+
+/// Step 1 of a registry request; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_registry_prepare() -> u32 {
+    exchange(registry_prepare)
+}
+
+/// Step 2 of a registry request; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_registry_respond() -> u32 {
+    exchange(registry_respond)
+}
+
+/// Run `call` on the input buffer and leave its answer in the output buffer,
+/// holding no borrow of either while it runs.
+fn exchange(call: fn(&[u8]) -> (Status, Vec<u8>)) -> u32 {
     drop(OUTPUT.take());
     let input = INPUT.take();
-    let (status, output) = respond(&input);
+    let (status, output) = call(&input);
     drop(input);
     OUTPUT.set(output);
     status as u32
@@ -181,12 +232,155 @@ struct Problem {
     message: String,
 }
 
-/// Answer one request: the status and the bytes of the output. Plain Rust,
-/// so the native tests drive exactly what the exports run.
+/// Answer one plan request: the status and the bytes of the output. Plain
+/// Rust, so the native tests drive exactly what the exports run.
 pub fn respond(input: &[u8]) -> (Status, Vec<u8>) {
+    let (source, plan_request) = match shelf_request(input) {
+        Ok(parsed) => parsed,
+        Err(answer) => return answer,
+    };
+    match plan(&source, &plan_request) {
+        Ok(compiled) => (Status::Planned, compiled.to_json().into_bytes()),
+        Err(errors) => (Status::Failed, failure(errors)),
+    }
+}
+
+/// Package a profile: the output of `shelfkit_package`.
+pub fn package(input: &[u8]) -> (Status, Vec<u8>) {
+    let (source, request) = match shelf_request(input) {
+        Ok(parsed) => parsed,
+        Err(answer) => return answer,
+    };
+    match package_profile(&source, &request) {
+        Ok(packaged) => {
+            let mut value = serde_json::to_value(&packaged).unwrap_or_default();
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "archive".to_owned(),
+                    serde_json::Value::String(shelfkit_registry::base64::encode(&packaged.archive)),
+                );
+            }
+            (
+                Status::Planned,
+                serde_json::to_vec(&value).unwrap_or_default(),
+            )
+        }
+        Err(errors) => (Status::Failed, failure(errors)),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrepareInput {
+    method: String,
+    path: String,
+    /// The path the registry's base URL adds, as `/apm`; empty at the root.
+    #[serde(default)]
+    mount: String,
+    #[serde(default)]
+    authorization: Option<String>,
+}
+
+/// Step 1 of a registry request: the output of `shelfkit_registry_prepare`.
+pub fn registry_prepare(input: &[u8]) -> (Status, Vec<u8>) {
+    let request: PrepareInput = match serde_json::from_slice(input) {
+        Ok(request) => request,
+        Err(error) => return bad_request(format!("not a prepare request: {error}")),
+    };
+    let output = match protocol::prepare(
+        &request.method,
+        &request.path,
+        &request.mount,
+        request.authorization.as_deref(),
+    ) {
+        Prepared::Respond(response) => serde_json::json!({ "respond": response }),
+        Prepared::Route { route, credential } => {
+            let credential = match credential {
+                Credential::None => serde_json::json!({ "kind": "none" }),
+                Credential::Unreadable(_) => serde_json::json!({ "kind": "unreadable" }),
+                Credential::Key(key) => serde_json::json!({ "kind": "key", "key": key }),
+            };
+            let package = route.package();
+            serde_json::json!({
+                "route": route,
+                "packageKey": package.key(),
+                "ownerKey": package.owner_key(),
+                "credential": credential,
+            })
+        }
+    };
+    (
+        Status::Planned,
+        serde_json::to_vec(&output).unwrap_or_default(),
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RespondInput {
+    method: String,
+    path: String,
+    #[serde(default)]
+    mount: String,
+    access: Access,
+    context: Context,
+    #[serde(default)]
+    content_type: Option<String>,
+    #[serde(default)]
+    if_none_match: Option<String>,
+    /// The request body, base64.
+    #[serde(default)]
+    body: Option<String>,
+    now: String,
+}
+
+/// Step 2 of a registry request: the output of `shelfkit_registry_respond`.
+pub fn registry_respond(input: &[u8]) -> (Status, Vec<u8>) {
+    let request: RespondInput = match serde_json::from_slice(input) {
+        Ok(request) => request,
+        Err(error) => return bad_request(format!("not a respond request: {error}")),
+    };
+    let body = match request.body.as_deref() {
+        None => Vec::new(),
+        Some(text) => match shelfkit_registry::base64::decode(text) {
+            Some(bytes) => bytes,
+            None => return bad_request("`body` is not valid base64".to_owned()),
+        },
+    };
+    let route = match protocol::prepare(&request.method, &request.path, &request.mount, None) {
+        Prepared::Route { route, .. } => route,
+        Prepared::Respond(response) => {
+            let output = serde_json::json!({ "response": response });
+            return (
+                Status::Planned,
+                serde_json::to_vec(&output).unwrap_or_default(),
+            );
+        }
+    };
+    let payload = Payload {
+        content_type: request.content_type.as_deref(),
+        if_none_match: request.if_none_match.as_deref(),
+        body: &body,
+    };
+    let outcome = protocol::respond(
+        &route,
+        &request.path,
+        &request.access,
+        &request.context,
+        payload,
+        &request.now,
+    );
+    (
+        Status::Planned,
+        serde_json::to_vec(&outcome).unwrap_or_default(),
+    )
+}
+
+/// Read a shelf request (`shelfkit_plan`, `shelfkit_package`).
+fn shelf_request(input: &[u8]) -> Result<(HostShelf, Request), (Status, Vec<u8>)> {
     let request: PlanInput = match serde_json::from_slice(input) {
         Ok(request) => request,
-        Err(error) => return bad_request(format!("not a plan request: {error}")),
+        Err(error) => return Err(bad_request(format!("not a plan request: {error}"))),
     };
     let mut source = HostShelf {
         files: MemorySource::new(),
@@ -198,14 +392,20 @@ pub fn respond(input: &[u8]) -> (Status, Vec<u8>) {
             continue;
         }
         let Some(contents) = file.contents else {
-            return bad_request(format!("{}: a file needs `contents`", file.path));
+            return Err(bad_request(format!(
+                "{}: a file needs `contents`",
+                file.path
+            )));
         };
         let bytes = match file.encoding {
             Encoding::Utf8 => contents.into_bytes(),
             Encoding::Base64 => match shelfkit_compiler::base64::decode(&contents) {
                 Some(bytes) => bytes,
                 None => {
-                    return bad_request(format!("{}: contents are not valid base64", file.path));
+                    return Err(bad_request(format!(
+                        "{}: contents are not valid base64",
+                        file.path
+                    )));
                 }
             },
         };
@@ -216,10 +416,7 @@ pub fn respond(input: &[u8]) -> (Status, Vec<u8>) {
         override_profile: request.override_profile,
         ..Request::default()
     };
-    match plan(&source, &plan_request) {
-        Ok(compiled) => (Status::Planned, compiled.to_json().into_bytes()),
-        Err(errors) => (Status::Failed, failure(errors)),
-    }
+    Ok((source, plan_request))
 }
 
 fn failure(errors: Errors) -> Vec<u8> {
@@ -357,5 +554,58 @@ mod tests {
             respond(br#"{ "files": [], "extra": 1 }"#).0,
             Status::BadRequest
         );
+    }
+
+    fn shelf_files() -> serde_json::Value {
+        serde_json::json!({
+            "files": [
+                { "path": "shelf.json", "contents": "{ \"name\": \"t\", \"registry\": { \"namespace\": \"acme\", \"public\": true } }" },
+                { "path": "items/prompts/hi/item.json", "contents": "{ \"id\": \"hi\", \"kind\": \"prompt\", \"title\": \"Hi\" }" },
+                { "path": "items/prompts/hi/prompt.md", "contents": "Say hi.\n" },
+                { "path": "profiles/p.json", "contents": "{ \"id\": \"p\", \"title\": \"P\", \"items\": [\"hi\"] }" }
+            ],
+            "profile": "p"
+        })
+    }
+
+    #[test]
+    fn packages_a_profile_with_the_archive_in_base64() {
+        let (status, output) = package(&serde_json::to_vec(&shelf_files()).unwrap());
+        assert_eq!(status, Status::Planned);
+        let body: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(body["package"], "acme/p");
+        let archive = shelfkit_registry::base64::decode(body["archive"].as_str().unwrap()).unwrap();
+        assert_eq!(body["digest"], shelfkit_registry::digest(&archive));
+        assert_eq!(body["sizeBytes"], archive.len());
+    }
+
+    #[test]
+    fn a_registry_request_runs_in_two_steps() {
+        let (_, prepared) = registry_prepare(
+            br#"{ "method": "GET", "path": "/v1/packages/acme/p/versions", "authorization": "Bearer k" }"#,
+        );
+        let prepared: serde_json::Value = serde_json::from_slice(&prepared).unwrap();
+        assert_eq!(prepared["route"]["operation"], "list");
+        assert_eq!(prepared["packageKey"], "acme/p");
+        assert_eq!(
+            prepared["credential"],
+            serde_json::json!({ "kind": "key", "key": "k" })
+        );
+
+        let (_, missing) = registry_prepare(br#"{ "method": "GET", "path": "/nothing" }"#);
+        let missing: serde_json::Value = serde_json::from_slice(&missing).unwrap();
+        assert_eq!(missing["respond"]["status"], 404);
+
+        let request = serde_json::json!({
+            "method": "GET",
+            "path": "/v1/packages/acme/p/versions",
+            "access": { "credential": "anonymous" },
+            "context": { "shelf": { "public": false }, "versions": [] },
+            "now": "2026-10-19T12:00:00Z"
+        });
+        let (_, output) = registry_respond(&serde_json::to_vec(&request).unwrap());
+        let outcome: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(outcome["response"]["status"], 401);
+        assert!(outcome.get("publish").is_none());
     }
 }

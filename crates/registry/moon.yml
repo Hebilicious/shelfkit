@@ -1,0 +1,24 @@
+language: rust
+# The protocol both registry hosts run: `shelfkit serve` (crates/compiler) and
+# the Worker (apps/worker, through the WASM engine). No I/O of its own.
+layer: library
+tags: ["crate", "registry"]
+
+tasks:
+  build:
+    command: "cargo build --package shelfkit-registry"
+  check:
+    command: "cargo clippy --package shelfkit-registry --all-targets -- -D warnings"
+    deps:
+      - "check-wasm"
+  check-wasm:
+    description: "Prove the crate builds for WASM, where the Worker runs the same handler."
+    command: "cargo clippy --package shelfkit-registry --target wasm32-unknown-unknown -- -D warnings"
+    deps:
+      - "core:wasm-target"
+  lint:
+    command: "cargo fmt --package shelfkit-registry --check"
+  test:
+    command: "cargo test --package shelfkit-registry"
+  fmt:
+    command: "cargo fmt --package shelfkit-registry"

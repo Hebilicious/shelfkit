@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./node": "./src/node.ts",
+    "./conformance": "./src/conformance.ts",
     "./shelfkit.wasm": "./wasm/shelfkit.wasm"
   },
   "dependencies": {

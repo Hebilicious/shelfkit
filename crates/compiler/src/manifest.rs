@@ -175,6 +175,63 @@ impl From<NoticeCode> for NoteCode {
 /// Compile a resolved profile. Every problem is returned, each carrying the
 /// file it came from.
 pub fn compile(shelf: &Shelf, resolved: &ResolvedProfile) -> Result<CompiledManifest, Errors> {
+    let rendered = render(shelf, resolved, &Shape::Repository)?;
+    let apm_yml = yaml::render(&rendered.manifest);
+    let install_command = if rendered.uses_registry {
+        // APM's registry client is behind an experimental flag.
+        "apm experimental enable registries && apm install".to_owned()
+    } else {
+        "apm install".to_owned()
+    };
+    Ok(CompiledManifest {
+        profile: resolved.id.clone(),
+        profile_revision: resolved.revision.clone(),
+        apm_yml_digest: digest(apm_yml.as_bytes()),
+        apm_yml,
+        files: rendered
+            .files
+            .into_iter()
+            .map(|(path, bytes)| VendorFile::new(path, bytes))
+            .collect(),
+        install_command,
+        notes: rendered.notes,
+    })
+}
+
+/// What a profile compiles into.
+pub(crate) enum Shape {
+    /// A repository's `apm.yml`, with shelf-authored items vendored under
+    /// `vendor/` as local packages.
+    Repository,
+    /// A registry package: the profile is the package, so its `apm.yml` is
+    /// the package's own (`name`, `version`, `description`), and the
+    /// shelf-authored items are its own `.apm/` primitives at the root. A
+    /// registry package cannot declare local-path dependencies (APM refuses
+    /// them from a registry parent), so an item that needs a package of its
+    /// own (a plugin, or one restricted to some targets) cannot be published.
+    Package {
+        name: String,
+        version: String,
+        description: String,
+    },
+}
+
+/// A compiled profile, before it is serialized.
+pub(crate) struct Rendered {
+    /// The root `apm.yml`.
+    pub manifest: Node,
+    /// Files other than the root `apm.yml`, by path, sorted.
+    pub files: BTreeMap<String, Vec<u8>>,
+    pub notes: Vec<Note>,
+    /// Whether the manifest routes dependencies through a registry.
+    pub uses_registry: bool,
+}
+
+pub(crate) fn render(
+    shelf: &Shelf,
+    resolved: &ResolvedProfile,
+    shape: &Shape,
+) -> Result<Rendered, Errors> {
     let mut compiler = Compiler {
         shelf,
         resolved,
@@ -199,7 +256,7 @@ pub fn compile(shelf: &Shelf, resolved: &ResolvedProfile) -> Result<CompiledMani
             compiler.item(loaded);
         }
     }
-    compiler.finish()
+    compiler.finish(shape)
 }
 
 /// One vendored package: a directory under `vendor/`, the targets its items
@@ -397,7 +454,7 @@ impl Compiler<'_> {
         self.mcp.push(entry);
     }
 
-    fn finish(mut self) -> Result<CompiledManifest, Errors> {
+    fn finish(mut self, shape: &Shape) -> Result<Rendered, Errors> {
         let profile_path = self.resolved.path.clone();
         let settings = &self.resolved.compile;
 
@@ -437,44 +494,85 @@ impl Compiler<'_> {
             .iter()
             .map(|(upstream, targets)| upstream.entry(targets.as_deref()))
             .collect();
-        let mut files = Vec::new();
-        for (directory, package) in &self.packages {
-            let root = format!("{VENDOR_DIR}/{directory}");
-            let local = format!("./{root}");
-            apm.push(match &package.targets {
-                None => Node::String(local),
-                Some(targets) => Node::Map(vec![
-                    ("path".to_owned(), Node::String(local)),
-                    ("targets".to_owned(), Node::strings(targets)),
-                ]),
-            });
-            let manifest = package_manifest(directory, &self.resolved.id);
-            files.push(VendorFile::new(
-                format!("{root}/apm.yml"),
-                yaml::render(&manifest).into_bytes(),
-            ));
-            #[cfg(feature = "schema")]
-            if let Err(errors) = crate::schema::validate(&manifest) {
-                for message in errors {
-                    self.errors.push(Error::invalid(
-                        &profile_path,
-                        format!(
-                            "the vendored {root}/apm.yml fails the OpenAPM v0.1 schema: {message}"
-                        ),
-                    ));
+        let mut files = BTreeMap::new();
+        match shape {
+            Shape::Repository => {
+                for (directory, package) in &self.packages {
+                    let root = format!("{VENDOR_DIR}/{directory}");
+                    let local = format!("./{root}");
+                    apm.push(match &package.targets {
+                        None => Node::String(local),
+                        Some(targets) => Node::Map(vec![
+                            ("path".to_owned(), Node::String(local)),
+                            ("targets".to_owned(), Node::strings(targets)),
+                        ]),
+                    });
+                    let manifest = package_manifest(directory, &self.resolved.id);
+                    files.insert(
+                        format!("{root}/apm.yml"),
+                        yaml::render(&manifest).into_bytes(),
+                    );
+                    #[cfg(feature = "schema")]
+                    if let Err(errors) = crate::schema::validate(&manifest) {
+                        for message in errors {
+                            self.errors.push(Error::invalid(
+                                &profile_path,
+                                format!(
+                                    "the vendored {root}/apm.yml fails the OpenAPM v0.1 schema: {message}"
+                                ),
+                            ));
+                        }
+                    }
+                    for (path, bytes) in &package.files {
+                        files.insert(format!("{root}/{path}"), bytes.clone());
+                    }
                 }
             }
-            for (path, bytes) in &package.files {
-                files.push(VendorFile::new(format!("{root}/{path}"), bytes.clone()));
+            Shape::Package { .. } => {
+                let own = &self.resolved.id;
+                for (directory, package) in &self.packages {
+                    if directory == own {
+                        files.extend(package.files.clone());
+                        continue;
+                    }
+                    let why = if directory.starts_with(&format!("{own}--plugin-")) {
+                        "is a plugin, which compiles into a package of its own"
+                    } else {
+                        "restricts its `targets`, so it compiles into a package of its own with \
+                         per-dependency targets"
+                    };
+                    for id in &package.items {
+                        self.errors.push(Error::invalid(
+                            &profile_path,
+                            format!(
+                                "`{id}` {why}; a registry package cannot declare a local-path \
+                                 dependency (APM refuses one from a registry package), so this \
+                                 profile cannot be published until `{id}` has an upstream to \
+                                 reference or reaches every target"
+                            ),
+                        ));
+                    }
+                }
             }
         }
-        files.sort_by(|a, b| a.path.cmp(&b.path));
 
-        let mut root = vec![
-            ("name".to_owned(), Node::string(&settings.name)),
-            ("version".to_owned(), Node::string(MANIFEST_VERSION)),
-        ];
-        if !settings.targets.is_empty() {
+        let mut root = match shape {
+            Shape::Repository => vec![
+                ("name".to_owned(), Node::string(&settings.name)),
+                ("version".to_owned(), Node::string(MANIFEST_VERSION)),
+            ],
+            Shape::Package {
+                name,
+                version,
+                description,
+            } => vec![
+                ("name".to_owned(), Node::string(name)),
+                ("version".to_owned(), Node::string(version)),
+                ("description".to_owned(), Node::string(description)),
+            ],
+        };
+        // A package does not choose its consumer's targets.
+        if matches!(shape, Shape::Repository) && !settings.targets.is_empty() {
             root.push(("targets".to_owned(), Node::strings(&settings.targets)));
         }
         // APM 0.33.0 refuses any key in a registry entry but `url`.
@@ -513,24 +611,14 @@ impl Compiler<'_> {
             return Err(self.errors.sorted());
         }
 
-        let apm_yml = yaml::render(&manifest);
-        let install_command = if self.registries.is_empty() {
-            "apm install".to_owned()
-        } else {
-            // APM's registry client is behind an experimental flag.
-            "apm experimental enable registries && apm install".to_owned()
-        };
         let mut notes = self.notes;
         notes.sort();
         notes.dedup();
-        Ok(CompiledManifest {
-            profile: self.resolved.id.clone(),
-            profile_revision: self.resolved.revision.clone(),
-            apm_yml_digest: digest(apm_yml.as_bytes()),
-            apm_yml,
+        Ok(Rendered {
+            manifest,
             files,
-            install_command,
             notes,
+            uses_registry: !self.registries.is_empty(),
         })
     }
 }

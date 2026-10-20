@@ -3,7 +3,10 @@
 //! same code over the same bytes.
 
 use crate::manifest::{CompiledManifest, compile};
-use shelfkit_core::{Error, Errors, FileSource, Listing, MemorySource, load};
+use crate::package::{PackagedProfile, package};
+use shelfkit_core::{
+    Error, Errors, FileSource, Listing, MemorySource, ResolvedProfile, Shelf, load,
+};
 
 /// What to compile.
 #[derive(Debug, Clone, Default)]
@@ -26,6 +29,21 @@ pub struct Request {
 /// is one, is loaded with the rest of the shelf exactly as if it were the
 /// file `profiles/<id>.json`, so it is validated the same way.
 pub fn plan(source: &dyn FileSource, request: &Request) -> Result<CompiledManifest, Errors> {
+    let (shelf, resolved) = resolve(source, request)?;
+    compile(&shelf, &resolved)
+}
+
+/// Package one profile of the shelf `source` holds for a registry: the same
+/// load and resolution as [`plan`], then [`crate::package::package`].
+pub fn package_profile(
+    source: &dyn FileSource,
+    request: &Request,
+) -> Result<PackagedProfile, Errors> {
+    let (shelf, resolved) = resolve(source, request)?;
+    package(&shelf, &resolved)
+}
+
+fn resolve(source: &dyn FileSource, request: &Request) -> Result<(Shelf, ResolvedProfile), Errors> {
     let id = match profile_id(source, request)? {
         Some(id) => id,
         None => {
@@ -80,7 +98,7 @@ pub fn plan(source: &dyn FileSource, request: &Request) -> Result<CompiledManife
     };
     let shelf = load(&overlay)?;
     let resolved = shelf.resolve(&id)?;
-    compile(&shelf, &resolved)
+    Ok((shelf, resolved))
 }
 
 fn profile_id(source: &dyn FileSource, request: &Request) -> Result<Option<String>, Errors> {

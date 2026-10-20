@@ -1,0 +1,18 @@
+[package]
+name = "shelfkit-registry"
+description = "The OpenAPM Registry HTTP API as a pure library: routing, auth decisions, publish validation, and deterministic tar.gz archives."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+flate2.workspace = true
+
+[lints]
+workspace = true
