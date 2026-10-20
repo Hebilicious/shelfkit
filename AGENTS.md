@@ -10,20 +10,22 @@ There are no npm scripts. Everything is a moon task.
 moon setup                 # every pinned toolchain
 pnpm install               # workspace dependencies
 moon run :build            # build every project that has a build task
-moon run :check :lint      # typecheck and format check
+moon run :check :lint      # typecheck, lint, format and authorship checks
 moon run :test             # tests
 moon run web:dev           # SPA on :5173
 moon run worker:dev        # Worker on :8787
 moon query tasks           # every task, by project
 moon run worker:setup      # provision a Cloudflare account and deploy
+moon run root:format       # format the repository with oxfmt
+moon run root:hooks-install # install the git hooks, once per clone
 ```
 
-`moon run :task` runs that task in every project defining it. A single project is `moon run core:test`.
+`moon run :task` runs that task in every project defining it. A single project is `moon run core:test`. The repository root is the `root` project, which holds only repository-wide checks and the git hooks.
 
 ## Layout
 
 | Path | Holds |
-|---|---|
+| --- | --- |
 | `crates/core` | The shelf format: item kinds, profiles, revisions, resolution. **The product.** |
 | `crates/compiler` | Profile to `apm.yml`, plus the `shelfkit` binary. |
 | `apps/worker` | Cloudflare Worker: registry, MCP, GraphQL, static assets. |
@@ -48,8 +50,16 @@ moon run worker:setup      # provision a Cloudflare account and deploy
 - Rust: `unwrap_used` and `expect_used` are denied outside tests. Errors carry the file they came from, because a shelf that half-loads produces an agent that half-knows the conventions.
 - TypeScript: `strict`, `noUncheckedIndexedAccess`, and `verbatimModuleSyntax`. No enums, no parameter properties. Type-only imports need `import type`.
 - Design values come from CSSForge tokens. No hand-written colours, spacing, or type.
+- Every Node dependency is pinned exactly, once, in the `catalog` of `pnpm-workspace.yaml`. A `package.json` names `catalog:` and never a version.
+- `oxlint` lints with Ultracite's presets plus the vendored anti-slop rules in `tools/oxlint/anti-slop`, and `oxfmt` formats with Ultracite's settings; `vize` formats and lints the Vue components, and `cargo fmt` and clippy keep the crates. Do not introduce ESLint or Prettier. A rule is disabled only on the line it concerns, with its reason after `--`; a rule that is off for a file or for the repository says why beside its setting in `oxlint.config.ts`.
 - A new project joins the workspace through a glob in `.moon/workspace.yml` and a `moon.yml` declaring its tasks.
 - Binaries in moon tasks are invoked by their path in `node_modules/.bin`; moon puts toolchain binaries on PATH but not a project's own.
+
+## Branches and commits
+
+- Each task gets its own branch and its own worktree in `.worktrees/<branch>`, created from `main` with `git worktree add .worktrees/<branch> -b <branch> main`. Run `pnpm install` in it and do all the work there. The main checkout stays on `main`.
+- Commits and pull requests carry no AI attribution: no `Co-Authored-By` trailer for an assistant, no generated-with footer. gommage enforces it from `.gommage.yml`.
+- lefthook checks each commit message with gommage, formatting on commit, and lint and type checks on push. Fix what it reports instead of bypassing it with `--no-verify`.
 
 ## Toolchains
 

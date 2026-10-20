@@ -3,13 +3,20 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.8.0",
+  "devDependencies": {
+    "@gommage/cli": "catalog:",
+    "@oxlint/plugins": "catalog:",
+    "@types/node": "catalog:",
+    "lefthook": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "ultracite": "catalog:"
+  },
   "engines": {
     "node": ">=26"
   },
-  "devDependencies": {
-    "@types/node": "^26.6.1",
-    "tsx": "^4.20.0",
-    "typescript": "^5.9.0"
-  }
+  "packageManager": "pnpm@11.8.0"
 }

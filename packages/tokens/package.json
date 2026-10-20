@@ -9,7 +9,7 @@
     "./generated": "./.cssforge/output.ts"
   },
   "devDependencies": {
-    "@hebilicious/cssforge": "jsr:^0.4.1",
-    "tsx": "^4.20.0"
+    "@hebilicious/cssforge": "catalog:",
+    "tsx": "catalog:"
   }
 }

@@ -18,8 +18,10 @@ const passthrough = process.argv.slice(2);
 const result = spawnSync(
   process.execPath,
   [cli, "--config", "./cssforge.config.ts", "--mode", "all", ...passthrough],
-  { stdio: "inherit" },
+  { stdio: "inherit" }
 );
 
-if (result.error) throw result.error;
+if (result.error) {
+  throw result.error;
+}
 process.exit(result.status ?? 1);

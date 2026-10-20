@@ -9,28 +9,44 @@ export interface ShelfKitRoute {
 }
 
 export const SHELFKIT_ROUTES: ShelfKitRoute[] = [
-  { path: "/", title: "Shelf", note: "Inventory. Search, filter, bulk-select into a profile." },
   {
+    note: "Inventory. Search, filter, bulk-select into a profile.",
+    path: "/",
+    title: "Shelf",
+  },
+  {
+    note: "Copy with variables, copy as skill, favourites, search.",
     path: "/prompts",
     title: "Prompts",
-    note: "Copy with variables, copy as skill, favourites, search.",
   },
-  { path: "/item", title: "Item", note: "Content, revisions, provenance, reverse dependencies." },
-  { path: "/compose", title: "Compose", note: "Build a profile and watch apm.yml update live." },
   {
+    note: "Content, revisions, provenance, reverse dependencies.",
+    path: "/item",
+    title: "Item",
+  },
+  {
+    note: "Build a profile and watch apm.yml update live.",
+    path: "/compose",
+    title: "Compose",
+  },
+  {
+    note: "Pick a profile and repository, copy the install command.",
     path: "/compile",
     title: "Compile",
-    note: "Pick a profile and repository, copy the install command.",
   },
   {
+    note: "Pull items from a repo, registry, catalog, or shelf.",
     path: "/import",
     title: "Import",
-    note: "Pull items from a repo, registry, catalog, or shelf.",
   },
-  { path: "/activity", title: "Activity", note: "Which repositories compiled which revision." },
   {
+    note: "Which repositories compiled which revision.",
+    path: "/activity",
+    title: "Activity",
+  },
+  {
+    note: "Keys, sources, secret names, registry visibility.",
     path: "/settings",
     title: "Settings",
-    note: "Keys, sources, secret names, registry visibility.",
   },
 ];

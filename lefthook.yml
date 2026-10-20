@@ -1,0 +1,18 @@
+# Local gates that stand in for CI. Install them once per clone with `moon run root:hooks-install`.
+# Never bypass them with `--no-verify`: fix the failure.
+no_auto_install: true
+
+commit-msg:
+  commands:
+    authorship:
+      run: node_modules/.bin/gommage hook --message-file {1}
+
+pre-commit:
+  commands:
+    format:
+      run: moon run :format-check
+
+pre-push:
+  commands:
+    verify:
+      run: moon run :lint :check

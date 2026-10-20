@@ -14,6 +14,7 @@ export class ShelfIndex extends DurableObject<Env> {
     // There is no CLI path to a Durable Object's SQLite, so schema setup runs
     // here behind blockConcurrencyWhile. `PRAGMA user_version` is unsupported,
     // so the schema version lives in a table.
+    // oxlint-disable-next-line eslint/require-await -- blockConcurrencyWhile takes an async callback; this setup is synchronous today.
     void ctx.blockConcurrencyWhile(async () => {
       this.ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS meta (

@@ -24,7 +24,7 @@ Pinned: proto 0.62.2, node 26.9.0, npm 12.0.2, pnpm 11.8.0, moon 2.5.5, uv 0.11.
 ## What already exists
 
 | Path | State |
-|---|---|
+| --- | --- |
 | `crates/core` | Working shelf model in `shelf.rs` (ten item kinds, profiles, bundles, compile options) and a tested content-addressed revision hasher in `revision.rs`. Loader and resolution do **not** exist yet. |
 | `crates/compiler` | A stub `compile()` in `manifest.rs` that emits a minimal manifest, plus tests. `main.rs` handles only `--help` and `--version`. |
 | `apps/worker` | Health route and a `501` catch-all in `index.ts`. `shelf-index.ts` has the Durable Object skeleton with its `meta` and `item` tables. Bindings in `wrangler.jsonc`: DO namespace, R2, one queue, one cron. |
@@ -41,7 +41,7 @@ Do not re-scaffold any of this. Extend it.
 Waves 1 to 4 are a chain. Each runs as its own session, alone. Wave 5 is three parallel workers with disjoint write scopes.
 
 | Wave | Issues | Mode | Ends with |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | #2 | alone | the format loads, validates, resolves, and hashes deterministically |
 | 2 | #3 | alone | `shelfkit compile` emits a schema-valid `apm.yml` |
 | 3 | #4 | alone | `apm install` against `shelfkit serve` |

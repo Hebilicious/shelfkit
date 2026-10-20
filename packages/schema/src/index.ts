@@ -22,15 +22,15 @@ export const ItemKindSchema = v.picklist([
 
 export const RevisionSchema = v.pipe(
   v.string(),
-  v.regex(/^sha256-[0-9a-f]{64}$/, "must be a sha256-<64 hex> revision"),
+  v.regex(/^sha256-[0-9a-f]{64}$/u, "must be a sha256-<64 hex> revision")
 );
 
 /** Item ids are kebab-case and may not contain `__`, which the MCP namespace
  * separator reserves. The Rust model enforces the same rule. */
 export const ItemIdSchema = v.pipe(
   v.string(),
-  v.regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "must be lowercase kebab-case"),
-  v.check((id) => !id.includes("__"), "must not contain `__`"),
+  v.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u, "must be lowercase kebab-case"),
+  v.check((id) => !id.includes("__"), "must not contain `__`")
 );
 
 export const KeyScopeSchema = v.picklist(["read", "publish"]);

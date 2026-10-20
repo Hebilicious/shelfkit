@@ -8,9 +8,9 @@
     "@shelfkit/schema": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "^1.1.12",
-    "typescript": "^5.9.0",
-    "vitest": "^4.1.0",
-    "wrangler": "^4.40.0"
+    "@cloudflare/vitest-plugin": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "catalog:"
   }
 }

@@ -24,19 +24,24 @@ function wrangler(args: string[]): void {
 
 const steps: Step[] = [
   {
+    run: () => {
+      wrangler(["r2", "bucket", "create", "shelfkit-blobs"]);
+    },
     title: "Create the R2 bucket",
-    run: () => wrangler(["r2", "bucket", "create", "shelfkit-blobs"]),
   },
   {
-    title: "Create the job queue and its dead-letter queue",
     run: () => {
       wrangler(["queues", "create", "shelfkit-jobs"]);
       wrangler(["queues", "create", "shelfkit-jobs-dlq"]);
     },
+    title: "Create the job queue and its dead-letter queue",
   },
   {
-    title: "Deploy, which creates the Durable Object namespace and its migrations",
-    run: () => wrangler(["deploy"]),
+    run: () => {
+      wrangler(["deploy"]);
+    },
+    title:
+      "Deploy, which creates the Durable Object namespace and its migrations",
   },
 ];
 

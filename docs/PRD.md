@@ -1,8 +1,8 @@
 # PRD: ShelfKit
 
-**Status:** Draft v3.0
-**Last Updated:** 2026-09-19
-**License:** MIT
+**Status:** Draft v3.0\
+**Last Updated:** 2026-09-19\
+**License:** MIT\
 **Repository:** `shelfkit`
 
 ---
@@ -41,7 +41,7 @@ It is deliberately short. Where a decision needs a specific version, a limit, or
 ## 3. Relationship to APM
 
 | Concern | Owner |
-|---|---|
+| --- | --- |
 | Manifest, lockfile, transitive resolution | APM |
 | Dependency resolution and install across harnesses | APM |
 | Policy (`apm-policy.yml`) | APM |
@@ -63,7 +63,7 @@ The manifest key `lsp` is in the CLI and the working draft but absent from the p
 # apm.yml, written by `shelfkit compile`
 name: my-cool-app
 version: 1.0.0
-targets: [copilot, claude, cursor, codex]      # APM's own target slugs
+targets: [copilot, claude, cursor, codex] # APM's own target slugs
 registries:
   acme:
     url: https://shelf.acme.dev/apm
@@ -71,9 +71,9 @@ registries:
 dependencies:
   apm:
     - anthropics/skills/skills/frontend-design
-    - id: acme/team-conventions          # from the registry above
+    - id: acme/team-conventions # from the registry above
       version: ^1.2.0
-    - ./vendor/local-conventions         # compiled from shelf-authored items
+    - ./vendor/local-conventions # compiled from shelf-authored items
   mcp:
     - name: io.github.upstash/context7
       transport: http
@@ -92,7 +92,7 @@ Registry URLs are `https://` by requirement, and plain `http://` is refused unle
 APM is a Python program, published as `apm-cli` on PyPI and as per-platform PyInstaller binaries. ShelfKit's CLI is Rust. **They are separate binaries, and ShelfKit never embeds a Python runtime.**
 
 | Question | Decision |
-|---|---|
+| --- | --- |
 | Rust client, or reimplement APM? | Rust client. Install, resolution, and lockfile writing stay APM's job. |
 | Wrap the Python CLI? | No. Wrapping it adds a parser for human-oriented output and buys nothing the published schemas do not already give us. |
 | Bundle APM? | No. A vendored interpreter is a maintenance trap. |
@@ -114,7 +114,7 @@ One consequence to accept: because APM owns install, **an APM breaking change is
 `packages/compiler` and `packages/core` are Rust crates with no Cloudflare dependency, compiled to a single static binary. The same crates are compiled to WASM for the Worker, so the browser preview and the CLI cannot disagree about what a profile compiles to.
 
 | Command | Purpose |
-|---|---|
+| --- | --- |
 | `shelfkit init` | Scaffold a shelf |
 | `shelfkit add <source>` | Import items from a git repo, an APM registry, a catalog, a marketplace, or another shelf |
 | `shelfkit search <query>` | Search the shelf, and optionally federated sources |
@@ -170,9 +170,23 @@ So the compiler emits the canonical set by default, treats CLI-only targets as a
   "defaultProfile": "default",
   "registry": { "namespace": "hebilicious", "public": true },
   "sources": [
-    { "id": "anthropics", "kind": "git", "repo": "https://github.com/anthropics/skills" },
-    { "id": "acme", "kind": "apm-registry", "url": "https://shelf.acme.dev/apm", "tier": 1 },
-    { "id": "sam", "kind": "shelfkit", "url": "https://shelf.sam.dev", "profile": "frontend" },
+    {
+      "id": "anthropics",
+      "kind": "git",
+      "repo": "https://github.com/anthropics/skills"
+    },
+    {
+      "id": "acme",
+      "kind": "apm-registry",
+      "url": "https://shelf.acme.dev/apm",
+      "tier": 1
+    },
+    {
+      "id": "sam",
+      "kind": "shelfkit",
+      "url": "https://shelf.sam.dev",
+      "profile": "frontend"
+    },
     { "id": "clawhub", "kind": "catalog", "url": "https://clawhub.ai/api/v1" }
   ]
 }
@@ -185,9 +199,11 @@ Every item has `id`, `kind`, `title`, `description`, `tags`, and `targets`. An i
 A **revision** is an immutable snapshot of one item: `sha256` over a canonical serialization of its directory, with files sorted by path, LF line endings, and timestamps, permissions, and ownership excluded. Two clones of the same shelf therefore produce identical revisions, and a revision is what a profile pins and what a scan verdict attaches to. Item ids are kebab-case and may not contain a double underscore, which is what makes the MCP namespace separator in §8 unambiguous.
 
 #### `skill`
+
 A directory with `SKILL.md`, following [agentskills.io](https://agentskills.io/specification). Only spec frontmatter is used (`name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools`), because clients and uploaders reject unknown keys.
 
 #### `prompt`
+
 The highest-value kind in practice, because prompts are what people actually copy and hoard. A prompt is markdown plus variables.
 
 APM treats prompts and commands as one primitive with one source layout, `.apm/prompts/*.prompt.md`, deploying them as commands on the harnesses that have them. ShelfKit follows: there is no separate command kind, and the `prompt` item carries an optional `asCommand` flag for harnesses where it should surface as a slash command.
@@ -208,6 +224,7 @@ APM treats prompts and commands as one primitive with one source layout, `.apm/p
 ```
 
 #### `instructions`
+
 Project conventions as structured `sections`, plus `markers` that make a stack detectable. Compiles into an APM `.apm/instructions/` primitive, or into a harness instruction file for the harnesses APM does not cover.
 
 #### `agent`
@@ -215,15 +232,17 @@ Project conventions as structured `sections`, plus `markers` that make a stack d
 #### `hook`
 
 #### `plugin`
+
 Agent definition markdown, hook JSON, and an Agent Plugins v1 package respectively.
 
 Two constraints carried over from APM. An agent is a file dependency (`.agent.md`) and can be pinned individually. **A hook cannot**: APM classifies virtual files only by `.prompt.md`, `.instructions.md`, and `.agent.md`, so `.json` never resolves as a file dependency and hooks arrive only through a package. A shelf `hook` item therefore always compiles into the vendored `.apm/hooks/` package rather than a direct reference, and hooks are executable primitives that APM gates behind approval, which the UI states before compile rather than after install.
 
 #### `mcp`
+
 An MCP server, in three flavours:
 
 | Flavour | Shape | Install |
-|---|---|---|
+| --- | --- | --- |
 | `remote` | URL, transport, auth header reference | `dependencies.mcp` entry |
 | `stdio` | `command`, `args`, env references | `dependencies.mcp` entry |
 | `hosted` | ShelfKit runs or fronts it; the item carries a URL on the ShelfKit origin | `dependencies.mcp` entry pointing at ShelfKit, or nothing when the agent reaches it through `/mcp` |
@@ -233,11 +252,13 @@ An MCP server, in three flavours:
 Secret values are references, never literals, and a literal that looks like a credential fails the load.
 
 #### `lsp`
+
 A language server, using APM's `dependencies.lsp` shape: `name`, `command`, and the rest of the documented fields. It exists because a shelf that pins a language's tooling should be able to pin its language server in the same breath, and because LSP deployment differs per harness in ways APM already handles.
 
 One caveat carried into the compiler: `lsp` is present in the CLI and the working-draft manifest but **absent from the published v0.1 JSON Schema**. Because that schema sets `additionalProperties: true`, validation will not flag it, which is worse than a warning: the key passes a v0.1 check while depending on a surface v0.1 does not define. `shelfkit check` reports it explicitly and the compiler notes it in the compile output, rather than relying on schema validation to catch it.
 
 #### `library`
+
 A library or tool the shelf has opinions about. Not a dependency manager: APM handles packages. A library item carries what an agent needs to use it correctly, plus an optional detection marker for `recommend`.
 
 APM has no library primitive, no tech-stack primitive, and no manifest key for either. That is the point of these two kinds: they are the shelf's own vocabulary, and both compile into an APM instructions package, which is the primitive APM does have for "here is how we do things here".
@@ -250,12 +271,16 @@ APM has no library primitive, no tech-stack primitive, and no manifest key for e
   "description": "Schema-first ORM. Use the relational query builder, not string SQL.",
   "detect": { "dependencies": ["drizzle-orm"] },
   "docs": "https://orm.drizzle.team/docs/overview",
-  "notes": ["Migrations are generated, never hand-written.", "Prefer `db.query` over `db.select`."],
+  "notes": [
+    "Migrations are generated, never hand-written.",
+    "Prefer `db.query` over `db.select`."
+  ],
   "tags": ["db"]
 }
 ```
 
 #### `stack`
+
 A tech stack: markers for detection plus the conventions that follow from it.
 
 ```json
@@ -270,7 +295,10 @@ A tech stack: markers for detection plus the conventions that follow from it.
   },
   "conventions": [
     { "heading": "Runtime", "body": "Workers. No Node built-ins." },
-    { "heading": "Data", "body": "D1. Prepared statements. Migrations in ./migrations." }
+    {
+      "heading": "Data",
+      "body": "D1. Prepared statements. Migrations in ./migrations."
+    }
   ],
   "recommends": ["vue-sfc-patterns", "context7", "drizzle", "wrangler"],
   "tags": ["vue", "cloudflare"]
@@ -324,7 +352,7 @@ That gives discovery two shapes:
 ShelfKit uses both. Importing a repository yields many items; importing one prompt from someone else's repository yields exactly one, with a coordinate that pins the file.
 
 | Source kind | What discovery finds | Becomes |
-|---|---|---|
+| --- | --- | --- |
 | `git` repo, `.apm/` layout | Typed primitives under `.apm/` | One item per primitive, kind from directory |
 | `git` repo, root `SKILL.md` | One skill bundle | One `skill` item, bundled as a unit |
 | `git` repo, `skills/<n>/SKILL.md` | N nested skills | N `skill` items, installable individually |
@@ -386,7 +414,7 @@ ShelfKit targets MCP spec revision **2026-07-28**, which is stateless: sessions 
 
 What did not go away is the aggregation problem. Docker's MCP gateway shipped a security advisory for **tool-name shadowing across aggregated servers**, where two backends offering a tool with the same name let one impersonate the other, last writer wins. The specification itself addresses this: an aggregating proxy SHOULD implement a disambiguation strategy such as prefixing tool names with a server identifier, and `serverInfo.name` is explicitly not unique. Rule 1 below is that guidance taken literally.
 
-There is a structural reason this is fragile, not just an implementation detail. Aggregating N backends behind one connection means the client holds one authorization relationship while the gateway holds N. Whatever credential the client presents authenticates it to the *gateway*, not to each upstream, so the gateway becomes an ambient authority that can reach everything it knows about. That is a confused deputy, and no amount of careful implementation makes it disappear.
+There is a structural reason this is fragile, not just an implementation detail. Aggregating N backends behind one connection means the client holds one authorization relationship while the gateway holds N. Whatever credential the client presents authenticates it to the _gateway_, not to each upstream, so the gateway becomes an ambient authority that can reach everything it knows about. That is a confused deputy, and no amount of careful implementation makes it disappear.
 
 So ShelfKit does not pretend to be transparent. Four rules:
 
@@ -398,7 +426,7 @@ So ShelfKit does not pretend to be transparent. Four rules:
 ### 8.2 What is relayed, and what is not
 
 | Item flavour | Default | What ShelfKit does |
-|---|---|---|
+| --- | --- | --- |
 | `remote` | Not hosted | The `dependencies.mcp` entry is compiled and APM writes it into each harness's config. Direct client-to-server is better than a hop through ShelfKit whenever it is possible. |
 | `remote`, hosted | Opt-in | Proxies with credential injection and namespacing, for servers whose token the user does not want in every client config. |
 | `stdio` | Never hosted | The command is compiled into client config and the agent runs it. See §8.3. |
@@ -415,7 +443,7 @@ The reasoning is that the capability is not worth owning. An MCP `stdio` server 
 What ShelfKit does instead:
 
 | Need | What happens |
-|---|---|
+| --- | --- |
 | An agent wants an MCP server | The item compiles into `dependencies.mcp`, APM writes the harness config, and the client runs the server itself. This is the normal path and it covers `stdio` and remote alike. |
 | An agent has no local process | It calls `shelf_search` and `shelf_plan_compile` to learn what to configure, and the orchestration layer it runs on starts the process. |
 | ShelfKit wants to expose its own capability | It adds a **stateless tool on the Worker or a Durable Object**: search, read an item, resolve a profile, compile a manifest. Request in, answer out. |
@@ -432,7 +460,7 @@ Every MCP tool ShelfKit serves is therefore stateless by construction: it reads 
 Vue 3, Vite, Vize, CSSForge. Everything goes through the same API as the CLI.
 
 | Screen | Purpose |
-|---|---|
+| --- | --- |
 | **Shelf** | Inventory. Search, filter by kind and tag, bulk-select into a profile. |
 | **Prompts** | The prompt library, treated as a first-class surface rather than a filtered list. |
 | **Item** | Rendered content, revisions and diffs, provenance, reverse dependencies, the APM coordinate. |
@@ -511,7 +539,7 @@ Keys are managed over GraphQL, not REST. Key management is a UI and CLI concern,
 
 ```graphql
 type Mutation {
-  createKey(input: CreateKeyInput!): KeySecret!   # plaintext returned once
+  createKey(input: CreateKeyInput!): KeySecret! # plaintext returned once
   revokeKey(id: ID!): Boolean!
 }
 ```
@@ -527,7 +555,7 @@ Read-only share links are unguessable URLs to a public profile and require no ke
 ### 10.4 Stack
 
 | Concern | Choice |
-|---|---|
+| --- | --- |
 | UI | Vue 3, Vite 8, `@vizejs/vite-plugin` |
 | Vue tooling | Vize (`fmt`, `lint`, `check`) |
 | Styling | CSSForge on JSR, generated as a prebuild step, output committed |
@@ -535,7 +563,6 @@ Read-only share links are unguessable URLs to a public profile and require no ke
 | Core and compiler | Rust, compiled native for the CLI and WASM for the Worker |
 | Storage | Durable Object SQLite per shelf, R2 for content |
 | Async | Queues and Cron Triggers for imports and upstream checks |
-
 | Deploy | Wrangler, the platform's own CLI, and nothing else. |
 | Validation | OpenAPM JSON Schemas, compiled in, plus Valibot at the API edge |
 
@@ -574,6 +601,7 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 ## 12. Milestones
 
 ### M1: Format, compiler, CLI, and local registry
+
 - [ ] Shelf format: ten kinds, profiles, bundles, revisions, hashing
 - [ ] Rust compiler: profile to `apm.yml` and vendored `.apm/` content
 - [ ] Validation against the OpenAPM published JSON Schema
@@ -585,6 +613,7 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 **Exit criterion:** a shelf in Git serves as a registry from a laptop, and APM with `apm experimental enable registries` installs a profile from it. The flag is part of the criterion because APM's registry client is experimental. The Git dependency path needs no flag and is the fallback acceptance test.
 
 ### M2: Hosted service
+
 - [ ] Worker with Durable Object SQLite per shelf, R2, Queues, Cron
 - [ ] Registry HTTP API with immutability, digests, scopes, and RFC 7807 errors
 - [ ] GraphQL API with SSE subscriptions
@@ -596,6 +625,7 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 **Exit criterion:** a self-hosted instance serves a registry that a remote `apm install` consumes, and an agent plans a compile over MCP against a repository it has never seen.
 
 ### M3: UI, prompts, and composition
+
 - [ ] Shelf inventory, item detail, revisions, diffs, provenance
 - [ ] Prompts screen: copy with variables, copy as skill or command, favourites, search, inline editing
 - [ ] Composer with the resolution rail, conflict panel, stack-marker tester, and live `apm.yml` preview
@@ -605,6 +635,7 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 **Exit criterion:** someone finds a prompt, copies it into their agent, then composes and compiles a profile without touching the CLI.
 
 ### M4: Curation and reach
+
 - [ ] Sources: APM registries, catalogs, marketplaces, and other ShelfKit instances read on demand
 - [ ] Federated search across sources
 - [ ] Drift detection between a shelf item and its upstream
@@ -619,7 +650,7 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 ## 13. Open questions
 
 | # | Question | Lean |
-|---|---|---|
+| --- | --- | --- |
 | 1 | Do profiles need a version beyond a revision hash? | No. A profile revision is a hash; semver is generated only when publishing to the registry, from a `version` field if one is set. |
 | 2 | Local authoring versus importing. | Curation is the primary flow, but authoring stays because a stack or a library is inherently personal and cannot be imported from anywhere. Prompts are the most-authored kind. |
 | 3 | Running Git in a Durable Object versus the forge REST API. | Start with the forge API, behind an interface. A DO that speaks Git is viable today and would let a shelf be cloned directly and work with self-hosted forges, but the available library (`durable-git`, 0.0.x, single-maintainer, first published weeks before this draft) documents a failure mode on first full-history clones of very large repositories. Cloudflare Artifacts would be the right long-term home and entered beta in April 2026, with no general availability or public free tier as of this draft. This stays behind a flag. Cloudflare Artifacts is the right long-term home and is still closed beta with a missed public-beta target, so the interface exists to swap it in. |
