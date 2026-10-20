@@ -1,0 +1,9 @@
+# Response headers for the SPA's static assets and its index (served for every route), applied by Workers static
+# assets. The Worker's own routes (/graphql, /raw, /apm, /mcp) set theirs in code.
+#
+# script-src allows 'wasm-unsafe-eval' and nothing else beyond 'self': the composer compiles the shelf engine with
+# WebAssembly.compile. style-src is 'self': every style is a built stylesheet, and Vue's v-show writes through the
+# CSSOM, which the policy does not restrict. Images are 'self' only; item content never loads one (lib/markdown.ts).
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'
+  X-Content-Type-Options: nosniff

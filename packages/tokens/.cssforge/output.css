@@ -31,12 +31,17 @@
 /* accent */
 --theme-light-accent-base: var(--palette-accent-500);
 --theme-light-accent-contrast: var(--palette-ink-0);
+/* signal */
+--theme-light-signal-warn: var(--palette-signal-warn);
+--theme-light-signal-danger: var(--palette-signal-danger);
+--theme-light-signal-info: var(--palette-accent-700);
 /* Theme: dark */
 @media (prefers-color-scheme: dark) {
   /* surface */
   /* text */
   /* border */
   /* accent */
+  /* signal */
   --theme-dark-surface-base: var(--palette-ink-1000);
   --theme-dark-surface-raised: var(--palette-ink-900);
   --theme-dark-surface-sunken: var(--palette-ink-700);
@@ -45,6 +50,9 @@
   --theme-dark-border-subtle: var(--palette-ink-700);
   --theme-dark-accent-base: var(--palette-accent-300);
   --theme-dark-accent-contrast: var(--palette-ink-1000);
+  --theme-dark-signal-warn: var(--palette-signal-warn);
+  --theme-dark-signal-danger: var(--palette-signal-danger);
+  --theme-dark-signal-info: var(--palette-accent-300);
 }
 /*____ Spacing ____*/
 --spacing-size-1: 0.25rem;
@@ -67,4 +75,23 @@
 --typography-weight-sans-regular: 400;
 --typography-weight-sans-medium: 500;
 --typography-weight-sans-bold: 650;
+/*____ Primitives ____*/
+/* font */
+--font-family-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+--font-family-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+--font-leading-tight: 1.25;
+--font-leading-normal: 1.5;
+/* layout */
+--layout-radius-s: 0.25rem;
+--layout-radius-m: 0.5rem;
+--layout-radius-pill: 999rem;
+--layout-border-hairline: 0.0625rem;
+--layout-border-thick: 0.125rem;
+--layout-measure-rail: 18rem;
+--layout-measure-pane: 22rem;
+--layout-measure-prose: 68ch;
+--layout-measure-page: 96ch;
+--layout-measure-wide: 108ch;
+--layout-offset-header: 4rem;
+--layout-offset-panes: 8rem;
 }

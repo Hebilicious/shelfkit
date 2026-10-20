@@ -1,0 +1,5 @@
+src/api/graphql-env.d.ts
+test-results/
+playwright-report/
+.e2e/
+dist-plugin-vue/

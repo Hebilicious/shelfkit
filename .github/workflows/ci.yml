@@ -25,6 +25,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # The system libraries Playwright's Chromium needs, for web:e2e. The browser itself is downloaded by moon
+      # (web:playwright-install) into Playwright's cache.
+      - run: apps/web/node_modules/.bin/playwright install-deps chromium
+
       - run: moon ci --include-relations
 
       # `wrangler check startup`, with a CPU budget: a heavy module-scope build is the documented way to trip the
@@ -50,6 +54,10 @@ jobs:
       - uses: ./.github/actions/toolchains
 
       - run: pnpm install --frozen-lockfile
+
+      # The system libraries Playwright's Chromium needs, for web:e2e. The browser itself is downloaded by moon
+      # (web:playwright-install) into Playwright's cache.
+      - run: apps/web/node_modules/.bin/playwright install-deps chromium
 
       - run: moon run :build :check :lint :test
 

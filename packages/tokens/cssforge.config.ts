@@ -76,6 +76,18 @@ export default defineConfig({
               2: "palette.ink.0",
             },
           },
+          signal: {
+            value: {
+              warn: "var(--1)",
+              danger: "var(--2)",
+              info: "var(--3)",
+            },
+            variables: {
+              1: "palette.signal.warn",
+              2: "palette.signal.danger",
+              3: "palette.accent.700",
+            },
+          },
         },
       },
       dark: {
@@ -116,9 +128,71 @@ export default defineConfig({
               2: "palette.ink.1000",
             },
           },
+          signal: {
+            value: {
+              warn: "var(--1)",
+              danger: "var(--2)",
+              info: "var(--3)",
+            },
+            variables: {
+              1: "palette.signal.warn",
+              2: "palette.signal.danger",
+              3: "palette.accent.300",
+            },
+          },
         },
         settings: {
           atRule: "@media (prefers-color-scheme: dark)",
+        },
+      },
+    },
+  },
+  primitives: {
+    font: {
+      value: {
+        family: {
+          value: {
+            sans: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+            mono: 'ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace',
+          },
+        },
+        leading: {
+          value: {
+            tight: "1.25",
+            normal: "1.5",
+          },
+        },
+      },
+    },
+    layout: {
+      value: {
+        radius: {
+          value: {
+            s: "0.25rem",
+            m: "0.5rem",
+            pill: "999rem",
+          },
+        },
+        border: {
+          value: {
+            hairline: "1px",
+            thick: "2px",
+          },
+        },
+        measure: {
+          value: {
+            rail: "18rem",
+            pane: "22rem",
+            prose: "68ch",
+            page: "96ch",
+            wide: "108ch",
+          },
+        },
+        offset: {
+          value: {
+            header: "4rem",
+            panes: "8rem",
+          },
         },
       },
     },

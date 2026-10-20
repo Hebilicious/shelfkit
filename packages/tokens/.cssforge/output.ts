@@ -116,6 +116,23 @@ export const cssForge = {
           "value": "var(--palette-ink-0)",
           "variable": "--theme-light-accent-contrast: var(--palette-ink-0);"
         }
+      },
+      "signal": {
+        "warn": {
+          "key": "--theme-light-signal-warn",
+          "value": "var(--palette-signal-warn)",
+          "variable": "--theme-light-signal-warn: var(--palette-signal-warn);"
+        },
+        "danger": {
+          "key": "--theme-light-signal-danger",
+          "value": "var(--palette-signal-danger)",
+          "variable": "--theme-light-signal-danger: var(--palette-signal-danger);"
+        },
+        "info": {
+          "key": "--theme-light-signal-info",
+          "value": "var(--palette-accent-700)",
+          "variable": "--theme-light-signal-info: var(--palette-accent-700);"
+        }
       }
     },
     "dark": {
@@ -165,6 +182,23 @@ export const cssForge = {
           "key": "--theme-dark-accent-contrast",
           "value": "var(--palette-ink-1000)",
           "variable": "--theme-dark-accent-contrast: var(--palette-ink-1000);"
+        }
+      },
+      "signal": {
+        "warn": {
+          "key": "--theme-dark-signal-warn",
+          "value": "var(--palette-signal-warn)",
+          "variable": "--theme-dark-signal-warn: var(--palette-signal-warn);"
+        },
+        "danger": {
+          "key": "--theme-dark-signal-danger",
+          "value": "var(--palette-signal-danger)",
+          "variable": "--theme-dark-signal-danger: var(--palette-signal-danger);"
+        },
+        "info": {
+          "key": "--theme-dark-signal-info",
+          "value": "var(--palette-accent-300)",
+          "variable": "--theme-dark-signal-info: var(--palette-accent-300);"
         }
       }
     }
@@ -274,6 +308,104 @@ export const cssForge = {
           "variable": "--typography-weight-sans-bold: 650;",
           "key": "--typography-weight-sans-bold",
           "value": "650"
+        }
+      }
+    }
+  },
+  "primitives": {
+    "font": {
+      "family": {
+        "sans": {
+          "key": "--font-family-sans",
+          "value": "ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+          "variable": "--font-family-sans: ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif;"
+        },
+        "mono": {
+          "key": "--font-family-mono",
+          "value": "ui-monospace, \"SF Mono\", \"Cascadia Code\", Menlo, Consolas, monospace",
+          "variable": "--font-family-mono: ui-monospace, \"SF Mono\", \"Cascadia Code\", Menlo, Consolas, monospace;"
+        }
+      },
+      "leading": {
+        "tight": {
+          "key": "--font-leading-tight",
+          "value": "1.25",
+          "variable": "--font-leading-tight: 1.25;"
+        },
+        "normal": {
+          "key": "--font-leading-normal",
+          "value": "1.5",
+          "variable": "--font-leading-normal: 1.5;"
+        }
+      }
+    },
+    "layout": {
+      "radius": {
+        "s": {
+          "key": "--layout-radius-s",
+          "value": "0.25rem",
+          "variable": "--layout-radius-s: 0.25rem;"
+        },
+        "m": {
+          "key": "--layout-radius-m",
+          "value": "0.5rem",
+          "variable": "--layout-radius-m: 0.5rem;"
+        },
+        "pill": {
+          "key": "--layout-radius-pill",
+          "value": "999rem",
+          "variable": "--layout-radius-pill: 999rem;"
+        }
+      },
+      "border": {
+        "hairline": {
+          "key": "--layout-border-hairline",
+          "value": "0.0625rem",
+          "variable": "--layout-border-hairline: 0.0625rem;"
+        },
+        "thick": {
+          "key": "--layout-border-thick",
+          "value": "0.125rem",
+          "variable": "--layout-border-thick: 0.125rem;"
+        }
+      },
+      "measure": {
+        "rail": {
+          "key": "--layout-measure-rail",
+          "value": "18rem",
+          "variable": "--layout-measure-rail: 18rem;"
+        },
+        "pane": {
+          "key": "--layout-measure-pane",
+          "value": "22rem",
+          "variable": "--layout-measure-pane: 22rem;"
+        },
+        "prose": {
+          "key": "--layout-measure-prose",
+          "value": "68ch",
+          "variable": "--layout-measure-prose: 68ch;"
+        },
+        "page": {
+          "key": "--layout-measure-page",
+          "value": "96ch",
+          "variable": "--layout-measure-page: 96ch;"
+        },
+        "wide": {
+          "key": "--layout-measure-wide",
+          "value": "108ch",
+          "variable": "--layout-measure-wide: 108ch;"
+        }
+      },
+      "offset": {
+        "header": {
+          "key": "--layout-offset-header",
+          "value": "4rem",
+          "variable": "--layout-offset-header: 4rem;"
+        },
+        "panes": {
+          "key": "--layout-offset-panes",
+          "value": "8rem",
+          "variable": "--layout-offset-panes: 8rem;"
         }
       }
     }

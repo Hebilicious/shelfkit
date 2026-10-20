@@ -4,15 +4,25 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@0no-co/graphql.web": "catalog:",
+    "@shelfkit/engine": "workspace:*",
     "@shelfkit/schema": "workspace:*",
     "@shelfkit/tokens": "workspace:*",
-    "vue": "catalog:"
+    "gql.tada": "catalog:",
+    "markdown-it": "catalog:",
+    "valibot": "catalog:",
+    "vue": "catalog:",
+    "vue-router": "catalog:"
   },
   "devDependencies": {
+    "@gql.tada/vue-support": "catalog:",
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:",
     "@vitejs/plugin-vue": "catalog:",
     "@vizejs/vite-plugin": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
+    "vitest": "catalog:",
     "vize": "catalog:",
     "vue-tsc": "catalog:"
   }
