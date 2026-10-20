@@ -31,9 +31,12 @@ tasks:
   lint:
     description: "Lint every TypeScript file with Ultracite's rules and the anti-slop rules, type-aware, denying warnings, after the formatting and authorship checks."
     command: "node_modules/.bin/oxlint --type-aware --deny-warnings"
+    # Type-aware rules need the web app's GraphQL types, which are generated and not committed. Without this dep,
+    # a run of only the affected tasks lints before they exist and reports every GraphQL result as `error` typed.
     deps:
       - "format-check"
       - "authorship-check"
+      - "web:graphql-types"
     inputs:
       - "@group(typescript)"
       - "@group(configs)"
