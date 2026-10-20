@@ -1,0 +1,19 @@
+{
+  "description": "An agent designed to assist with software development tasks for .NET projects.",
+  "id": "csharp-expert",
+  "source": {
+    "creditText": "github/awesome-copilot: agents/CSharpExpert.agent.md (MIT)",
+    "id": "awesome-copilot",
+    "license": "MIT",
+    "licenseId": "MIT",
+    "linkTarget": "https://github.com/github/awesome-copilot",
+    "path": "agents/CSharpExpert.agent.md",
+    "recordUrl": "https://github.com/github/awesome-copilot/blob/cb64ad12e32737ae764becd6885462e9b4c7cb00/agents/CSharpExpert.agent.md",
+    "ref": "cb64ad12e32737ae764becd6885462e9b4c7cb00",
+    "repo": "https://github.com/github/awesome-copilot",
+    "resolvedCommit": "cb64ad12e32737ae764becd6885462e9b4c7cb00",
+    "shareAlike": false
+  },
+  "title": "C# Expert",
+  "kind": "agent"
+}

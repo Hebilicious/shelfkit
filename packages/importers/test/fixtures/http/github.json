@@ -1,0 +1,879 @@
+{
+  "recorded": "2026-10-19",
+  "responses": {
+    "https://api.github.com/repos/ComposioHQ/awesome-claude-skills": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "default_branch": "master",
+        "license": null
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/ComposioHQ/awesome-claude-skills/commits/master": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "be2a406907dbc61b73e6827ded415c96139d13a2"
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/ComposioHQ/awesome-claude-skills/git/trees/be2a406907dbc61b73e6827ded415c96139d13a2": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "be2a406907dbc61b73e6827ded415c96139d13a2",
+        "tree": [
+          {
+            "path": ".github",
+            "sha": "854317ca5d9321dadeb33ff5de28be5702ba2785",
+            "type": "tree"
+          },
+          {
+            "path": "artifacts-builder",
+            "sha": "f89c02f23fbb7c5077ab960f46bdb6a3817d6fc2",
+            "type": "tree"
+          },
+          {
+            "path": "brand-guidelines",
+            "sha": "7dc45f289fa37f9763a993008d9500e9a157fa4a",
+            "type": "tree"
+          },
+          {
+            "path": "canvas-design",
+            "sha": "928af0a3279dc4e0c0e6ceaf407a8542a2bb2aa2",
+            "type": "tree"
+          },
+          {
+            "path": "changelog-generator",
+            "sha": "72258d6496ccd708fb946591d944282d6de03f13",
+            "type": "tree"
+          },
+          {
+            "path": "competitive-ads-extractor",
+            "sha": "dd29ce6f5921d9e277443140c55bb39dcc5346da",
+            "type": "tree"
+          },
+          {
+            "path": "composio-skills",
+            "sha": "3279dab4336c45e571dcc7ab2018dfed5958582b",
+            "type": "tree"
+          },
+          {
+            "path": "connect-apps-plugin",
+            "sha": "c8915ff3c1fd66e435ec42a06470610314c7146f",
+            "type": "tree"
+          },
+          {
+            "path": "connect-apps",
+            "sha": "19ae0e46ce260c0f1f45c5475fa898b62cdced46",
+            "type": "tree"
+          },
+          {
+            "path": "connect",
+            "sha": "8ee2dcfb1208d48ef7a41d88a522d3b1da3f8f4e",
+            "type": "tree"
+          },
+          {
+            "path": "content-research-writer",
+            "sha": "560a65081b1fc097120e95f04ec82b3fff5549e6",
+            "type": "tree"
+          },
+          {
+            "path": "developer-growth-analysis",
+            "sha": "b7172297fbe76d7ea320eb7a889202e8525fb81b",
+            "type": "tree"
+          },
+          {
+            "path": "document-skills",
+            "sha": "a45c140b1bfa0b96cee4528382496968d4951883",
+            "type": "tree"
+          },
+          {
+            "path": "domain-name-brainstormer",
+            "sha": "ee97909251c1e45f7babc118fbf66467314d4e46",
+            "type": "tree"
+          },
+          {
+            "path": "file-organizer",
+            "sha": "c7ed3669de10cf3eac013320906e82187d69999b",
+            "type": "tree"
+          },
+          {
+            "path": "image-enhancer",
+            "sha": "a499228362fc9a29b57b24cbd367eced270bb2a3",
+            "type": "tree"
+          },
+          {
+            "path": "internal-comms",
+            "sha": "8e2c21adc81f221477a4d3ecec07abcbc8a9320a",
+            "type": "tree"
+          },
+          {
+            "path": "invoice-organizer",
+            "sha": "f3265cc99332002d8e0055451aa0b3854d940fe5",
+            "type": "tree"
+          },
+          {
+            "path": "langsmith-fetch",
+            "sha": "c7efb4617746915a2fe9d963ea284cafae7f6d58",
+            "type": "tree"
+          },
+          {
+            "path": "lead-research-assistant",
+            "sha": "9ba88dd3f632efed81d5847c9146b82ea52c2789",
+            "type": "tree"
+          },
+          {
+            "path": "mcp-builder",
+            "sha": "9c9fbb074c330f020812ac0abdf42ad107bf2cba",
+            "type": "tree"
+          },
+          {
+            "path": "meeting-insights-analyzer",
+            "sha": "b80111f3d59933667bb5728848903bad3f5487d8",
+            "type": "tree"
+          },
+          {
+            "path": "raffle-winner-picker",
+            "sha": "289b7b67292ac7c1df80ca620992d744559d8e5d",
+            "type": "tree"
+          },
+          {
+            "path": "skill-creator",
+            "sha": "28a79517753f9c3eea0127e70db740756fcf2ee6",
+            "type": "tree"
+          },
+          {
+            "path": "skill-share",
+            "sha": "d6e7d62e23313cc091c4bbeb065e0f32efd56089",
+            "type": "tree"
+          },
+          {
+            "path": "slack-gif-creator",
+            "sha": "6b70e441417da07925cfc4ef88eb3b47cb1dee66",
+            "type": "tree"
+          },
+          {
+            "path": "tailored-resume-generator",
+            "sha": "b1043e0a3ba72a0216c0ce6b8c3351a34e40add6",
+            "type": "tree"
+          },
+          {
+            "path": "template-skill",
+            "sha": "a38aa7fa73fd2835b9ce77a60274f7dc62d015a6",
+            "type": "tree"
+          },
+          {
+            "path": "theme-factory",
+            "sha": "007940e80de6ae577a87b2b343b1a5eae715df2b",
+            "type": "tree"
+          },
+          {
+            "path": "twitter-algorithm-optimizer",
+            "sha": "6dfbdb6dc6fb56f919a7e708adb62349909c8dbf",
+            "type": "tree"
+          },
+          {
+            "path": "video-downloader",
+            "sha": "eac8b4684ba7d791f9941d0250d6a65ed2a01341",
+            "type": "tree"
+          },
+          {
+            "path": "webapp-testing",
+            "sha": "74cb751576f9e9af2aedff47e67861ef26db2dc4",
+            "type": "tree"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/ComposioHQ/awesome-claude-skills/git/trees/ee97909251c1e45f7babc118fbf66467314d4e46": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "ee97909251c1e45f7babc118fbf66467314d4e46",
+        "tree": [
+          {
+            "path": "SKILL.md",
+            "sha": "b763c44a468b989c53144dcc08b6708d24501c05",
+            "size": 5696,
+            "type": "blob"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/ComposioHQ/awesome-claude-skills/git/trees/ee97909251c1e45f7babc118fbf66467314d4e46?recursive=1": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "ee97909251c1e45f7babc118fbf66467314d4e46",
+        "tree": [
+          {
+            "path": "SKILL.md",
+            "sha": "b763c44a468b989c53144dcc08b6708d24501c05",
+            "size": 5696,
+            "type": "blob"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/anthropics/skills": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "default_branch": "main",
+        "license": null
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/anthropics/skills/commits/dbd4588f9e1033efb41dad4bef2f7947c8993d44": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "dbd4588f9e1033efb41dad4bef2f7947c8993d44"
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/anthropics/skills/commits/main": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "dbd4588f9e1033efb41dad4bef2f7947c8993d44"
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/anthropics/skills/git/trees/0f77e501e6506235956d953cd2d7a2a4aa9ba133": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "0f77e501e6506235956d953cd2d7a2a4aa9ba133",
+        "tree": [
+          {
+            "path": ".claude-plugin",
+            "sha": "107a7bd32519e0608a2352749aaf9dcc04815c8e",
+            "type": "tree"
+          },
+          {
+            "path": "algorithmic-art",
+            "sha": "22db2d12091c56340987a877047435ba84a1cdb2",
+            "type": "tree"
+          },
+          {
+            "path": "brand-guidelines",
+            "sha": "7dc45f289fa37f9763a993008d9500e9a157fa4a",
+            "type": "tree"
+          },
+          {
+            "path": "canvas-design",
+            "sha": "928af0a3279dc4e0c0e6ceaf407a8542a2bb2aa2",
+            "type": "tree"
+          },
+          {
+            "path": "document-skills",
+            "sha": "a45c140b1bfa0b96cee4528382496968d4951883",
+            "type": "tree"
+          },
+          {
+            "path": "frontend-design",
+            "sha": "8bead856e344e58c78a83890b6560c5b75d62f1a",
+            "type": "tree"
+          },
+          {
+            "path": "internal-comms",
+            "sha": "8e2c21adc81f221477a4d3ecec07abcbc8a9320a",
+            "type": "tree"
+          },
+          {
+            "path": "mcp-builder",
+            "sha": "9173e2c2107aac82d4ca6c726d71e89d11760470",
+            "type": "tree"
+          },
+          {
+            "path": "skill-creator",
+            "sha": "7bd8fc459f09f0e14dcc2adbb4a5a58e60ea755c",
+            "type": "tree"
+          },
+          {
+            "path": "slack-gif-creator",
+            "sha": "e6ead1551c9bc4a92309108094f7094fc96cfb3d",
+            "type": "tree"
+          },
+          {
+            "path": "template-skill",
+            "sha": "a38aa7fa73fd2835b9ce77a60274f7dc62d015a6",
+            "type": "tree"
+          },
+          {
+            "path": "theme-factory",
+            "sha": "007940e80de6ae577a87b2b343b1a5eae715df2b",
+            "type": "tree"
+          },
+          {
+            "path": "web-artifacts-builder",
+            "sha": "9ecbeae7c17caa478c5b753ba1bd258688075b5f",
+            "type": "tree"
+          },
+          {
+            "path": "webapp-testing",
+            "sha": "74cb751576f9e9af2aedff47e67861ef26db2dc4",
+            "type": "tree"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/anthropics/skills/git/trees/1dc8bd3584b80568edae7da16382363e24ecf0f0": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "1dc8bd3584b80568edae7da16382363e24ecf0f0",
+        "tree": [
+          {
+            "path": "LICENSE.txt",
+            "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+            "size": 11345,
+            "type": "blob"
+          },
+          {
+            "path": "SKILL.md",
+            "sha": "47c72c607bdb5dd81bdea5de2b5e4f3992a5fd59",
+            "size": 2235,
+            "type": "blob"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/anthropics/skills/git/trees/1dc8bd3584b80568edae7da16382363e24ecf0f0?recursive=1": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "1dc8bd3584b80568edae7da16382363e24ecf0f0",
+        "tree": [
+          {
+            "path": "LICENSE.txt",
+            "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+            "size": 11345,
+            "type": "blob"
+          },
+          {
+            "path": "SKILL.md",
+            "sha": "47c72c607bdb5dd81bdea5de2b5e4f3992a5fd59",
+            "size": 2235,
+            "type": "blob"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/anthropics/skills/git/trees/5ddb5296df8bb291d21eddad51f5c07e347cc5be": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "5ddb5296df8bb291d21eddad51f5c07e347cc5be",
+        "tree": [
+          {
+            "path": "academy-guide",
+            "sha": "baddb91c315ea384f9191615054ba8026eb57ba2",
+            "type": "tree"
+          },
+          {
+            "path": "algorithmic-art",
+            "sha": "4aef6bcad51d058ec32b1acb9da436851863e56e",
+            "type": "tree"
+          },
+          {
+            "path": "brand-guidelines",
+            "sha": "1dc8bd3584b80568edae7da16382363e24ecf0f0",
+            "type": "tree"
+          },
+          {
+            "path": "canvas-design",
+            "sha": "95095faaee2ea943e85a5d1d562fde06841e835e",
+            "type": "tree"
+          },
+          {
+            "path": "claude-api",
+            "sha": "523da4b0c36e7e79fcbf9e81e748e374efa3a6c1",
+            "type": "tree"
+          },
+          {
+            "path": "discernment-nudge",
+            "sha": "290670f304c67cf36725d7612583cf203f7a4e50",
+            "type": "tree"
+          },
+          {
+            "path": "doc-coauthoring",
+            "sha": "d9df960e61fe2bafe9183e37de6f9f6b73b74087",
+            "type": "tree"
+          },
+          {
+            "path": "docx",
+            "sha": "6e6f5b95c1de6e803cc07b214f5059b074d64e0c",
+            "type": "tree"
+          },
+          {
+            "path": "frontend-design",
+            "sha": "d79e2a5bb4df4a386c2adcdd9ab8709bba28c3f6",
+            "type": "tree"
+          },
+          {
+            "path": "internal-comms",
+            "sha": "9869687dcf6deb6802ca88ac11e67b6f7278017a",
+            "type": "tree"
+          },
+          {
+            "path": "mcp-builder",
+            "sha": "b866bcfb57b780c10b587c7b543e871a91661ce0",
+            "type": "tree"
+          },
+          {
+            "path": "pdf",
+            "sha": "6369f4649de69bd6857c9bc3b058a77206009238",
+            "type": "tree"
+          },
+          {
+            "path": "pptx",
+            "sha": "64529c8b3f35fe632b7256bd2f6d46e4b40160ce",
+            "type": "tree"
+          },
+          {
+            "path": "skill-creator",
+            "sha": "3cf9a8db32597ba3e24b584a3d696f4e11c7d7b6",
+            "type": "tree"
+          },
+          {
+            "path": "slack-gif-creator",
+            "sha": "c61d2f7bb6334b68a6936ad3f41ebfc7cb76fe2a",
+            "type": "tree"
+          },
+          {
+            "path": "theme-factory",
+            "sha": "e05534d132fb1b21f9917840874758e30f0a9b1a",
+            "type": "tree"
+          },
+          {
+            "path": "web-artifacts-builder",
+            "sha": "821b94f16c123d5f12e4e72eda9f7a162e2698f6",
+            "type": "tree"
+          },
+          {
+            "path": "webapp-testing",
+            "sha": "5ffb7dc66b9fd4c25c3e400a4c00da99a349b714",
+            "type": "tree"
+          },
+          {
+            "path": "xlsx",
+            "sha": "fe6471cc9b5b97aae0b576ccb92ffd9b0207589d",
+            "type": "tree"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/anthropics/skills/git/trees/683bc88e56f3e09ba94f7055977f3d3aa499f202": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "683bc88e56f3e09ba94f7055977f3d3aa499f202",
+        "tree": [
+          {
+            "path": ".claude-plugin",
+            "sha": "3b43ef818bb86902fb0b95119dc089eed1f3aec2",
+            "type": "tree"
+          },
+          {
+            "path": "skills",
+            "sha": "96a4880a6fa211d320f20a8ceb166c4af8707dcc",
+            "type": "tree"
+          },
+          {
+            "path": "spec",
+            "sha": "eacb916c64f60874d69df5dee1b903705a614abe",
+            "type": "tree"
+          },
+          {
+            "path": "template",
+            "sha": "a38aa7fa73fd2835b9ce77a60274f7dc62d015a6",
+            "type": "tree"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/anthropics/skills/git/trees/6e6f5b95c1de6e803cc07b214f5059b074d64e0c": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "6e6f5b95c1de6e803cc07b214f5059b074d64e0c",
+        "tree": [
+          {
+            "path": "LICENSE.txt",
+            "sha": "c55ab42224874608473643de0a85736b7fec0730",
+            "size": 1467,
+            "type": "blob"
+          },
+          {
+            "path": "SKILL.md",
+            "sha": "fb954a460a1ea2294e9595e87fecce8df043eeba",
+            "size": 6911,
+            "type": "blob"
+          },
+          {
+            "path": "scripts",
+            "sha": "0cb4571561c6fc41d06e90d9f4417bc025d0783d",
+            "type": "tree"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/anthropics/skills/git/trees/96a4880a6fa211d320f20a8ceb166c4af8707dcc": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "96a4880a6fa211d320f20a8ceb166c4af8707dcc",
+        "tree": [
+          {
+            "path": "academy-guide",
+            "sha": "baddb91c315ea384f9191615054ba8026eb57ba2",
+            "type": "tree"
+          },
+          {
+            "path": "algorithmic-art",
+            "sha": "4aef6bcad51d058ec32b1acb9da436851863e56e",
+            "type": "tree"
+          },
+          {
+            "path": "brand-guidelines",
+            "sha": "1dc8bd3584b80568edae7da16382363e24ecf0f0",
+            "type": "tree"
+          },
+          {
+            "path": "canvas-design",
+            "sha": "95095faaee2ea943e85a5d1d562fde06841e835e",
+            "type": "tree"
+          },
+          {
+            "path": "claude-api",
+            "sha": "2ab894eee589a1d12b10c10d5b1f6b6bbfced93a",
+            "type": "tree"
+          },
+          {
+            "path": "discernment-nudge",
+            "sha": "290670f304c67cf36725d7612583cf203f7a4e50",
+            "type": "tree"
+          },
+          {
+            "path": "doc-coauthoring",
+            "sha": "d9df960e61fe2bafe9183e37de6f9f6b73b74087",
+            "type": "tree"
+          },
+          {
+            "path": "docx",
+            "sha": "6e6f5b95c1de6e803cc07b214f5059b074d64e0c",
+            "type": "tree"
+          },
+          {
+            "path": "frontend-design",
+            "sha": "d79e2a5bb4df4a386c2adcdd9ab8709bba28c3f6",
+            "type": "tree"
+          },
+          {
+            "path": "internal-comms",
+            "sha": "9869687dcf6deb6802ca88ac11e67b6f7278017a",
+            "type": "tree"
+          },
+          {
+            "path": "mcp-builder",
+            "sha": "b866bcfb57b780c10b587c7b543e871a91661ce0",
+            "type": "tree"
+          },
+          {
+            "path": "pdf",
+            "sha": "6369f4649de69bd6857c9bc3b058a77206009238",
+            "type": "tree"
+          },
+          {
+            "path": "pptx",
+            "sha": "64529c8b3f35fe632b7256bd2f6d46e4b40160ce",
+            "type": "tree"
+          },
+          {
+            "path": "skill-creator",
+            "sha": "3cf9a8db32597ba3e24b584a3d696f4e11c7d7b6",
+            "type": "tree"
+          },
+          {
+            "path": "slack-gif-creator",
+            "sha": "c61d2f7bb6334b68a6936ad3f41ebfc7cb76fe2a",
+            "type": "tree"
+          },
+          {
+            "path": "theme-factory",
+            "sha": "e05534d132fb1b21f9917840874758e30f0a9b1a",
+            "type": "tree"
+          },
+          {
+            "path": "web-artifacts-builder",
+            "sha": "821b94f16c123d5f12e4e72eda9f7a162e2698f6",
+            "type": "tree"
+          },
+          {
+            "path": "webapp-testing",
+            "sha": "5ffb7dc66b9fd4c25c3e400a4c00da99a349b714",
+            "type": "tree"
+          },
+          {
+            "path": "xlsx",
+            "sha": "fe6471cc9b5b97aae0b576ccb92ffd9b0207589d",
+            "type": "tree"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/anthropics/skills/git/trees/d9df960e61fe2bafe9183e37de6f9f6b73b74087": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "d9df960e61fe2bafe9183e37de6f9f6b73b74087",
+        "tree": [
+          {
+            "path": "SKILL.md",
+            "sha": "a5a69839ef4a161131d80b6daef10037a9686f4a",
+            "size": 15815,
+            "type": "blob"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/anthropics/skills/git/trees/d9df960e61fe2bafe9183e37de6f9f6b73b74087?recursive=1": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "d9df960e61fe2bafe9183e37de6f9f6b73b74087",
+        "tree": [
+          {
+            "path": "SKILL.md",
+            "sha": "a5a69839ef4a161131d80b6daef10037a9686f4a",
+            "size": 15815,
+            "type": "blob"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/anthropics/skills/git/trees/dbd4588f9e1033efb41dad4bef2f7947c8993d44": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+        "tree": [
+          {
+            "path": ".claude-plugin",
+            "sha": "3b43ef818bb86902fb0b95119dc089eed1f3aec2",
+            "type": "tree"
+          },
+          {
+            "path": "skills",
+            "sha": "5ddb5296df8bb291d21eddad51f5c07e347cc5be",
+            "type": "tree"
+          },
+          {
+            "path": "spec",
+            "sha": "eacb916c64f60874d69df5dee1b903705a614abe",
+            "type": "tree"
+          },
+          {
+            "path": "template",
+            "sha": "a38aa7fa73fd2835b9ce77a60274f7dc62d015a6",
+            "type": "tree"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/github/awesome-copilot": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "default_branch": "main",
+        "license": {
+          "spdx_id": "MIT"
+        }
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/github/awesome-copilot/commits/cb64ad12e32737ae764becd6885462e9b4c7cb00": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "cb64ad12e32737ae764becd6885462e9b4c7cb00"
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/github/awesome-copilot/commits/main": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "cb64ad12e32737ae764becd6885462e9b4c7cb00"
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/github/awesome-copilot/git/trees/a7260671f9bcbf226fcd357620f2039dcf6cc578": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "a7260671f9bcbf226fcd357620f2039dcf6cc578",
+        "tree": [
+          {
+            "path": "rust.instructions.md",
+            "sha": "75ac0e4fe0cf70c5ce2dac505074ceae19f0cf91",
+            "size": 7362,
+            "type": "blob"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/github/awesome-copilot/git/trees/ab92add4b598d0afb7164e7908f562b41ece7533": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "ab92add4b598d0afb7164e7908f562b41ece7533",
+        "tree": [
+          {
+            "path": "CSharpExpert.agent.md",
+            "sha": "170d8f34cdeb4b4ff8d594d1cd5fe99d01b80253",
+            "size": 8607,
+            "type": "blob"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://api.github.com/repos/github/awesome-copilot/git/trees/cb64ad12e32737ae764becd6885462e9b4c7cb00": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "sha": "cb64ad12e32737ae764becd6885462e9b4c7cb00",
+        "tree": [
+          {
+            "path": ".github",
+            "sha": "2ccdd8372635362dd4fd09d675fb107fe30d3f5e",
+            "type": "tree"
+          },
+          {
+            "path": ".schemas",
+            "sha": "36431d7d08926d6697292c4da36bebccbc9ffe17",
+            "type": "tree"
+          },
+          {
+            "path": ".vscode",
+            "sha": "9bfa9c8a12fa4d0d7e6589b31a54c085e08ee41c",
+            "type": "tree"
+          },
+          {
+            "path": "LICENSE",
+            "sha": "89bc5e962c9944cdb050887062afdaaf89be504a",
+            "size": 1059,
+            "type": "blob"
+          },
+          {
+            "path": "agents",
+            "sha": "ab92add4b598d0afb7164e7908f562b41ece7533",
+            "type": "tree"
+          },
+          {
+            "path": "cookbook",
+            "sha": "4f704c3f04f0efebd0d79ea52deec62154cd4224",
+            "type": "tree"
+          },
+          {
+            "path": "docs",
+            "sha": "278efe0b0c8abd701257b9d5ce2b6ec6b5423919",
+            "type": "tree"
+          },
+          {
+            "path": "eng",
+            "sha": "d6a54c23df3ae98802d29611897d087b2e521475",
+            "type": "tree"
+          },
+          {
+            "path": "extensions",
+            "sha": "74ff4a78e52508c6a044a252f9ad47f3e4440f5f",
+            "type": "tree"
+          },
+          {
+            "path": "hooks",
+            "sha": "8c8a3fd501698702c7be29178344462acdd9a4cc",
+            "type": "tree"
+          },
+          {
+            "path": "instructions",
+            "sha": "a7260671f9bcbf226fcd357620f2039dcf6cc578",
+            "type": "tree"
+          },
+          {
+            "path": "plugins",
+            "sha": "6a388721299639d72251d94e8e4c1fdf89c70200",
+            "type": "tree"
+          },
+          {
+            "path": "skills",
+            "sha": "e604350ffbf841ca4acd592ea276f2fab854930b",
+            "type": "tree"
+          },
+          {
+            "path": "website",
+            "sha": "67e551b62e33a2617c94c01367d8bb0078889754",
+            "type": "tree"
+          },
+          {
+            "path": "workflows",
+            "sha": "aad3908f8864521c25e36f25d28a1208a9973125",
+            "type": "tree"
+          }
+        ],
+        "truncated": false
+      },
+      "status": 200
+    },
+    "https://raw.githubusercontent.com/ComposioHQ/awesome-claude-skills/be2a406907dbc61b73e6827ded415c96139d13a2/domain-name-brainstormer/SKILL.md": {
+      "contentType": "text/plain; charset=utf-8",
+      "status": 200,
+      "text": "---\nname: domain-name-brainstormer\ndescription: Generates creative domain name ideas for your project and checks availability across multiple TLDs (.com, .io, .dev, .ai, etc.). Saves hours of brainstorming and manual checking.\n---\n"
+    },
+    "https://raw.githubusercontent.com/anthropics/skills/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/brand-guidelines/LICENSE.txt": {
+      "contentType": "text/plain; charset=utf-8",
+      "status": 200,
+      "text": "\n                                 Apache License\n                           Version 2.0, January 2004\n                        http://www.apache.org/licenses/\n\n   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION\n\n   1. Definitions.\n\n      \"License\" shall mean the terms and conditions for use, reproduction,\n      and distribution as defined by Sections 1 through 9 of this document.\n\n      \"Licensor\" shall mean the copyright owner or entity authorized by\n      the copyright owner that is granting the License.\n\n      \"Legal Entity\" shall mean the union of the acting entity and all\n      other entities that control, are controlled by, or are under common\n      control with that entity. For the purposes of this definition,\n      \"control\" means (i) the power, direct or indirect, to cause the\n      direction or management of such entity, whether by contract or\n      otherwise, or (ii) ownership of fifty percent (50%) or more of the\n      outstanding shares, or (iii) beneficial ownership of such entity.\n\n      \"You\" (or \"Your\") shall mean an individual or Legal Entity\n      exercising permissions granted by this License.\n\n      \"Source\" form shall mean the preferred form for making modifications,\n      including but not limited to software source code, documentation\n      source, and configuration files.\n\n      \"Object\" form shall mean any form resulting from mechanical\n      transformation or translation of a Source form, including but\n      not limited to compiled object code, generated documentation,\n      and conversions to other media types.\n\n      \"Work\" shall mean the work of authorship, whether in Source or\n      Object form, made available under the License, as indicated by a\n      copyright notice that is included in or attached to the work\n      (an example is provided in the Appendix below).\n\n      \"Derivative Works\" shall mean any work, whether in Source or Object\n      form, that is based on (or derived from) the Work and for which the\n      editorial revisions, annotations, elaborations, or other modifications\n      represent, as a whole, an original work of authorship. For the purposes\n      of this License, Derivative Works shall not include works that remain\n      separable from, or merely link (or bind by name) to the interfaces of,\n      the Work and Derivative Works thereof.\n\n      \"Contribution\" shall mean any work of authorship, including\n      the original version of the Work and any modifications or additions\n      to that Work or Derivative Works thereof, that is intentionally\n      submitted to Licensor for inclusion in the Work by the copyright owner\n      or by an individual or Legal Entity authorized to submit on behalf of\n      the copyright owner. For the purposes of this definition, \"submitted\"\n      means any form of electronic, verbal, or written communication sent\n      to the Licensor or its representatives, including but not limited to\n      communication on electronic mailing lists, source code control systems,\n      and issue tracking systems that are managed by, or on behalf of, the\n      Licensor for the purpose of discussing and improving the Work, but\n      excluding communication that is conspicuously marked or otherwise\n      designated in writing by the copyright owner as \"Not a Contribution.\"\n\n      \"Contributor\" shall mean Licensor and any individual or Legal Entity\n      on behalf of whom a Contribution has been received by Licensor and\n      subsequently incorporated within the Work.\n\n   2. Grant of Copyright License. Subject to the terms and conditions of\n      this License, each Contributor hereby grants to You a perpetual,\n      worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n      copyright license to reproduce, prepare Derivative Works of,\n      publicly display, publicly perform, sublicense, and distribute the\n      Work and such Derivative Works in Source or Object form.\n\n   3. Grant of Patent License. Subject to the terms and conditions of\n      this License, each Contributor hereby grants to You a perpetual,\n      worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n      (except as stated in this section) patent license to make, have made,\n      use, offer to sell, sell, import, and otherwise transfer the Work,\n      where such license applies only to those patent claims licensable\n      by such Contributor that are necessarily infringed by their\n      Contribution(s) alone or by combination of their Contribution(s)\n      with the Work to which such Contribution(s) was submitted. If You\n      institute patent litigation against any entity (including a\n      cross-claim or counterclaim in a lawsuit) alleging that the Work\n      or a Contribution incorporated within the Work constitutes direct\n      or contributory patent infringement, then any patent licenses\n      granted to You under this License for that Work shall terminate\n      as of the date such litigation is filed.\n\n   4. Redistribution. You may reproduce and distribute copies of the\n      Work or Derivative Works thereof in any medium, with or without\n      modifications, and in Source or Object form, provided that You\n      meet the following conditions:\n\n      (a) You must give any other recipients of the Work or\n          Derivative Works a copy of this License; and\n\n      (b) You must cause any modified files to carry prominent notices\n          stating that You changed the files; and\n\n      (c) You must retain, in the Source form of any Derivative Works\n          that You distribute, all copyright, patent, trademark, and\n          attribution notices from the Source form of the Work,\n          excluding those notices that do not pertain to any part of\n          the Derivative Works; and\n\n      (d) If the Work includes a \"NOTICE\" text file as part of its\n          distribution, then any Derivative Works that You distribute must\n          include a readable copy of the attribution notices contained\n          within such NOTICE file, excluding those notices that do not\n          pertain to any part of the Derivative Works, in at least one\n          of the following places: within a NOTICE text file distributed\n          as part of the Derivative Works; within the Source form or\n          documentation, if provided along with the Derivative Works; or,\n          within a display generated by the Derivative Works, if and\n          wherever such third-party notices normally appear. The contents\n          of the NOTICE file are for informational purposes only and\n          do not modify the License. You may add Your own attribution\n          notices within Derivative Works that You distribute, alongside\n          or as an addendum to the NOTICE text from the Work, provided\n          that such additional attribution notices cannot be construed\n          as modifying the License.\n\n      You may add Your own copyright statement to Your modifications and\n      may provide additional or different license terms and conditions\n      for use, reproduction, or distribution of Your modifications, or\n      for any such Derivative Works as a whole, provided Your use,\n      reproduction, and distribution of the Work otherwise complies with\n      the conditions stated in this License.\n\n   5. Submission of Contributions. Unless You explicitly state otherwise,\n      any Contribution intentionally submitted for inclusion in the Work\n      by You to the Licensor shall be under the terms and conditions of\n      this License, without any additional terms or conditions.\n      Notwithstanding the above, nothing herein shall supersede or modify\n      the terms of any separate license agreement you may have executed\n      with Licensor regarding such Contributions.\n\n   6. Trademarks. This License does not grant permission to use the trade\n      names, trademarks, service marks, or product names of the Licensor,\n      except as required for reasonable and customary use in describing the\n      origin of the Work and reproducing the content of the NOTICE file.\n\n   7. Disclaimer of Warranty. Unless required by applicable law or\n      agreed to in writing, Licensor provides the Work (and each\n      Contributor provides its Contributions) on an \"AS IS\" BASIS,\n      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or\n      implied, including, without limitation, any warranties or conditions\n      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A\n      PARTICULAR PURPOSE. You are solely responsible for determining the\n      appropriateness of using or redistributing the Work and assume any\n      risks associated with Your exercise of permissions under this License.\n\n   8. Limitation of Liability. In no event and under no legal theory,\n      whether in tort (including negligence), contract, or otherwise,\n      unless required by applicable law (such as deliberate and grossly\n      negligent acts) or agreed to in writing, shall any Contributor be\n      liable to You for damages, including any direct, indirect, special,\n      incidental, or consequential damages of any character arising as a\n      result of this License or out of the use or inability to use the\n      Work (including but not limited to damages for loss of goodwill,\n      work stoppage, computer failure or malfunction, or any and all\n      other commercial damages or losses), even if such Contributor\n      has been advised of the possibility of such damages.\n\n   9. Accepting Warranty or Additional Liability. While redistributing\n      the Work or Derivative Works thereof, You may choose to offer,\n      and charge a fee for, acceptance of support, warranty, indemnity,\n      or other liability obligations and/or rights consistent with this\n      License. However, in accepting such obligations, You may act only\n      on Your own behalf and on Your sole responsibility, not on behalf\n      of any other Contributor, and only if You agree to indemnify,\n      defend, and hold each Contributor harmless for any liability\n      incurred by, or claims asserted against, such Contributor by reason\n      of your accepting any such warranty or additional liability.\n\n   END OF TERMS AND CONDITIONS\n\n   APPENDIX: How to apply the Apache License to your work.\n\n      To apply the Apache License to your work, attach the following\n      boilerplate notice, with the fields enclosed by brackets \"[]\"\n      replaced with your own identifying information. (Don't include\n      the brackets!)  The text should be enclosed in the appropriate\n      comment syntax for the file format. We also recommend that a\n      file or class name and description of purpose be included on the\n      same \"printed page\" as the copyright notice for easier\n      identification within third-party archives.\n\n   Copyright 2026 Anthropic, PBC.\n\n   Licensed under the Apache License, Version 2.0 (the \"License\");\n   you may not use this file except in compliance with the License.\n   You may obtain a copy of the License at\n\n       http://www.apache.org/licenses/LICENSE-2.0\n\n   Unless required by applicable law or agreed to in writing, software\n   distributed under the License is distributed on an \"AS IS\" BASIS,\n   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n   See the License for the specific language governing permissions and\n   limitations under the License."
+    },
+    "https://raw.githubusercontent.com/anthropics/skills/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/brand-guidelines/SKILL.md": {
+      "contentType": "text/plain; charset=utf-8",
+      "status": 200,
+      "text": "---\nname: brand-guidelines\ndescription: Applies Anthropic's official brand colors and typography to any sort of artifact that may benefit from having Anthropic's look-and-feel. Use it when brand colors or style guidelines, visual formatting, or company design standards apply.\nlicense: Complete terms in LICENSE.txt\n---\n\n# Anthropic Brand Styling\n\n## Overview\n\nTo access Anthropic's official brand identity and style resources, use this skill.\n\n**Keywords**: branding, corporate identity, visual identity, post-processing, styling, brand colors, typography, Anthropic brand, visual formatting, visual design\n\n## Brand Guidelines\n\n### Colors\n\n**Main Colors:**\n\n- Dark: `#141413` - Primary text and dark backgrounds\n- Light: `#faf9f5` - Light backgrounds and text on dark\n- Mid Gray: `#b0aea5` - Secondary elements\n- Light Gray: `#e8e6dc` - Subtle backgrounds\n\n**Accent Colors:**\n\n- Orange: `#d97757` - Primary accent\n- Blue: `#6a9bcc` - Secondary accent\n- Green: `#788c5d` - Tertiary accent\n\n### Typography\n\n- **Headings**: Poppins (with Arial fallback)\n- **Body Text**: Lora (with Georgia fallback)\n- **Note**: Fonts should be pre-installed in your environment for best results\n\n## Features\n\n### Smart Font Application\n\n- Applies Poppins font to headings (24pt and larger)\n- Applies Lora font to body text\n- Automatically falls back to Arial/Georgia if custom fonts unavailable\n- Preserves readability across all systems\n\n### Text Styling\n\n- Headings (24pt+): Poppins font\n- Body text: Lora font\n- Smart color selection based on background\n- Preserves text hierarchy and formatting\n\n### Shape and Accent Colors\n\n- Non-text shapes use accent colors\n- Cycles through orange, blue, and green accents\n- Maintains visual interest while staying on-brand\n\n## Technical Details\n\n### Font Management\n\n- Uses system-installed Poppins and Lora fonts when available\n- Provides automatic fallback to Arial (headings) and Georgia (body)\n- No font installation required - works with existing system fonts\n- For best results, pre-install Poppins and Lora fonts in your environment\n\n### Color Application\n\n- Uses RGB color values for precise brand matching\n- Applied via python-pptx's RGBColor class\n- Maintains color fidelity across different systems\n"
+    },
+    "https://raw.githubusercontent.com/anthropics/skills/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/doc-coauthoring/SKILL.md": {
+      "contentType": "text/plain; charset=utf-8",
+      "status": 200,
+      "text": "---\nname: doc-coauthoring\ndescription: Guide users through a structured workflow for co-authoring documentation. Use when user wants to write documentation, proposals, technical specs, decision docs, or similar structured content. This workflow helps users efficiently transfer context, refine content through iteration, and verify the doc works for readers. Trigger when user mentions writing docs, creating proposals, drafting specs, or similar documentation tasks.\n---\n"
+    },
+    "https://raw.githubusercontent.com/anthropics/skills/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/docx/LICENSE.txt": {
+      "contentType": "text/plain; charset=utf-8",
+      "status": 200,
+      "text": "© 2025 Anthropic, PBC. All rights reserved.\n\nLICENSE: Use of these materials (including all code, prompts, assets, files,\nand other components of this Skill) is governed by your agreement with\nAnthropic regarding use of Anthropic's services. If no separate agreement\nexists, use is governed by Anthropic's Consumer Terms of Service or\nCommercial Terms of Service, as applicable:\nhttps://www.anthropic.com/legal/consumer-terms\nhttps://www.anthropic.com/legal/commercial-terms\nYour applicable agreement is referred to as the \"Agreement.\" \"Services\" are\nas defined in the Agreement.\n\nADDITIONAL RESTRICTIONS: Notwithstanding anything in the Agreement to the\ncontrary, users may not:\n\n- Extract these materials from the Services or retain copies of these\n  materials outside the Services\n- Reproduce or copy these materials, except for temporary copies created\n  automatically during authorized use of the Services\n- Create derivative works based on these materials\n- Distribute, sublicense, or transfer these materials to any third party\n- Make, offer to sell, sell, or import any inventions embodied in these\n  materials\n- Reverse engineer, decompile, or disassemble these materials\n\nThe receipt, viewing, or possession of these materials does not convey or\nimply any license or right beyond those expressly granted above.\n\nAnthropic retains all right, title, and interest in these materials,\nincluding all copyrights, patents, and other intellectual property rights.\n"
+    },
+    "https://raw.githubusercontent.com/github/awesome-copilot/cb64ad12e32737ae764becd6885462e9b4c7cb00/LICENSE": {
+      "contentType": "text/plain; charset=utf-8",
+      "status": 200,
+      "text": "MIT License\n\nCopyright GitHub, Inc.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
+    },
+    "https://raw.githubusercontent.com/github/awesome-copilot/cb64ad12e32737ae764becd6885462e9b4c7cb00/agents/CSharpExpert.agent.md": {
+      "contentType": "text/plain; charset=utf-8",
+      "status": 200,
+      "text": "---\nname: \"C# Expert\"\ndescription: An agent designed to assist with software development tasks for .NET projects.\n# version: 2026-01-20a\n---\n\nYou are an expert C#/.NET developer. You help with .NET tasks by giving clean, well-designed, error-free, fast, secure, readable, and maintainable code that follows .NET conventions. You also give insights, best practices, general software design tips, and testing best practices.\n\nYou are familiar with the currently released .NET and C# versions (for example, up to .NET 10 and C# 14 at the time of writing). (Refer to https://learn.microsoft.com/en-us/dotnet/core/whats-new\nand https://learn.microsoft.com/en-us/dotnet/csharp/whats-new for details.)\n\nWhen invoked:\n\n- Understand the user's .NET task and context\n- Propose clean, organized solutions that follow .NET conventions\n- Cover security (authentication, authorization, data protection)\n- Use and explain patterns: Async/Await, Dependency Injection, Unit of Work, CQRS, Gang of Four\n- Apply SOLID principles\n- Plan and write tests (TDD/BDD) with xUnit, NUnit, or MSTest\n- Improve performance (memory, async code, data access)\n\n# General C# Development\n\n- Follow the project's own conventions first, then common C# conventions.\n- Keep naming, formatting, and project structure consistent.\n\n## Code Design Rules\n\n- DON'T add interfaces/abstractions unless used for external dependencies or testing.\n- Don't wrap existing abstractions.\n- Don't default to `public`. Least-exposure rule: `private` > `internal` > `protected` > `public`\n- Keep names consistent; pick one style (e.g., `WithHostPort` or `WithBrowserPort`) and stick to it.\n- Don't edit auto-generated code (`/api/*.cs`, `*.g.cs`, `// <auto-generated>`).\n- Comments explain **why**, not what.\n- Don't add unused methods/params.\n- When fixing one method, check siblings for the same issue.\n- Reuse existing methods as much as possible\n- Add comments when adding public methods\n- Move user-facing strings (e.g., AnalyzeAndConfirmNuGetConfigChanges) into resource files. Keep error/help text localizable.\n\n## Error Handling & Edge Cases\n\n- **Null checks**: use `ArgumentNullException.ThrowIfNull(x)`; for strings use `string.IsNullOrWhiteSpace(x)`; guard early. Avoid blanket `!`.\n- **Exceptions**: choose precise types (e.g., `ArgumentException`, `InvalidOperationException`); don't throw or catch base Exception.\n- **No silent catches**: don't swallow errors; log and rethrow or let them bubble.\n\n## Goals for .NET Applications\n\n### Productivity\n\n- Prefer modern C# (file-scoped ns, raw \"\"\" strings, switch expr, ranges/indices, async streams) when TFM allows.\n- Keep diffs small; reuse code; avoid new layers unless needed.\n- Be IDE-friendly (go-to-def, rename, quick fixes work).\n\n### Production-ready\n\n- Secure by default (no secrets; input validate; least privilege).\n- Resilient I/O (timeouts; retry with backoff when it fits).\n- Structured logging with scopes; useful context; no log spam.\n- Use precise exceptions; don’t swallow; keep cause/context.\n\n### Performance\n\n- Simple first; optimize hot paths when measured.\n- Stream large payloads; avoid extra allocs.\n- Use Span/Memory/pooling when it matters.\n- Async end-to-end; no sync-over-async.\n\n### Cloud-native / cloud-ready\n\n- Cross-platform; guard OS-specific APIs.\n- Diagnostics: health/ready when it fits; metrics + traces.\n- Observability: ILogger + OpenTelemetry hooks.\n- 12-factor: config from env; avoid stateful singletons.\n\n# .NET quick checklist\n\n## Do first\n\n- Read TFM + C# version.\n- Check `global.json` SDK.\n\n## Initial check\n\n- App type: web / desktop / console / lib.\n- Packages (and multi-targeting).\n- Nullable on? (`<Nullable>enable</Nullable>` / `#nullable enable`)\n- Repo config: `Directory.Build.*`, `Directory.Packages.props`.\n\n## C# version\n\n- **Don't** set C# newer than TFM default.\n- C# 14 (NET 10+): extension members; `field` accessor; implicit `Span<T>` conv; `?.=`; `nameof` with unbound generic; lambda param mods w/o types; partial ctors/events; user-defined compound assign.\n\n## Build\n\n- .NET 5+: `dotnet build`, `dotnet publish`.\n- .NET Framework: May use `MSBuild` directly or require Visual Studio\n- Look for custom targets/scripts: `Directory.Build.targets`, `build.cmd/.sh`, `Build.ps1`.\n\n## Good practice\n\n- Always compile or check docs first if there is unfamiliar syntax. Don't try to correct the syntax if code can compile.\n- Don't change TFM, SDK, or `<LangVersion>` unless asked.\n\n# Async Programming Best Practices\n\n- **Naming:** all async methods end with `Async` (incl. CLI handlers).\n- **Always await:** no fire-and-forget; if timing out, **cancel the work**.\n- **Cancellation end-to-end:** accept a `CancellationToken`, pass it through, call `ThrowIfCancellationRequested()` in loops, make delays cancelable (`Task.Delay(ms, ct)`).\n- **Timeouts:** use linked `CancellationTokenSource` + `CancelAfter` (or `WhenAny` **and** cancel the pending task).\n- **Context:** use `ConfigureAwait(false)` in helper/library code; omit in app entry/UI.\n- **Stream JSON:** `GetAsync(..., ResponseHeadersRead)` → `ReadAsStreamAsync` → `JsonDocument.ParseAsync`; avoid `ReadAsStringAsync` when large.\n- **Exit code on cancel:** return non-zero (e.g., `130`).\n- **`ValueTask`:** use only when measured to help; default to `Task`.\n- **Async dispose:** prefer `await using` for async resources; keep streams/readers properly owned.\n- **No pointless wrappers:** don’t add `async/await` if you just return the task.\n\n## Immutability\n\n- Prefer records to classes for DTOs\n\n# Testing best practices\n\n## Test structure\n\n- Separate test project: **`[ProjectName].Tests`**.\n- Mirror classes: `CatDoor` -> `CatDoorTests`.\n- Name tests by behavior: `WhenCatMeowsThenCatDoorOpens`.\n- Follow existing naming conventions.\n- Use **public instance** classes; avoid **static** fields.\n- No branching/conditionals inside tests.\n\n## Unit Tests\n\n- One behavior per test;\n- Avoid Unicode symbols.\n- Follow the Arrange-Act-Assert (AAA) pattern\n- Use clear assertions that verify the outcome expressed by the test name\n- Avoid using multiple assertions in one test method. In this case, prefer multiple tests.\n- When testing multiple preconditions, write a test for each\n- When testing multiple outcomes for one precondition, use parameterized tests\n- Tests should be able to run in any order or in parallel\n- Avoid disk I/O; if needed, randomize paths, don't clean up, log file locations.\n- Test through **public APIs**; don't change visibility; avoid `InternalsVisibleTo`.\n- Require tests for new/changed **public APIs**.\n- Assert specific values and edge cases, not vague outcomes.\n\n## Test workflow\n\n### Run Test Command\n\n- Look for custom targets/scripts: `Directory.Build.targets`, `test.ps1/.cmd/.sh`\n- .NET Framework: May use `vstest.console.exe` directly or require Visual Studio Test Explorer\n- Work on only one test until it passes. Then run other tests to ensure nothing has been broken.\n\n### Code coverage (dotnet-coverage)\n\n- **Tool (one-time):**\n  bash\n  `dotnet tool install -g dotnet-coverage`\n- **Run locally (every time add/modify tests):**\n  bash\n  `dotnet-coverage collect -f cobertura -o coverage.cobertura.xml dotnet test`\n\n## Test framework-specific guidance\n\n- **Use the framework already in the solution** (xUnit/NUnit/MSTest) for new tests.\n\n### xUnit\n\n- Packages: `Microsoft.NET.Test.Sdk`, `xunit`, `xunit.runner.visualstudio`\n- No class attribute; use `[Fact]`\n- Parameterized tests: `[Theory]` with `[InlineData]`\n- Setup/teardown: constructor and `IDisposable`\n\n### xUnit v3\n\n- Packages: `xunit.v3`, `xunit.runner.visualstudio` 3.x, `Microsoft.NET.Test.Sdk`\n- `ITestOutputHelper` and `[Theory]` are in `Xunit`\n\n### NUnit\n\n- Packages: `Microsoft.NET.Test.Sdk`, `NUnit`, `NUnit3TestAdapter`\n- Class `[TestFixture]`, test `[Test]`\n- Parameterized tests: **use `[TestCase]`**\n\n### MSTest\n\n- Class `[TestClass]`, test `[TestMethod]`\n- Setup/teardown: `[TestInitialize]`, `[TestCleanup]`\n- Parameterized tests: **use `[TestMethod]` + `[DataRow]`**\n\n### Assertions\n\n- If **FluentAssertions/AwesomeAssertions** are already used, prefer them.\n- Otherwise, use the framework’s asserts.\n- Use `Throws/ThrowsAsync` (or MSTest `Assert.ThrowsException`) for exceptions.\n\n## Mocking\n\n- Avoid mocks/Fakes if possible\n- External dependencies can be mocked. Never mock code whose implementation is part of the solution under test.\n- Try to verify that the outputs (e.g. return values, exceptions) of the mock match the outputs of the dependency. You can write a test for this but leave it marked as skipped/explicit so that developers can verify it later.\n"
+    },
+    "https://raw.githubusercontent.com/github/awesome-copilot/cb64ad12e32737ae764becd6885462e9b4c7cb00/instructions/rust.instructions.md": {
+      "contentType": "text/plain; charset=utf-8",
+      "status": 200,
+      "text": "---\ndescription: 'Rust programming language coding conventions and best practices'\napplyTo: '**/*.rs'\n---\n\n# Rust Coding Conventions and Best Practices\n\nFollow idiomatic Rust practices and community standards when writing Rust code. \n\nThese instructions are based on [The Rust Book](https://doc.rust-lang.org/book/), [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/), [RFC 430 naming conventions](https://github.com/rust-lang/rfcs/blob/master/text/0430-finalizing-naming-conventions.md), and the broader Rust community at [users.rust-lang.org](https://users.rust-lang.org).\n\n## General Instructions\n\n- Always prioritize readability, safety, and maintainability.\n- Use strong typing and leverage Rust's ownership system for memory safety.\n- Break down complex functions into smaller, more manageable functions.\n- For algorithm-related code, include explanations of the approach used.\n- Write code with good maintainability practices, including comments on why certain design decisions were made.\n- Handle errors gracefully using `Result<T, E>` and provide meaningful error messages.\n- For external dependencies, mention their usage and purpose in documentation.\n- Use consistent naming conventions following [RFC 430](https://github.com/rust-lang/rfcs/blob/master/text/0430-finalizing-naming-conventions.md).\n- Write idiomatic, safe, and efficient Rust code that follows the borrow checker's rules.\n- Ensure code compiles without warnings.\n\n## Patterns to Follow\n\n- Use modules (`mod`) and public interfaces (`pub`) to encapsulate logic.\n- Handle errors properly using `?`, `match`, or `if let`.\n- Use `serde` for serialization and `thiserror` or `anyhow` for custom errors.\n- Implement traits to abstract services or external dependencies.\n- Structure async code using `async/await` and `tokio` or `async-std`.\n- Prefer enums over flags and states for type safety.\n- Use builders for complex object creation.\n- Split binary and library code (`main.rs` vs `lib.rs`) for testability and reuse.\n- Use `rayon` for data parallelism and CPU-bound tasks.\n- Use iterators instead of index-based loops as they're often faster and safer.\n- Use `&str` instead of `String` for function parameters when you don't need ownership.\n- Prefer borrowing and zero-copy operations to avoid unnecessary allocations.\n\n### Ownership, Borrowing, and Lifetimes\n\n- Prefer borrowing (`&T`) over cloning unless ownership transfer is necessary.\n- Use `&mut T` when you need to modify borrowed data.\n- Explicitly annotate lifetimes when the compiler cannot infer them.\n- Use `Rc<T>` for single-threaded reference counting and `Arc<T>` for thread-safe reference counting.\n- Use `RefCell<T>` for interior mutability in single-threaded contexts and `Mutex<T>` or `RwLock<T>` for multi-threaded contexts.\n\n## Patterns to Avoid\n\n- Don't use `unwrap()` or `expect()` unless absolutely necessary—prefer proper error handling.\n- Avoid panics in library code—return `Result` instead.\n- Don't rely on global mutable state—use dependency injection or thread-safe containers.\n- Avoid deeply nested logic—refactor with functions or combinators.\n- Don't ignore warnings—treat them as errors during CI.\n- Avoid `unsafe` unless required and fully documented.\n- Don't overuse `clone()`, use borrowing instead of cloning unless ownership transfer is needed.\n- Avoid premature `collect()`, keep iterators lazy until you actually need the collection.\n- Avoid unnecessary allocations—prefer borrowing and zero-copy operations.\n\n## Code Style and Formatting\n\n- Follow the Rust Style Guide and use `rustfmt` for automatic formatting.\n- Keep lines under 100 characters when possible.\n- Place function and struct documentation immediately before the item using `///`.\n- Use `cargo clippy` to catch common mistakes and enforce best practices.\n\n## Error Handling\n\n- Use `Result<T, E>` for recoverable errors and `panic!` only for unrecoverable errors.\n- Prefer `?` operator over `unwrap()` or `expect()` for error propagation.\n- Create custom error types using `thiserror` or implement `std::error::Error`.\n- Use `Option<T>` for values that may or may not exist.\n- Provide meaningful error messages and context.\n- Error types should be meaningful and well-behaved (implement standard traits).\n- Validate function arguments and return appropriate errors for invalid input.\n\n## API Design Guidelines\n\n### Common Traits Implementation\nEagerly implement common traits where appropriate:\n- `Copy`, `Clone`, `Eq`, `PartialEq`, `Ord`, `PartialOrd`, `Hash`, `Debug`, `Display`, `Default`\n- Use standard conversion traits: `From`, `AsRef`, `AsMut`\n- Collections should implement `FromIterator` and `Extend`\n- Note: `Send` and `Sync` are auto-implemented by the compiler when safe; avoid manual implementation unless using `unsafe` code\n\n### Type Safety and Predictability\n- Use newtypes to provide static distinctions\n- Arguments should convey meaning through types; prefer specific types over generic `bool` parameters\n- Use `Option<T>` appropriately for truly optional values\n- Functions with a clear receiver should be methods\n- Only smart pointers should implement `Deref` and `DerefMut`\n\n### Future Proofing\n- Use sealed traits to protect against downstream implementations\n- Structs should have private fields\n- Functions should validate their arguments\n- All public types must implement `Debug`\n\n## Testing and Documentation\n\n- Write comprehensive unit tests using `#[cfg(test)]` modules and `#[test]` annotations.\n- Use test modules alongside the code they test (`mod tests { ... }`).\n- Write integration tests in `tests/` directory with descriptive filenames.\n- Write clear and concise comments for each function, struct, enum, and complex logic.\n- Ensure functions have descriptive names and include comprehensive documentation.\n- Document all public APIs with rustdoc (`///` comments) following the [API Guidelines](https://rust-lang.github.io/api-guidelines/).\n- Use `#[doc(hidden)]` to hide implementation details from public documentation.\n- Document error conditions, panic scenarios, and safety considerations.\n- Examples should use `?` operator, not `unwrap()` or deprecated `try!` macro.\n\n## Project Organization\n\n- Use semantic versioning in `Cargo.toml`.\n- Include comprehensive metadata: `description`, `license`, `repository`, `keywords`, `categories`.\n- Use feature flags for optional functionality.\n- Organize code into modules using `mod.rs` or named files.\n- Keep `main.rs` or `lib.rs` minimal - move logic to modules.\n\n## Quality Checklist\n\nBefore publishing or reviewing Rust code, ensure:\n\n### Core Requirements\n- [ ] **Naming**: Follows RFC 430 naming conventions\n- [ ] **Traits**: Implements `Debug`, `Clone`, `PartialEq` where appropriate\n- [ ] **Error Handling**: Uses `Result<T, E>` and provides meaningful error types\n- [ ] **Documentation**: All public items have rustdoc comments with examples\n- [ ] **Testing**: Comprehensive test coverage including edge cases\n\n### Safety and Quality\n- [ ] **Safety**: No unnecessary `unsafe` code, proper error handling\n- [ ] **Performance**: Efficient use of iterators, minimal allocations\n- [ ] **API Design**: Functions are predictable, flexible, and type-safe\n- [ ] **Future Proofing**: Private fields in structs, sealed traits where appropriate\n- [ ] **Tooling**: Code passes `cargo fmt`, `cargo clippy`, and `cargo test`\n"
+    }
+  }
+}

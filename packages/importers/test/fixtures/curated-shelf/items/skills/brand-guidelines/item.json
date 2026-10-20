@@ -1,0 +1,19 @@
+{
+  "description": "Applies Anthropic's official brand colors and typography to any sort of artifact that may benefit from having Anthropic's look-and-feel. Use it when brand colors or style guidelines, visual formatting, or company design standards apply.",
+  "id": "brand-guidelines",
+  "source": {
+    "creditText": "anthropics/skills: skills/brand-guidelines (Apache-2.0)",
+    "id": "anthropics",
+    "license": "Apache-2.0",
+    "licenseId": "Apache-2.0",
+    "linkTarget": "https://github.com/anthropics/skills",
+    "path": "skills/brand-guidelines",
+    "recordUrl": "https://github.com/anthropics/skills/tree/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/brand-guidelines",
+    "ref": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+    "repo": "https://github.com/anthropics/skills",
+    "resolvedCommit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+    "shareAlike": false
+  },
+  "title": "Brand guidelines",
+  "kind": "skill"
+}

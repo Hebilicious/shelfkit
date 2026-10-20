@@ -1,0 +1,397 @@
+{
+  "recorded": "2026-10-19",
+  "responses": {
+    "https://clawhub.ai/api/v1/skills/github/file?path=SKILL.md&version=1.0.0&ownerHandle=steipete": {
+      "contentType": "text/markdown",
+      "status": 200,
+      "text": "---\nname: github\ndescription: \"Interact with GitHub using the `gh` CLI. Use `gh issue`, `gh pr`, `gh run`, and `gh api` for issues, PRs, CI runs, and advanced queries.\"\n---\n\n# GitHub Skill\n\nUse the `gh` CLI to interact with GitHub. Always specify `--repo owner/repo` when not in a git directory, or use URLs directly.\n\n## Pull Requests\n\nCheck CI status on a PR:\n```bash\ngh pr checks 55 --repo owner/repo\n```\n\nList recent workflow runs:\n```bash\ngh run list --repo owner/repo --limit 10\n```\n\nView a run and see which steps failed:\n```bash\ngh run view <run-id> --repo owner/repo\n```\n\nView logs for failed steps only:\n```bash\ngh run view <run-id> --repo owner/repo --log-failed\n```\n\n## API for Advanced Queries\n\nThe `gh api` command is useful for accessing data not available through other subcommands.\n\nGet PR with specific fields:\n```bash\ngh api repos/owner/repo/pulls/55 --jq '.title, .state, .user.login'\n```\n\n## JSON Output\n\nMost commands support `--json` for structured output.  You can use `--jq` to filter:\n\n```bash\ngh issue list --repo owner/repo --json number,title --jq '.[] | \"\\(.number): \\(.title)\"'\n```\n"
+    },
+    "https://clawhub.ai/api/v1/skills/github/file?path=skill-card.md&version=1.0.0&ownerHandle=steipete": {
+      "contentType": "text/markdown",
+      "status": 200,
+      "text": "## Description:\n\nInteract with GitHub using the `gh` CLI. Use `gh issue`, `gh pr`, `gh run`, and `gh api` for issues, PRs, CI runs, and advanced queries.\n\nThis skill is ready for commercial/non-commercial use.\n\n## Publisher:\n\n[steipete](https://clawhub.ai/user/steipete)\n\n### License/Terms of Use:\n\n\n## Use Case:\n\nDevelopers and engineers use this skill to have an agent work with GitHub issues, pull requests, workflow runs, and API queries through the GitHub CLI.\n\n### Deployment Geography for Use:\n\nGlobal\n\n## Known Risks and Mitigations:\n\nRisk: The skill may guide an agent to use an authenticated GitHub CLI session to change issues, pull requests, workflows, or repository settings.\n\nMitigation: Review commands that mutate GitHub resources before allowing execution.\n\n## Reference(s):\n\n\n## Skill Output:\n\n**Output Type(s):** [Shell commands, API calls, Guidance]\n\n**Output Format:** [Markdown guidance with inline shell command examples]\n\n**Output Parameters:** [1D]\n\n**Other Properties Related to Output:** [Commands rely on the user's authenticated GitHub CLI context and should be reviewed before execution.]\n\n## Skill Version(s):\n\n1.0.0 (source: server release metadata)\n\n## Ethical Considerations:\n\nUsers should evaluate whether this skill is appropriate for their environment, review any generated or modified files before relying on them, and apply their organization's safety, security, and compliance requirements before deployment.\n"
+    },
+    "https://clawhub.ai/api/v1/skills/github/versions/1.0.0?ownerHandle=steipete": {
+      "contentType": "application/json",
+      "status": 200,
+      "json": {
+        "skill": {
+          "slug": "github",
+          "displayName": "Github"
+        },
+        "version": {
+          "version": "1.0.0",
+          "createdAt": 1767545344344,
+          "changelog": "",
+          "changelogSource": null,
+          "license": null,
+          "files": [
+            {
+              "path": "SKILL.md",
+              "size": 1113,
+              "sha256": "51b28818a6f0359287d5c8244a6fdc59a4ac5504596deb193b28b81832221c86",
+              "contentType": "text/markdown"
+            },
+            {
+              "path": "skill-card.md",
+              "size": 1449,
+              "sha256": "9f6111874f7cbaa3661e90c129b94d546242ea5520decbb75d60a5fec7e52ef8",
+              "contentType": "text/markdown"
+            }
+          ],
+          "security": {
+            "status": "clean",
+            "hasWarnings": true,
+            "checkedAt": 1789013562132,
+            "model": null,
+            "hasScanResult": true,
+            "sha256hash": "d0bef7d74621458724b7de544cdcedd8aaee25f00bb43142a85bc9ce62b0c2d7",
+            "virustotalUrl": "https://www.virustotal.com/gui/file/d0bef7d74621458724b7de544cdcedd8aaee25f00bb43142a85bc9ce62b0c2d7",
+            "scanners": {
+              "vt": {
+                "status": "clean",
+                "verdict": "benign",
+                "normalizedStatus": "clean",
+                "analysis": "Type: OpenClaw Skill\nName: github\nVersion: 1.0.0\n\nThe skill bundle provides instructions for interacting with GitHub using the `gh` CLI. All examples provided in `SKILL.md` demonstrate read-only operations (e.g., checking PR status, listing runs, viewing API data). While the `gh api` command itself offers broad capabilities that could be misused if the agent's GitHub token has extensive permissions, the skill's instructions and examples do not show any intent for malicious behavior, data exfiltration, prompt injection, or other high-risk actions. The content is clearly aligned with its stated purpose.",
+                "source": "palm",
+                "checkedAt": 1779159612649
+              },
+              "skillspector": {
+                "status": "clean",
+                "normalizedStatus": "clean",
+                "score": 0,
+                "severity": "LOW",
+                "recommendation": "SAFE",
+                "issueCount": 0,
+                "checkedAt": 1789013562132
+              },
+              "llm": {
+                "status": "clean",
+                "verdict": "benign",
+                "normalizedStatus": "clean",
+                "confidence": "high",
+                "summary": "This skill gives normal GitHub CLI usage guidance and does not show hidden, persistent, or unrelated behavior.",
+                "dimensions": [
+                  {
+                    "detail": "Using gh can rely on the user's local GitHub authentication and network access, which is expected for a GitHub integration but should be used with user-confirmed repo and command scope.",
+                    "label": "Credentials",
+                    "name": "environment_proportionality",
+                    "rating": "note"
+                  },
+                  {
+                    "detail": "The inspected artifact is a Markdown skill file only, with no executable installer, dependency setup, or package-install instructions.",
+                    "label": "Install Mechanism",
+                    "name": "install_mechanism",
+                    "rating": "ok"
+                  },
+                  {
+                    "detail": "Instructions are concise and task-scoped, including repo selection guidance; the gh api escape hatch is disclosed as an advanced query mechanism rather than hidden behavior.",
+                    "label": "Instruction Scope",
+                    "name": "instruction_scope",
+                    "rating": "ok"
+                  },
+                  {
+                    "detail": "No persistence, background workers, memory writes, privilege escalation, credential harvesting, or tool wrapping behavior appears in the artifact.",
+                    "label": "Persistence & Privilege",
+                    "name": "persistence_privilege",
+                    "rating": "ok"
+                  },
+                  {
+                    "detail": "The stated purpose is to interact with GitHub using the gh CLI, and the artifact provides examples for PR checks, workflow runs, failed logs, API queries, and JSON filtering that fit that purpose.",
+                    "label": "Purpose & Capability",
+                    "name": "purpose_capability",
+                    "rating": "ok"
+                  }
+                ],
+                "guidance": "Before installing, understand that this skill may guide an agent to use your authenticated gh CLI session. That is appropriate for GitHub work, but review commands that mutate issues, PRs, workflows, or repository settings before allowing them to run.",
+                "findings": null,
+                "agenticRiskFindings": null,
+                "riskSummary": null,
+                "model": null,
+                "checkedAt": 1789013562132
+              }
+            }
+          }
+        }
+      }
+    },
+    "https://clawhub.ai/api/v1/skills/github?ownerHandle=steipete": {
+      "contentType": "application/json",
+      "status": 200,
+      "json": {
+        "skill": {
+          "slug": "github",
+          "displayName": "Github",
+          "summary": "Interact with GitHub using the `gh` CLI. Use `gh issue`, `gh pr`, `gh run`, and `gh api` for issues, PRs, CI runs, and advanced queries.",
+          "icon": null,
+          "description": "---\nname: github\ndescription: \"Interact with GitHub using the `gh` CLI. Use `gh issue`, `gh pr`, `gh run`, and `gh api` for issues, PRs, CI runs, and advanced queries.\"\n---\n\n# GitHub Skill\n\nUse the `gh` CLI to interact with GitHub. Always specify `--repo owner/repo` when not in a git directory, or use URLs directly.\n\n## Pull Requests\n\nCheck CI status on a PR:\n```bash\ngh pr checks 55 --repo owner/repo\n```\n\nList recent workflow runs:\n```bash\ngh run list --repo owner/repo --limit 10\n```\n\nView a run and see which steps failed:\n```bash\ngh run view <run-id> --repo owner/repo\n```\n\nView logs for failed steps only:\n```bash\ngh run view <run-id> --repo owner/repo --log-failed\n```\n\n## API for Advanced Queries\n\nThe `gh api` command is useful for accessing data not available through other subcommands.\n\nGet PR with specific fields:\n```bash\ngh api repos/owner/repo/pulls/55 --jq '.title, .state, .user.login'\n```\n\n## JSON Output\n\nMost commands support `--json` for structured output.  You can use `--jq` to filter:\n\n```bash\ngh issue list --repo owner/repo --json number,title --jq '.[] | \"\\(.number): \\(.title)\"'\n```\n",
+          "topics": ["GitHub"],
+          "tags": {
+            "latest": "1.0.0"
+          },
+          "stats": {
+            "comments": 7,
+            "downloads": 201528,
+            "installs": 7653,
+            "stars": 671,
+            "versions": 1
+          },
+          "createdAt": 1767545344344,
+          "updatedAt": 1781268517834
+        },
+        "latestVersion": {
+          "version": "1.0.0",
+          "createdAt": 1767545344344,
+          "changelog": "",
+          "license": null
+        },
+        "metadata": null,
+        "owner": {
+          "handle": "steipete",
+          "userId": "s179zksw999xz8ms4cy7pb2fr183m5jq",
+          "displayName": "Peter Steinberger",
+          "image": "https://avatars.githubusercontent.com/u/58493?v=4"
+        },
+        "moderation": null
+      }
+    },
+    "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.github%2Fgithub-mcp-server/versions/2.0.2": {
+      "contentType": "application/json",
+      "status": 200,
+      "json": {
+        "server": {
+          "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+          "name": "io.github.github/github-mcp-server",
+          "description": "Connect AI assistants to GitHub - manage repos, issues, PRs, and workflows through natural language.",
+          "title": "GitHub",
+          "repository": {
+            "url": "https://github.com/github/github-mcp-server",
+            "source": "github"
+          },
+          "version": "2.0.2",
+          "packages": [
+            {
+              "registryType": "oci",
+              "identifier": "ghcr.io/github/github-mcp-server:2.0.2",
+              "transport": {
+                "type": "stdio"
+              },
+              "runtimeArguments": [
+                {
+                  "description": "Publish the OAuth callback port to loopback so the in-container login callback is reachable",
+                  "value": "127.0.0.1:8085:8085",
+                  "type": "named",
+                  "name": "-p"
+                },
+                {
+                  "description": "Fixed OAuth callback port, matching the published port above",
+                  "value": "GITHUB_OAUTH_CALLBACK_PORT=8085",
+                  "type": "named",
+                  "name": "-e"
+                },
+                {
+                  "description": "Optional GitHub Personal Access Token. Omit to log in with OAuth on first use.",
+                  "value": "GITHUB_PERSONAL_ACCESS_TOKEN={token}",
+                  "variables": {
+                    "token": {
+                      "format": "string",
+                      "isSecret": true
+                    }
+                  },
+                  "type": "named",
+                  "name": "-e"
+                }
+              ]
+            }
+          ],
+          "remotes": [
+            {
+              "type": "streamable-http",
+              "url": "https://api.githubcopilot.com/mcp/",
+              "headers": [
+                {
+                  "description": "Authorization header with authentication token (PAT or App token)",
+                  "isSecret": true,
+                  "name": "Authorization"
+                }
+              ]
+            }
+          ]
+        },
+        "_meta": {
+          "io.modelcontextprotocol.registry/official": {
+            "status": "active",
+            "statusChangedAt": "2026-10-08T11:29:07.276109Z",
+            "publishedAt": "2026-10-08T11:29:07.276109Z",
+            "updatedAt": "2026-10-08T11:29:07.276109Z",
+            "isLatest": true
+          }
+        }
+      }
+    },
+    "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.github%2Fgithub-mcp-server/versions/latest": {
+      "contentType": "application/json",
+      "status": 200,
+      "json": {
+        "server": {
+          "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+          "name": "io.github.github/github-mcp-server",
+          "description": "Connect AI assistants to GitHub - manage repos, issues, PRs, and workflows through natural language.",
+          "title": "GitHub",
+          "repository": {
+            "url": "https://github.com/github/github-mcp-server",
+            "source": "github"
+          },
+          "version": "2.0.2",
+          "packages": [
+            {
+              "registryType": "oci",
+              "identifier": "ghcr.io/github/github-mcp-server:2.0.2",
+              "transport": {
+                "type": "stdio"
+              },
+              "runtimeArguments": [
+                {
+                  "description": "Publish the OAuth callback port to loopback so the in-container login callback is reachable",
+                  "value": "127.0.0.1:8085:8085",
+                  "type": "named",
+                  "name": "-p"
+                },
+                {
+                  "description": "Fixed OAuth callback port, matching the published port above",
+                  "value": "GITHUB_OAUTH_CALLBACK_PORT=8085",
+                  "type": "named",
+                  "name": "-e"
+                },
+                {
+                  "description": "Optional GitHub Personal Access Token. Omit to log in with OAuth on first use.",
+                  "value": "GITHUB_PERSONAL_ACCESS_TOKEN={token}",
+                  "variables": {
+                    "token": {
+                      "format": "string",
+                      "isSecret": true
+                    }
+                  },
+                  "type": "named",
+                  "name": "-e"
+                }
+              ]
+            }
+          ],
+          "remotes": [
+            {
+              "type": "streamable-http",
+              "url": "https://api.githubcopilot.com/mcp/",
+              "headers": [
+                {
+                  "description": "Authorization header with authentication token (PAT or App token)",
+                  "isSecret": true,
+                  "name": "Authorization"
+                }
+              ]
+            }
+          ]
+        },
+        "_meta": {
+          "io.modelcontextprotocol.registry/official": {
+            "status": "active",
+            "statusChangedAt": "2026-10-08T11:29:07.276109Z",
+            "publishedAt": "2026-10-08T11:29:07.276109Z",
+            "updatedAt": "2026-10-08T11:29:07.276109Z",
+            "isLatest": true
+          }
+        }
+      }
+    },
+    "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.shelfkit-test%2Fno-such-server/versions/latest": {
+      "contentType": "application/problem+json",
+      "status": 404,
+      "json": {
+        "title": "Not Found",
+        "status": 404,
+        "detail": "Server not found"
+      }
+    },
+    "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.github%2Fgithub-mcp-server&version=latest&limit=30": {
+      "contentType": "application/json",
+      "status": 200,
+      "json": {
+        "servers": [
+          {
+            "server": {
+              "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+              "name": "io.github.github/github-mcp-server",
+              "description": "Connect AI assistants to GitHub - manage repos, issues, PRs, and workflows through natural language.",
+              "title": "GitHub",
+              "repository": {
+                "url": "https://github.com/github/github-mcp-server",
+                "source": "github"
+              },
+              "version": "2.0.2",
+              "packages": [
+                {
+                  "registryType": "oci",
+                  "identifier": "ghcr.io/github/github-mcp-server:2.0.2",
+                  "transport": {
+                    "type": "stdio"
+                  },
+                  "runtimeArguments": [
+                    {
+                      "description": "Publish the OAuth callback port to loopback so the in-container login callback is reachable",
+                      "value": "127.0.0.1:8085:8085",
+                      "type": "named",
+                      "name": "-p"
+                    },
+                    {
+                      "description": "Fixed OAuth callback port, matching the published port above",
+                      "value": "GITHUB_OAUTH_CALLBACK_PORT=8085",
+                      "type": "named",
+                      "name": "-e"
+                    },
+                    {
+                      "description": "Optional GitHub Personal Access Token. Omit to log in with OAuth on first use.",
+                      "value": "GITHUB_PERSONAL_ACCESS_TOKEN={token}",
+                      "variables": {
+                        "token": {
+                          "format": "string",
+                          "isSecret": true
+                        }
+                      },
+                      "type": "named",
+                      "name": "-e"
+                    }
+                  ]
+                }
+              ],
+              "remotes": [
+                {
+                  "type": "streamable-http",
+                  "url": "https://api.githubcopilot.com/mcp/",
+                  "headers": [
+                    {
+                      "description": "Authorization header with authentication token (PAT or App token)",
+                      "isSecret": true,
+                      "name": "Authorization"
+                    }
+                  ]
+                }
+              ]
+            },
+            "_meta": {
+              "io.modelcontextprotocol.registry/official": {
+                "status": "active",
+                "statusChangedAt": "2026-10-08T11:29:07.276109Z",
+                "publishedAt": "2026-10-08T11:29:07.276109Z",
+                "updatedAt": "2026-10-08T11:29:07.276109Z",
+                "isLatest": true
+              }
+            }
+          }
+        ],
+        "metadata": {
+          "count": 1
+        }
+      }
+    }
+  }
+}

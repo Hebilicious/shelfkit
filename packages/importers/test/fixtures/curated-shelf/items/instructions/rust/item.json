@@ -1,0 +1,19 @@
+{
+  "description": "Rust programming language coding conventions and best practices",
+  "id": "rust",
+  "source": {
+    "creditText": "github/awesome-copilot: instructions/rust.instructions.md (MIT)",
+    "id": "awesome-copilot",
+    "license": "MIT",
+    "licenseId": "MIT",
+    "linkTarget": "https://github.com/github/awesome-copilot",
+    "path": "instructions/rust.instructions.md",
+    "recordUrl": "https://github.com/github/awesome-copilot/blob/cb64ad12e32737ae764becd6885462e9b4c7cb00/instructions/rust.instructions.md",
+    "ref": "cb64ad12e32737ae764becd6885462e9b4c7cb00",
+    "repo": "https://github.com/github/awesome-copilot",
+    "resolvedCommit": "cb64ad12e32737ae764becd6885462e9b4c7cb00",
+    "shareAlike": false
+  },
+  "title": "Rust",
+  "kind": "instructions"
+}

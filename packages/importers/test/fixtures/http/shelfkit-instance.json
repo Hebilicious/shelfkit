@@ -1,0 +1,108 @@
+{
+  "recorded": "2026-10-19",
+  "responses": {
+    "POST https://shelfkit.hebilicious.workers.dev/graphql {\"query\":\"query ItemRevision($shelf: ID!, $item: ID!) {\\n  shelf(id: $shelf) { item(id: $item) { revision } }\\n}\",\"variables\":{\"item\":\"commit-style\",\"shelf\":\"hebilicious\"}}": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "data": {
+          "shelf": {
+            "item": {
+              "revision": "sha256-e6f6820f03519e7e1928fefb50a2cd6206d17d48a608376b89448becf7db18b4"
+            }
+          }
+        }
+      },
+      "status": 200
+    },
+    "POST https://shelfkit.hebilicious.workers.dev/graphql {\"query\":\"query ItemRevision($shelf: ID!, $item: ID!) {\\n  shelf(id: $shelf) { item(id: $item) { revision } }\\n}\",\"variables\":{\"item\":\"no-such-item\",\"shelf\":\"hebilicious\"}}": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "data": {
+          "shelf": {
+            "item": null
+          }
+        }
+      },
+      "status": 200
+    },
+    "POST https://shelfkit.hebilicious.workers.dev/graphql {\"query\":\"query ItemSummary($shelf: ID!, $item: ID!) {\\n  shelf(id: $shelf) { item(id: $item) { id kind title revision source } }\\n}\",\"variables\":{\"item\":\"commit-style\",\"shelf\":\"hebilicious\"}}": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "data": {
+          "shelf": {
+            "item": {
+              "id": "commit-style",
+              "kind": "prompt",
+              "title": "Commit message",
+              "revision": "sha256-e6f6820f03519e7e1928fefb50a2cd6206d17d48a608376b89448becf7db18b4",
+              "source": null
+            }
+          }
+        }
+      },
+      "status": 200
+    },
+    "POST https://shelfkit.hebilicious.workers.dev/graphql {\"query\":\"query Shelf($shelf: ID!) {\\n  shelf(id: $shelf) {\\n    profiles { id title }\\n    items(limit: 500) { nodes { item { id kind title revision source } } }\\n  }\\n}\",\"variables\":{\"shelf\":\"hebilicious\"}}": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "data": {
+          "shelf": {
+            "profiles": [
+              {
+                "id": "default",
+                "title": "ShelfKit development"
+              }
+            ],
+            "items": {
+              "nodes": [
+                {
+                  "item": {
+                    "id": "typescript-strict",
+                    "kind": "library",
+                    "title": "TypeScript strictness",
+                    "revision": "sha256-c7601ef15701cb30d9f483b72a5fb06477ed7e70b6d3d7afe069da6700d065d9",
+                    "source": null
+                  }
+                },
+                {
+                  "item": {
+                    "id": "commit-style",
+                    "kind": "prompt",
+                    "title": "Commit message",
+                    "revision": "sha256-e6f6820f03519e7e1928fefb50a2cd6206d17d48a608376b89448becf7db18b4",
+                    "source": null
+                  }
+                },
+                {
+                  "item": {
+                    "id": "shelfkit-stack",
+                    "kind": "stack",
+                    "title": "TypeScript on Cloudflare Workers with Rust core",
+                    "revision": "sha256-fe854ffafad0ce416b6fac3edca2028d5c58da6361b1f3826c128bde723c476f",
+                    "source": null
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "status": 200
+    },
+    "https://shelfkit.hebilicious.workers.dev/apm/v1/packages/hebilicious/default/versions": {
+      "contentType": "application/json; charset=utf-8",
+      "json": {
+        "package": "hebilicious/default",
+        "versions": [
+          {
+            "digest": "sha256:e241aaca4bf74bee632aef3771900b12e66c383efeb912aa0976c5f4d6f07606",
+            "published_at": "2026-10-19T09:07:43Z",
+            "size_bytes": 1384,
+            "version": "0.0.0+sha256.5442bb8baa8df9529c0fb9ec3a2522aad89704c95f5455ac5b109386c7219de6"
+          }
+        ]
+      },
+      "status": 200
+    }
+  }
+}

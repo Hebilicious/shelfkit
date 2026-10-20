@@ -3,9 +3,9 @@
 //! Only the `path` source kind is here (`docs/PRD.md` section 6, last row):
 //! discovery reads APM's package layouts from a directory on this machine and
 //! copies what it finds into the shelf as items with no upstream, marked
-//! local by a `source` that names a `path` source in `shelf.json`. Git
-//! repositories, registries, catalogs, marketplaces, and other shelves arrive
-//! with their source adapters in issue #8. Nothing here touches the network.
+//! local by a `source` that names a `path` source in `shelf.json`. Nothing
+//! here touches the network: every other source kind is imported by the
+//! hosted service's import job (`add_remote.rs`).
 //!
 //! What a directory yields, following APM's layouts:
 //!
@@ -390,17 +390,4 @@ fn sorted_dirs(dir: &Path) -> Vec<PathBuf> {
 
 fn sorted_files(dir: &Path) -> Vec<PathBuf> {
     sorted_entries(dir, false)
-}
-
-/// The source kinds `add` cannot import yet, by how their argument looks.
-pub fn unsupported_kind(source: &str) -> Option<&'static str> {
-    if source.starts_with("https://") || source.starts_with("http://") {
-        Some(
-            "a URL (a Git repository, an APM registry, a catalog, a marketplace, or another shelf)",
-        )
-    } else if source.starts_with("git@") || source.starts_with("ssh://") {
-        Some("a Git repository")
-    } else {
-        None
-    }
 }

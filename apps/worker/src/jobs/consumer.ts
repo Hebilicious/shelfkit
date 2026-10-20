@@ -5,9 +5,11 @@
 import { adapterFor, adapters, scanners } from "@shelfkit/importers";
 import type {
   AdapterContext,
+  ImportSource,
   SourceAdapter,
   Scanner,
 } from "@shelfkit/importers";
+import type { ShelfSource } from "@shelfkit/schema";
 import * as v from "valibot";
 
 import { listShelves, shelfStub } from "../auth/index.ts";
@@ -225,6 +227,38 @@ async function applyImport(
   }
 }
 
+/**
+ * A `fetch` that answers each GET once for the life of one job: items of one repository or catalog share their
+ * lookups. Keyed by URL and credential, so an answer read with a token never serves a request without one. Nothing
+ * outlives the job.
+ */
+export function memoizedGets(fetcher: typeof fetch): typeof fetch {
+  const answers = new Map<string, Promise<Response>>();
+  return async (input, init) => {
+    const request = new Request(input, init);
+    if (request.method !== "GET") {
+      return await fetcher(input, init);
+    }
+    const key = `${request.headers.get("authorization") ?? ""}\n${request.url}`;
+    const answer = answers.get(key) ?? fetcher(input, init);
+    answers.set(key, answer);
+    const response = await answer;
+    return response.clone();
+  };
+}
+
+/** A `shelf.json` source as the import seam reads it. */
+function asImportSource(declared: ShelfSource): ImportSource {
+  const source: ImportSource = { kind: declared.kind, sourceId: declared.id };
+  for (const key of ["path", "profile", "repo", "secret", "url"] as const) {
+    const value = declared[key];
+    if (value !== undefined) {
+      source[key] = value;
+    }
+  }
+  return source;
+}
+
 /** Check every imported item's upstream for drift. */
 async function checkUpstream(
   message: JobOf<"upstream.check">,
@@ -234,6 +268,7 @@ async function checkUpstream(
   const session: Session = { job: message.type, kind: "system" };
   const stub = shelfStub(env, message.shelf);
   const bindings = await stub.secretBindings(session, message.shelf);
+  const job = { ...dependencies, fetch: memoizedGets(dependencies.fetch) };
   for (const imported of await stub.importedItems(session, message.shelf)) {
     const adapter =
       imported.sourceKind === null
@@ -243,15 +278,20 @@ async function checkUpstream(
       continue;
     }
     try {
+      const declared =
+        imported.declared === null
+          ? undefined
+          : asImportSource(imported.declared);
       // oxlint-disable-next-line eslint/no-await-in-loop -- one upstream at a time, to be gentle with each source.
       const state = await adapter.checkUpstream(
         imported.item,
         adapterContext(
           env,
-          dependencies,
+          job,
           bindings,
-          sourceDestination(imported.item.source ?? {})
-        )
+          sourceDestination(declared ?? imported.item.source ?? {})
+        ),
+        declared
       );
       // oxlint-disable-next-line eslint/no-await-in-loop -- recorded as it is learned.
       await stub.recordUpstream(session, message.shelf, imported.id, state);
@@ -297,6 +337,10 @@ async function scanItem(
       // A scanner reads what it is given and is given no secret.
       adapterContext(env, dependencies, [], null)
     );
+    if (verdict === null) {
+      // The scanner does not cover this item: no verdict, so the revision stays unscanned.
+      continue;
+    }
     // oxlint-disable-next-line eslint/no-await-in-loop -- recorded as it arrives.
     await stub.recordScan(
       session,

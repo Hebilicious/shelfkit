@@ -1,0 +1,38 @@
+{
+  "$schema": "https://shelfkit.dev/schemas/shelf.json",
+  "defaultProfile": "default",
+  "description": "M4's exit criterion: a shelf of curated, pinned imports from five public sources, one of them another ShelfKit instance.",
+  "name": "curated",
+  "registry": {
+    "namespace": "curated",
+    "public": true
+  },
+  "sources": [
+    {
+      "id": "anthropics",
+      "kind": "git",
+      "repo": "https://github.com/anthropics/skills"
+    },
+    {
+      "id": "awesome-copilot",
+      "kind": "git",
+      "repo": "https://github.com/github/awesome-copilot"
+    },
+    {
+      "id": "mcp-registry",
+      "kind": "catalog",
+      "url": "https://registry.modelcontextprotocol.io"
+    },
+    {
+      "id": "clawhub",
+      "kind": "catalog",
+      "url": "https://clawhub.ai"
+    },
+    {
+      "id": "hebilicious",
+      "kind": "shelfkit",
+      "path": "hebilicious",
+      "url": "https://shelfkit.hebilicious.workers.dev"
+    }
+  ]
+}

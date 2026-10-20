@@ -96,6 +96,9 @@ catalogs:
     wrangler:
       specifier: 4.134.0
       version: 4.134.0
+    yaml:
+      specifier: 2.9.1
+      version: 2.9.1
 
 importers:
 
@@ -242,7 +245,13 @@ importers:
       valibot:
         specifier: 'catalog:'
         version: 1.5.0(typescript@5.9.3)
+      yaml:
+        specifier: 'catalog:'
+        version: 2.9.1
     devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.1
       typescript:
         specifier: 'catalog:'
         version: 5.9.3

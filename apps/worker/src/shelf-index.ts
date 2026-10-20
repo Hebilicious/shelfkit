@@ -17,6 +17,7 @@ import {
   ImportSourceSchema,
   PickSchema,
   ScanVerdictSchema,
+  sourceKindOf,
   UpstreamStateSchema,
 } from "@shelfkit/importers";
 import type {
@@ -39,6 +40,7 @@ import type {
   Bundle,
   Inventory,
   Item,
+  ShelfSource,
   SourceKind,
   ItemSummary,
   Markers,
@@ -2978,7 +2980,7 @@ export class ShelfIndex extends DurableObject<Env> {
 
   /**
    * The imported items (those with a `source`), for the upstream check, each with the kind of its source: the kind of
-   * the `shelf.json` source its `source.id` names, else `git` for a `source.repo`, else `null`.
+   * the `shelf.json` source its `source.id` names, else the kind its own `source` shows (`sourceKindOf`).
    */
   importedItems(
     session: Session,
@@ -2988,6 +2990,7 @@ export class ShelfIndex extends DurableObject<Env> {
     readonly revision: string;
     readonly item: Item;
     readonly sourceKind: SourceKind | null;
+    readonly declared: ShelfSource | null;
   }[] {
     if (session.kind !== "system" || this.shelfId() !== shelf) {
       return [];
@@ -3002,11 +3005,12 @@ export class ShelfIndex extends DurableObject<Env> {
         if (source === undefined) {
           return [];
         }
-        const declared = sources.find((entry) => entry.id === source.id)?.kind;
-        const sourceKind =
-          declared ?? (source.repo === undefined ? null : "git");
+        const declared =
+          sources.find((entry) => entry.id === source.id) ?? null;
+        const sourceKind = declared?.kind ?? sourceKindOf(source);
         return [
           {
+            declared,
             id: row.id,
             item: row.document,
             revision: row.revision,
@@ -3027,11 +3031,21 @@ export class ShelfIndex extends DurableObject<Env> {
       return false;
     }
     const parsed = v.parse(UpstreamStateSchema, state);
+    const known = this.db
+      .select()
+      .from(table.upstream)
+      .where(eq(table.upstream.itemId, itemId))
+      .get();
+    // A check that failed says nothing about upstream: it keeps the last status and pin it learned, beside the error.
+    const kept =
+      parsed.status === "error" &&
+      known !== undefined &&
+      known.status !== "error";
     const row = {
       checkedAt: now(),
       error: parsed.error ?? null,
-      latest: parsed.latest ?? null,
-      status: parsed.status,
+      latest: kept ? known.latest : (parsed.latest ?? null),
+      status: kept ? known.status : parsed.status,
     };
     this.db
       .insert(table.upstream)

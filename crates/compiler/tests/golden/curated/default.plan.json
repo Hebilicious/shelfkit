@@ -1,0 +1,28 @@
+{
+  "profile": "default",
+  "profileRevision": "sha256-56e94ada4ff635ff2ec8c3b62846d7caa7b17801229a74ba24bb945025f3fa96",
+  "apmYml": "name: default\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - copilot\nregistries:\n  hebilicious:\n    url: \"https://shelfkit.hebilicious.workers.dev/apm\"\n  default: hebilicious\ndependencies:\n  apm:\n    - git: anthropics/skills/skills/brand-guidelines\n      ref: dbd4588f9e1033efb41dad4bef2f7947c8993d44\n    - git: github/awesome-copilot/agents/CSharpExpert.agent.md\n      ref: cb64ad12e32737ae764becd6885462e9b4c7cb00\n    - id: hebilicious/default\n      version: 0.0.0+sha256.5442bb8baa8df9529c0fb9ec3a2522aad89704c95f5455ac5b109386c7219de6\n    - git: github/awesome-copilot/instructions/rust.instructions.md\n      ref: cb64ad12e32737ae764becd6885462e9b4c7cb00\n    - ./vendor/default\n  mcp:\n    - name: io.github.github/github-mcp-server\n      registry: false\n      transport: streamable-http\n      url: \"https://api.githubcopilot.com/mcp/\"\n      headers:\n        Authorization: \"${GITHUB_MCP_SERVER_AUTHORIZATION}\"\n",
+  "apmYmlDigest": "sha256:a28359ea7dc33cb51e874ca0cdf400f18e61f43d9431197df2954365ceb0f262",
+  "files": [
+    {
+      "path": "vendor/default/.apm/skills/github/SKILL.md",
+      "contents": "---\nname: github\ndescription: \"Interact with GitHub using the `gh` CLI. Use `gh issue`, `gh pr`, `gh run`, and `gh api` for issues, PRs, CI runs, and advanced queries.\"\n---\n\n# GitHub Skill\n\nUse the `gh` CLI to interact with GitHub. Always specify `--repo owner/repo` when not in a git directory, or use URLs directly.\n\n## Pull Requests\n\nCheck CI status on a PR:\n```bash\ngh pr checks 55 --repo owner/repo\n```\n\nList recent workflow runs:\n```bash\ngh run list --repo owner/repo --limit 10\n```\n\nView a run and see which steps failed:\n```bash\ngh run view <run-id> --repo owner/repo\n```\n\nView logs for failed steps only:\n```bash\ngh run view <run-id> --repo owner/repo --log-failed\n```\n\n## API for Advanced Queries\n\nThe `gh api` command is useful for accessing data not available through other subcommands.\n\nGet PR with specific fields:\n```bash\ngh api repos/owner/repo/pulls/55 --jq '.title, .state, .user.login'\n```\n\n## JSON Output\n\nMost commands support `--json` for structured output.  You can use `--jq` to filter:\n\n```bash\ngh issue list --repo owner/repo --json number,title --jq '.[] | \"\\(.number): \\(.title)\"'\n```\n"
+    },
+    {
+      "path": "vendor/default/.apm/skills/github/skill-card.md",
+      "contents": "## Description:\n\nInteract with GitHub using the `gh` CLI. Use `gh issue`, `gh pr`, `gh run`, and `gh api` for issues, PRs, CI runs, and advanced queries.\n\nThis skill is ready for commercial/non-commercial use.\n\n## Publisher:\n\n[steipete](https://clawhub.ai/user/steipete)\n\n### License/Terms of Use:\n\n\n## Use Case:\n\nDevelopers and engineers use this skill to have an agent work with GitHub issues, pull requests, workflow runs, and API queries through the GitHub CLI.\n\n### Deployment Geography for Use:\n\nGlobal\n\n## Known Risks and Mitigations:\n\nRisk: The skill may guide an agent to use an authenticated GitHub CLI session to change issues, pull requests, workflows, or repository settings.\n\nMitigation: Review commands that mutate GitHub resources before allowing execution.\n\n## Reference(s):\n\n\n## Skill Output:\n\n**Output Type(s):** [Shell commands, API calls, Guidance]\n\n**Output Format:** [Markdown guidance with inline shell command examples]\n\n**Output Parameters:** [1D]\n\n**Other Properties Related to Output:** [Commands rely on the user's authenticated GitHub CLI context and should be reviewed before execution.]\n\n## Skill Version(s):\n\n1.0.0 (source: server release metadata)\n\n## Ethical Considerations:\n\nUsers should evaluate whether this skill is appropriate for their environment, review any generated or modified files before relying on them, and apply their organization's safety, security, and compliance requirements before deployment.\n"
+    },
+    {
+      "path": "vendor/default/apm.yml",
+      "contents": "name: default\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile default, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\nx-shelfkit-vendored-for: default\n"
+    }
+  ],
+  "installCommand": "apm experimental enable registries && apm install",
+  "notes": [
+    {
+      "path": "items/mcp/github-mcp-server/item.json",
+      "code": "mcp-schema-mismatch",
+      "message": "`github-mcp-server` compiles to a `dependencies.mcp` object, the form APM documents, which the published OpenAPM v0.1 JSON Schema rejects for every MCP object; the spec's prose is authoritative, so the entry is validated against APM 0.33.0's own MCP entry rules (schemas/apm-mcp-entry.schema.json) instead"
+    }
+  ]
+}
