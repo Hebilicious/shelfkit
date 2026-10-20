@@ -15,6 +15,8 @@
 //!   the Worker.
 //! - [`merge`] fits a compiled manifest into a repository's existing
 //!   `apm.yml`, honouring `onConflict`.
+//! - [`output`] works out what `compile` writes into and removes from a
+//!   repository, from the CLI's view of the disk or a host's snapshot.
 //! - `schema` (native builds) validates manifests against the vendored
 //!   OpenAPM v0.1 JSON Schema.
 //! - `cli` (the `cli` feature) is the `shelfkit` command line.
@@ -27,6 +29,7 @@ pub mod coordinate;
 pub mod engine;
 pub mod manifest;
 pub mod merge;
+pub mod output;
 pub mod package;
 pub mod recommend;
 #[cfg(feature = "schema")]

@@ -20,7 +20,7 @@
 use crate::coordinate::{self, Upstream};
 use crate::vendor;
 use crate::yaml::{self, Node};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use shelfkit_core::item::{Lsp, LspTransport, Mcp, RemoteTransport};
 use shelfkit_core::secret::SecretValue;
@@ -74,12 +74,13 @@ impl CompiledManifest {
 }
 
 /// A file the compiler wants written into the target repository.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VendorFile {
     pub path: String,
     /// The text, or base64 when `encoding` says so.
     pub contents: String,
-    #[serde(skip_serializing_if = "Encoding::is_utf8")]
+    #[serde(default, skip_serializing_if = "Encoding::is_utf8")]
     pub encoding: Encoding,
 }
 
@@ -112,8 +113,9 @@ impl VendorFile {
 /// How a vendored file's `contents` are written. Text is the default and is
 /// left out of the JSON; a file that is not UTF-8 (an image in a skill) is
 /// base64.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Encoding {
+    #[default]
     #[serde(rename = "utf-8")]
     Utf8,
     #[serde(rename = "base64")]

@@ -48,6 +48,22 @@
 //! - `shelfkit_recommend()`: `{ "files", "markers": { "files"?,
 //!   "dependencies"?, "packageManager"? } }`; the output is what `shelfkit
 //!   recommend --json` prints, or `1` and the errors.
+//! - `shelfkit_output()`: `{ "plan", "onConflict"?, "repo" }`, where `plan` is
+//!   a plan as `shelfkit_plan` answers it (only `profile`, `apmYml`, and
+//!   `files` are read), `onConflict` is `fail` (the default), `shelf-wins`,
+//!   or `local-wins`, and `repo` is the repository as
+//!   `shelfkit_compiler::output::Snapshot` describes it: `{ "apmYml"?,
+//!   "vendor": [{ "name", "apmYml"?, "files": [path relative to the
+//!   package] }], "links"?: [path], "undecodable"?: [path] }`. The output
+//!   is what `shelfkit compile --repo` would do: `{ "write": [{ "path",
+//!   "contents", "encoding" }], "remove": [path], "prune": [directory],
+//!   "conflicts": [declaration], "refused": [reason] }`, where `prune` lists
+//!   the directories to remove, deepest first and only if empty, after
+//!   `remove`. When `refused` is not empty, nothing may be written, and
+//!   `write`, `remove`, and `prune` are empty. A plan file outside
+//!   `vendor/<package>/` is refused. An `apm.yml` that is not a manifest, or that
+//!   conflicts under `fail`, is `1` and one error on `apm.yml`, worded as the
+//!   CLI words it.
 //! - `shelfkit_registry_prepare()`: `{ "method", "path", "mount"?,
 //!   "authorization"? }`, where `path` is the whole request path and `mount`
 //!   the part the registry's base URL adds (`/apm`; empty by default).
@@ -67,9 +83,12 @@
 //! `shelfkit_abi_version()` changes whenever any of this does.
 
 use serde::{Deserialize, Serialize};
+use shelfkit_compiler::VendorFile;
 use shelfkit_compiler::engine::{
     Request, inventory, package_profile, plan, recommend_markers, resolution,
 };
+use shelfkit_compiler::output::{self, Plan, Refusal, Snapshot};
+use shelfkit_core::OnConflict;
 use shelfkit_core::item::Markers;
 use shelfkit_core::{Error, ErrorKind, Errors, FileSource, Listing, MemorySource};
 use shelfkit_registry::protocol::{self, Payload, Prepared};
@@ -89,7 +108,7 @@ pub enum Status {
 }
 
 /// The ABI's version, for a host to check before it calls anything else.
-pub const ABI_VERSION: u32 = 5;
+pub const ABI_VERSION: u32 = 6;
 
 /// The largest request the module accepts, in bytes.
 pub const MAX_INPUT: u32 = 512 * 1024 * 1024;
@@ -158,6 +177,13 @@ pub extern "C" fn shelfkit_resolve() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn shelfkit_recommend() -> u32 {
     exchange(recommend)
+}
+
+/// Plan what compiling into a repository writes; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_output() -> u32 {
+    exchange(repository_output)
 }
 
 /// Step 1 of a registry request; see the crate documentation.
@@ -359,6 +385,101 @@ pub fn recommend(input: &[u8]) -> (Status, Vec<u8>) {
         ),
         Err(errors) => (Status::Failed, failure(errors)),
     }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OutputInput {
+    plan: OutputPlan,
+    #[serde(default)]
+    on_conflict: OnConflict,
+    repo: Snapshot,
+}
+
+/// The parts of a plan that decide what is written; the rest is ignored.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OutputPlan {
+    profile: String,
+    apm_yml: String,
+    files: Vec<VendorFile>,
+}
+
+#[derive(Serialize)]
+struct WriteFile {
+    path: String,
+    contents: String,
+    encoding: &'static str,
+}
+
+#[derive(Serialize, Default)]
+struct OutputAnswer {
+    write: Vec<WriteFile>,
+    remove: Vec<String>,
+    prune: Vec<String>,
+    conflicts: Vec<String>,
+    refused: Vec<String>,
+}
+
+/// What compiling into a repository writes: the output of `shelfkit_output`.
+pub fn repository_output(input: &[u8]) -> (Status, Vec<u8>) {
+    let request: OutputInput = match serde_json::from_slice(input) {
+        Ok(request) => request,
+        Err(error) => return bad_request(format!("not an output request: {error}")),
+    };
+    if let Err(why) = request.repo.validate() {
+        return bad_request(format!("repo: {why}"));
+    }
+    let plan = Plan {
+        profile: &request.plan.profile,
+        apm_yml: &request.plan.apm_yml,
+        files: &request.plan.files,
+    };
+    let answer = match output::output(plan, &request.repo, request.on_conflict) {
+        Ok(out) => OutputAnswer {
+            write: out
+                .files
+                .into_iter()
+                .map(|(path, bytes)| match String::from_utf8(bytes) {
+                    Ok(contents) => WriteFile {
+                        path,
+                        contents,
+                        encoding: "utf-8",
+                    },
+                    Err(error) => WriteFile {
+                        path,
+                        contents: shelfkit_compiler::base64::encode(error.as_bytes()),
+                        encoding: "base64",
+                    },
+                })
+                .collect(),
+            remove: out.remove,
+            prune: out.prune,
+            conflicts: out.conflicts,
+            refused: Vec::new(),
+        },
+        Err(Refusal::Refused(refused)) => OutputAnswer {
+            refused,
+            ..OutputAnswer::default()
+        },
+        Err(Refusal::Plan(why)) => return bad_request(format!("plan: {why}")),
+        Err(refusal) => {
+            let body = Failure {
+                errors: vec![Problem {
+                    path: output::APM_YML.to_owned(),
+                    message: refusal.message("the repository", output::APM_YML),
+                }],
+            };
+            return (
+                Status::Failed,
+                serde_json::to_vec(&body).unwrap_or_default(),
+            );
+        }
+    };
+    (
+        Status::Planned,
+        serde_json::to_vec(&answer).unwrap_or_default(),
+    )
 }
 
 #[derive(Deserialize)]
@@ -738,6 +859,81 @@ mod tests {
             found["items"][0]["matched"]["dependencies"],
             serde_json::json!(["vue"])
         );
+    }
+
+    fn output_request(repo: serde_json::Value, on_conflict: &str) -> Vec<u8> {
+        let (_, plan) = respond(&serde_json::to_vec(&shelf_files()).unwrap());
+        let plan: serde_json::Value = serde_json::from_slice(&plan).unwrap();
+        serde_json::to_vec(
+            &serde_json::json!({ "plan": plan, "onConflict": on_conflict, "repo": repo }),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn plans_the_output_into_a_snapshot() {
+        let repo = serde_json::json!({
+            "vendor": [{
+                "name": "p",
+                "apmYml": "name: p\nx-shelfkit-vendored-for: p\n",
+                "files": [".apm/old/stale.md"]
+            }]
+        });
+        let (status, answer) = repository_output(&output_request(repo, "fail"));
+        assert_eq!(status, Status::Planned);
+        let answer: serde_json::Value = serde_json::from_slice(&answer).unwrap();
+        assert_eq!(answer["write"][0]["path"], "apm.yml");
+        assert_eq!(answer["write"][0]["encoding"], "utf-8");
+        assert_eq!(
+            answer["remove"],
+            serde_json::json!(["vendor/p/.apm/old/stale.md"])
+        );
+        assert_eq!(answer["refused"], serde_json::json!([]));
+        assert_eq!(answer["prune"], serde_json::json!(["vendor/p/.apm/old"]));
+    }
+
+    #[test]
+    fn a_conflicting_manifest_under_fail_is_an_error_on_apm_yml() {
+        let repo = serde_json::json!({ "apmYml": "name: mine\ndependencies:\n  apm:\n    - ./vendor/p#v1\n" });
+        let (status, answer) = repository_output(&output_request(repo.clone(), "fail"));
+        assert_eq!(status, Status::Failed);
+        let answer: serde_json::Value = serde_json::from_slice(&answer).unwrap();
+        assert_eq!(answer["errors"][0]["path"], "apm.yml");
+        let (status, _) = repository_output(&output_request(repo, "local-wins"));
+        assert_eq!(status, Status::Planned);
+        let bad = output_request(serde_json::json!({ "links": ["../out"] }), "fail");
+        assert_eq!(repository_output(&bad).0, Status::BadRequest);
+    }
+
+    #[test]
+    fn a_crafted_plan_writes_nothing_outside_a_package() {
+        let (_, plan) = respond(&serde_json::to_vec(&shelf_files()).unwrap());
+        let mut plan: serde_json::Value = serde_json::from_slice(&plan).unwrap();
+        let crafted = [
+            "../outside.txt",
+            "/etc/evil",
+            "vendor/../.git/hooks/pre-commit",
+            ".github/workflows/x.yml",
+        ];
+        let files = plan["files"].as_array_mut().unwrap();
+        for path in crafted {
+            files.push(serde_json::json!({ "path": path, "contents": "x" }));
+        }
+        let body = serde_json::json!({ "plan": plan, "repo": { "vendor": [] } });
+        let (status, answer) = repository_output(&serde_json::to_vec(&body).unwrap());
+        assert_eq!(status, Status::Planned);
+        let answer: serde_json::Value = serde_json::from_slice(&answer).unwrap();
+        assert_eq!(answer["write"], serde_json::json!([]));
+        let refused = answer["refused"].as_array().unwrap();
+        assert_eq!(refused.len(), crafted.len());
+        for path in crafted {
+            assert!(
+                refused
+                    .iter()
+                    .any(|line| line.as_str().unwrap().contains(&format!("`{path}`"))),
+                "{path}"
+            );
+        }
     }
 
     #[test]

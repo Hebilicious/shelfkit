@@ -12,6 +12,10 @@
  * (`crates/registry`), the same code `shelfkit serve` runs: `registry.prepare` routes a request and reads its
  * credential, the host resolves the key and loads the package's versions, and `registry.respond` decides the status,
  * headers, and body, and what to store on a publish.
+ *
+ * `output` is what `shelfkit compile --repo` writes into a repository, planned from a snapshot of it rather than from the
+ * disk: the browser reads the repository through the File System Access API, hands the engine what it found, and writes
+ * what comes back.
  */
 import {
   CompilePlanSchema,
@@ -33,7 +37,15 @@ import * as v from "valibot";
 export type ProfileDocument = v.InferInput<typeof ProfileSchema>;
 
 /** The ABI this port speaks; the module reports its own through `shelfkit_abi_version`. */
-export const ABI_VERSION = 5;
+export const ABI_VERSION = 6;
+
+export { NOTE_SEVERITY, conflictsOf } from "./conflicts.ts";
+export type {
+  Conflict,
+  ConflictSeverity,
+  Note,
+  PlanOutcome,
+} from "./conflicts.ts";
 
 /** One file of a shelf, by its path relative to the shelf root. Bytes that are not UTF-8 text go as a `Uint8Array`. */
 export type ShelfFile = ShelfContent | ShelfLink;
@@ -109,6 +121,72 @@ export interface PackagedProfile {
 export type PackageResult =
   | { readonly ok: true; readonly packaged: PackagedProfile }
   | NotPlanned;
+
+/** How a declaration the repository's `apm.yml` already makes differently is settled: the profile's `compile.onConflict`. */
+export type OnConflict = ResolvedProfile["compile"]["onConflict"];
+
+/**
+ * A repository, as much of it as `compile` looks at: `crates/compiler/src/output.rs`.
+ *
+ * The File System Access API shows no symbolic links (it follows them, or leaves them out), so a browser cannot see one
+ * and sends no `links`; refusing to write through a link is the CLI's job, reading the disk. A host that can see links
+ * (Node) names each one in `links`.
+ */
+export interface RepositorySnapshot {
+  /** The text of the repository's `apm.yml`, when it has one. */
+  readonly apmYml?: string;
+  /** Every entry of `vendor/`. A plain file there is an entry with no `apmYml` and no files. */
+  readonly vendor: readonly VendorEntry[];
+  /** Every symbolic link at `apm.yml`, `vendor`, or under `vendor/`, by path relative to the repository. */
+  readonly links?: readonly string[];
+  /**
+   * The root `apm.yml` and each package's `apm.yml` that exist but are not UTF-8, by path relative to the repository. The
+   * CLI cannot read them either: the root one is refused, and a package with one is never ShelfKit's. Decode with
+   * `new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })`, never lossily.
+   */
+  readonly undecodable?: readonly string[];
+}
+
+/** One entry of `vendor/`. */
+export interface VendorEntry {
+  /** Its name under `vendor/`. */
+  readonly name: string;
+  /** The text of its `apm.yml`, when it has one. */
+  readonly apmYml?: string;
+  /**
+   * Every file in it, relative to it; `apm.yml` is implied by `apmYml`. Only read for a package whose `apm.yml` carries
+   * `x-shelfkit-vendored-for` for the profile compiled, so a host may leave it empty for any other.
+   */
+  readonly files: readonly string[];
+}
+
+/** A file to write, relative to the repository. `contents` is base64 when `encoding` says so. */
+export interface WriteFile {
+  readonly path: string;
+  readonly contents: string;
+  readonly encoding: "utf-8" | "base64";
+}
+
+/** What `shelfkit compile --repo` would do to the repository. */
+export interface RepositoryOutput {
+  /** Every file to write, sorted by path, `apm.yml` included. */
+  readonly write: readonly WriteFile[];
+  /** Stale files of ShelfKit's own packages, to delete. */
+  readonly remove: readonly string[];
+  /**
+   * Directories to remove after `remove`, deepest first: those the removals leave with no file, never `vendor/` itself.
+   * Remove each only if it is empty (a non-recursive remove), as the CLI does: a snapshot cannot show an empty
+   * directory inside, which keeps its parent.
+   */
+  readonly prune: readonly string[];
+  /** Declarations the repository's `apm.yml` made differently, settled by `onConflict`. */
+  readonly conflicts: readonly string[];
+  /**
+   * Why nothing may be written. When this is not empty, `write`, `remove`, and `prune` are. A plan file outside
+   * `vendor/<package>/` (a crafted plan) is refused here.
+   */
+  readonly refused: readonly string[];
+}
 
 /** A response the host sends. An `archive` body is the stored bytes of that package version. */
 export interface RegistryResponse {
@@ -233,6 +311,16 @@ export interface Engine {
     files: readonly ShelfFile[],
     options?: { readonly profile?: string }
   ) => PackageResult;
+  /**
+   * What compiling `plan` into the repository writes and removes, as `shelfkit compile --repo` works it out. `onConflict`
+   * defaults to `fail`; pass the resolved profile's `compile.onConflict` to do what the CLI does without
+   * `--on-conflict`. An `apm.yml` that is not a manifest, or that conflicts under `fail`, is one error on `apm.yml`.
+   */
+  readonly output: (
+    plan: CompilePlan,
+    repo: RepositorySnapshot,
+    onConflict?: OnConflict
+  ) => EngineResult<RepositoryOutput>;
   /** The OpenAPM Registry HTTP API's decisions, for a host that does the I/O. */
   readonly registry: Registry;
 }
@@ -247,6 +335,7 @@ interface Abi {
   readonly shelfkit_inventory: () => number;
   readonly shelfkit_resolve: () => number;
   readonly shelfkit_recommend: () => number;
+  readonly shelfkit_output: () => number;
   readonly shelfkit_registry_prepare: () => number;
   readonly shelfkit_registry_respond: () => number;
   readonly shelfkit_output_ptr: () => number;
@@ -270,6 +359,7 @@ const FUNCTIONS = [
   "shelfkit_inventory",
   "shelfkit_resolve",
   "shelfkit_recommend",
+  "shelfkit_output",
   "shelfkit_registry_prepare",
   "shelfkit_registry_respond",
   "shelfkit_output_ptr",
@@ -360,6 +450,20 @@ export async function createEngine(
         InventorySchema
       )
     ),
+    output: guarded(
+      (
+        instance: Abi,
+        plan: CompilePlan,
+        repo: RepositorySnapshot,
+        onConflict: OnConflict = "fail"
+      ) =>
+        engineCall(
+          instance,
+          instance.shelfkit_output,
+          { onConflict, plan, repo },
+          RepositoryOutputSchema
+        )
+    ),
     packageProfile: guarded(packageProfile),
     planCompile: guarded(
       (instance: Abi, files: readonly ShelfFile[], options: PlanOptions = {}) =>
@@ -407,6 +511,37 @@ function shelfCall<const TSchema extends v.GenericSchema>(
   abi: Abi,
   run: () => number,
   request: ShelfRequest,
+  schema: TSchema
+): EngineResult<v.InferOutput<TSchema>> {
+  return engineCall(abi, run, request, schema);
+}
+
+/** What `shelfkit_output` reads. */
+interface OutputRequest {
+  readonly plan: CompilePlan;
+  readonly onConflict: OnConflict;
+  readonly repo: RepositorySnapshot;
+}
+
+const RepositoryOutputSchema = v.strictObject({
+  conflicts: v.array(v.string()),
+  prune: v.array(v.string()),
+  refused: v.array(v.string()),
+  remove: v.array(v.string()),
+  write: v.array(
+    v.strictObject({
+      contents: v.string(),
+      encoding: v.picklist(["utf-8", "base64"]),
+      path: v.string(),
+    })
+  ),
+});
+
+/** Status 0 and the output, 1 and the errors, each in its file, or 2 for a malformed request, which throws. */
+function engineCall<const TSchema extends v.GenericSchema>(
+  abi: Abi,
+  run: () => number,
+  request: ShelfRequest | OutputRequest,
   schema: TSchema
 ): EngineResult<v.InferOutput<TSchema>> {
   const status = call(abi, run, JSON.stringify(request));
