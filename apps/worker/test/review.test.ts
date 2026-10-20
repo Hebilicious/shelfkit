@@ -349,11 +349,18 @@ describe("5. a request for a shelf that does not exist", () => {
   it("lists every shelf, across R2's pages", async () => {
     await Promise.all(
       Array.from(
-        { length: 1005 },
+        { length: 5 },
         async (_, index) => await env.BLOBS.put(`shelves/s-${index}`, "{}")
       )
     );
-    await expect(listShelves(env)).resolves.toHaveLength(1005);
+    // Pages of two: three pages, the last one short.
+    await expect(listShelves(env, 2)).resolves.toStrictEqual([
+      "s-0",
+      "s-1",
+      "s-2",
+      "s-3",
+      "s-4",
+    ]);
   });
 });
 

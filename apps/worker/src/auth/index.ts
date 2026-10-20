@@ -142,13 +142,23 @@ export async function shelfExists(env: Env, shelf: string): Promise<boolean> {
   return (await env.BLOBS.head(`${SHELF_MARKERS}${shelf}`)) !== null;
 }
 
-/** Every shelf the deployment holds, from the markers, every page of them. */
-export async function listShelves(env: Env): Promise<string[]> {
+/**
+ * Every shelf the deployment holds, from the markers, every page of them. `pageSize` is R2's own page size unless a
+ * test asks for a smaller one, so crossing a page takes a few markers rather than a thousand.
+ */
+export async function listShelves(
+  env: Env,
+  pageSize?: number
+): Promise<string[]> {
   const shelves: string[] = [];
   let cursor: string | undefined;
   do {
     // oxlint-disable-next-line eslint/no-await-in-loop -- R2 lists a page at a time, each after the last.
-    const page = await env.BLOBS.list({ cursor, prefix: SHELF_MARKERS });
+    const page = await env.BLOBS.list({
+      cursor,
+      limit: pageSize,
+      prefix: SHELF_MARKERS,
+    });
     shelves.push(
       ...page.objects.map((object) => object.key.slice(SHELF_MARKERS.length))
     );
