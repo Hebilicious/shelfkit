@@ -72,7 +72,7 @@ describe("a key", () => {
     const key = await createKey("acme", ["read", "publish:acme/*"]);
     await expect(surfaces(key.secret)).resolves.toStrictEqual({
       graphql: 200,
-      mcp: 501,
+      mcp: 400,
       raw: 404,
       registry: 404,
     });

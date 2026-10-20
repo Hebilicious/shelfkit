@@ -65,6 +65,7 @@ tasks:
     deps:
       - "web:build"
       - "engine:build"
+      - "mcp-conform"
     inputs:
       - "@group(sources)"
       - "test/**/*"
@@ -72,6 +73,14 @@ tasks:
       - "/crates/registry/conformance/**/*"
       - "/crates/core/tests/fixtures/all-kinds/**/*"
       - "/shelf/**/*"
+
+  mcp-conform:
+    description: "Run acid-cat conform against the /mcp composition (AcidCat's binding plus the relay), in Node."
+    command: "node_modules/.bin/vitest run --config test/mcp/conform.config.ts"
+    inputs:
+      - "src/mcp/**/*"
+      - "test/mcp/**/*"
+      - "/packages/schema/src/**/*"
 
   graphql-schema:
     description: "Print the GraphQL schema to schema.graphql, the SDL clients build against."

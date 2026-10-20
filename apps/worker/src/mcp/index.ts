@@ -1,39 +1,64 @@
 /**
- * The MCP endpoint, `/mcp`: issue #6 fills this in. It is a stateless fetch handler on MCP spec revision 2026-07-28,
- * serving the six capabilities in `packages/schema/src/capabilities.ts` through AcidCat's MCP binding, plus the
- * narrow relay. No sessions, nothing held between calls, and no server code of a shelf is ever run.
+ * The MCP endpoint, `/mcp` (`docs/PRD.md` section 8): a stateless fetch handler on MCP revision 2026-07-28.
  *
- * What it builds on, all outside this directory and frozen:
+ * - ShelfKit's six tools (`app.ts`) are AcidCat capabilities, served by AcidCat's MCP binding and named by their ids:
+ *   `shelf.search`, `shelf.recommend`, `shelf.profile.get`, `shelf.item.get`, `shelf.compile.plan`, `shelf.report`.
+ *   Each call is one call on the named shelf's object, which checks the session again.
+ * - The narrow relay (`relay.ts`) sits beside them at the same URL, with tools named `<item>__<tool>` (`names.ts`),
+ *   composed so that the namespaces cannot meet (`compose.ts`).
+ * - MCP definitions are the product: `shelf.search` with `kinds: ["mcp"]` lists a shelf's servers, and
+ *   `shelf.item.get` gives each one's whole definition (transport, command and arguments or URL, and its environment
+ *   and headers with secrets by name), so an agent configures and runs a server in its own environment. A `stdio`
+ *   item is a definition the agent runs; ShelfKit never runs a shelf's server code, in any form.
  *
- * - The Worker has already authenticated the request (`src/auth/index.ts`): `session` is never `invalid`, because an
- *   unknown, malformed, or revoked key is answered `401` before this handler runs. It may be `anonymous`, which reads
- *   public shelves only.
- * - Each capability is one call on the shelf's object (`src/shelf-index.ts`), reached with `existingShelf(env, shelf)`
- *   (`src/auth/index.ts`), which answers `null` for a shelf the deployment does not hold without creating its object;
- *   answer `ShelfNotFound` then. The methods are `search`, `recommend`, `getProfile`, `getItem`, `planCompile`, and
- *   `report`, each taking `(session, shelf, input)` and answering `{ ok: true, value }` with the capability's output or
- *   `{ ok: false, failure }` with one of its failures. A shelf the session cannot read answers `ShelfNotFound`.
- * - The relay: a hosted MCP item is one whose item.json has `"flavour": "hosted"`. `relayable(session, shelf)` lists
- *   the hosted items the session may relay (the owner, or a key with the scope `mcp:{shelf}/{item}`); tools are
- *   namespaced `<item>__<tool>`. `relayHeaders(session, shelf, item)` answers where to send a call and its headers,
- *   with each `{ "secret": "NAME" }` resolved inside the object by the secret rule (`src/secrets.ts`): only to the
- *   origin the owner bound `NAME` to. It fails with `SecretUnavailable` rather than release a credential elsewhere or
- *   call without it. Resolved headers go upstream only, never to the caller.
+ * Nothing is held between requests: no MCP session, no Durable Object handshake, no upstream connection, no cache.
+ *
+ * The Worker has authenticated the request before this runs (`src/auth/index.ts`): `session` is never `invalid`,
+ * because an unknown, malformed, or revoked key is answered `401` first. It may be `anonymous`, which reads public
+ * shelves only and relays nothing.
  */
+import { toCatalogJsonSchema } from "@shelfkit/schema/json-schema";
+
 import type { Session } from "../auth/index.ts";
-import { problem } from "../http.ts";
+import { shelfApp } from "./app.ts";
+import { serveMcp } from "./compose.ts";
+import { relayFor, relayShelf } from "./relay.ts";
+
+/**
+ * The composition `handleMcp` serves. `acid-cat conform` imports it from here (`test/mcp/conform.node.ts`), so the
+ * conformance run and the endpoint cannot use different code.
+ */
+export { serveMcp } from "./compose.ts";
+
+/** The relay's way out: the platform's `fetch`, looked up when a request runs. */
+async function platformFetch(request: Request): Promise<Response> {
+  return await fetch(request);
+}
+
+/** The name the endpoint gives itself in `serverInfo`. */
+export const SERVER_NAME = "shelfkit";
 
 /** The `/mcp` handler. `session` is authenticated and never `invalid`. */
-// oxlint-disable-next-line eslint/require-await -- the handler issue #6 writes awaits the shelf's object.
 export async function handleMcp(
   request: Request,
-  _env: Env,
+  env: Env,
   _context: ExecutionContext,
-  _session: Session
+  session: Session
 ): Promise<Response> {
-  return problem(
-    501,
-    "Not Implemented",
-    `the MCP endpoint is not served yet (${request.method} ${new URL(request.url).pathname})`
-  );
+  return await serveMcp(shelfApp, {
+    // A browser may call only from the Worker's own origin; agents send no `Origin`.
+    allowedOrigins: [new URL(request.url).origin],
+    createContext: () => ({ env, session }),
+    name: SERVER_NAME,
+    relay: async () =>
+      await relayFor({
+        env,
+        fetcher: platformFetch,
+        session,
+        shelf: relayShelf(request, session),
+        version: env.SHELFKIT_VERSION,
+      }),
+    toJsonSchema: toCatalogJsonSchema,
+    version: env.SHELFKIT_VERSION,
+  })(request);
 }

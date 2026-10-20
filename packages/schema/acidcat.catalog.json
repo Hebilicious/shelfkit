@@ -2169,7 +2169,7 @@
       }
     },
     "shelf.search": {
-      "description": "Search one shelf's items by text over titles, descriptions, tags, and prompt bodies. Filter by kind and tag. Returns summaries; read an item with shelf.item.get.",
+      "description": "Search one shelf's items by text over titles, descriptions, tags, and prompt bodies. Filter by kind and tag; with no query, list every item that passes the filters, such as every MCP server with kinds [\"mcp\"]. Returns summaries; read an item with shelf.item.get, which gives an MCP server's whole definition.",
       "audience": [
         "mcp"
       ],
@@ -2217,8 +2217,7 @@
           }
         },
         "required": [
-          "shelf",
-          "query"
+          "shelf"
         ],
         "type": "object"
       },
