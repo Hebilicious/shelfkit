@@ -29,9 +29,12 @@ catalog:
   oxfmt: 0.71.0
   oxlint: 1.86.0
   oxlint-tsgolint: 7.0.2003
+  sharp: 0.35.5
+  source-map-js: 1.2.2
   tsx: 4.23.13
   typescript: 5.9.3
   ultracite: 7.12.2
+  undici: 7.29.1
   valibot: 1.5.0
   vite: 8.3.0
   vitest: 4.1.11
@@ -41,6 +44,13 @@ catalog:
   vue-tsc: 3.3.11
   wrangler: 4.134.0
   yaml: 2.9.1
+
+# Patched transitive dependencies, pinned in the catalog above. Each selector covers only the vulnerable range:
+# undici and sharp come through miniflare (wrangler, the vitest pool), source-map-js through Vue's compiler.
+overrides:
+  "undici@>=7.0.0 <7.29.1": "catalog:"
+  "sharp@<0.35.5": "catalog:"
+  "source-map-js@>=1.0.0 <1.2.2": "catalog:"
 
 # Build scripts are allowed explicitly rather than by prompt, so CI is deterministic.
 allowBuilds:
