@@ -1,0 +1,441 @@
+{
+  "items": {
+    "api-architect": {
+      "kind": "agent",
+      "path": "items/agents/api-architect",
+      "files": [
+        "agent.md",
+        "item.json"
+      ],
+      "revision": "sha256-87fc8946f86f5c1658c6c3fb4a67a1d5e64fe64f7e7dea3de66b2c09591690b7"
+    },
+    "context7": {
+      "kind": "mcp",
+      "path": "items/mcp/context7",
+      "files": [
+        "item.json"
+      ],
+      "revision": "sha256-f9a2c1a397b3e9861606480c0a9e484eb2fc197b8ad733a67d7c7d537dc6b0cf"
+    },
+    "drizzle": {
+      "kind": "library",
+      "path": "items/libraries/drizzle",
+      "files": [
+        "item.json"
+      ],
+      "revision": "sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27"
+    },
+    "format-on-save": {
+      "kind": "hook",
+      "path": "items/hooks/format-on-save",
+      "files": [
+        "hook.json",
+        "item.json"
+      ],
+      "revision": "sha256-ef0d7985f6dda4f14099da1305c35807e14a277f7f767bce70e622fd448f194e"
+    },
+    "frontend-design": {
+      "kind": "skill",
+      "path": "items/skills/frontend-design",
+      "files": [
+        "SKILL.md",
+        "item.json"
+      ],
+      "revision": "sha256-2a9fd69242f1f87f7289076ddf3ea2f4848a243eeaf58b687a968296b063b8a2"
+    },
+    "linear": {
+      "kind": "mcp",
+      "path": "items/mcp/linear",
+      "files": [
+        "item.json"
+      ],
+      "revision": "sha256-bea789294a8183fa1add50ea796ebcb5b82afde26839e5aaa01b20445edb6e5d"
+    },
+    "playwright": {
+      "kind": "mcp",
+      "path": "items/mcp/playwright",
+      "files": [
+        "item.json"
+      ],
+      "revision": "sha256-8a1274d5be0244875b38c2452e672e6f3b624f5d3b154903220923e46cbd0fb0"
+    },
+    "pr-description": {
+      "kind": "prompt",
+      "path": "items/prompts/pr-description",
+      "files": [
+        "item.json",
+        "prompt.md"
+      ],
+      "revision": "sha256-86f8d019e7c8cd65294bb80bd6e05dae6510eb2ef06bebd3213bccffd3df9892"
+    },
+    "release-tools": {
+      "kind": "plugin",
+      "path": "items/plugins/release-tools",
+      "files": [
+        "item.json",
+        "plugin.json"
+      ],
+      "revision": "sha256-401c4494849400d9d850f16ec40b787b87805ff7734ac30fa53f19a4072040ce"
+    },
+    "review-checklist": {
+      "kind": "skill",
+      "path": "items/skills/review-checklist",
+      "files": [
+        "SKILL.md",
+        "item.json"
+      ],
+      "revision": "sha256-03b37402deb7655ac6fc54e33e533c72025891164e132088b132ace816f55312"
+    },
+    "typescript-language-server": {
+      "kind": "lsp",
+      "path": "items/lsp/typescript-language-server",
+      "files": [
+        "item.json"
+      ],
+      "revision": "sha256-8439085687c7617a6cac2febfd40a6610645eaed43634eb2699621db07b94efd"
+    },
+    "vue-cloudflare": {
+      "kind": "stack",
+      "path": "items/stacks/vue-cloudflare",
+      "files": [
+        "item.json"
+      ],
+      "revision": "sha256-16c1a0487837b9c6399927856435f896cc0987033e938fe5d7964e955403cc88"
+    },
+    "vue-sfc-patterns": {
+      "kind": "instructions",
+      "path": "items/instructions/vue-sfc-patterns",
+      "files": [
+        "AGENTS.fragment.md",
+        "item.json"
+      ],
+      "revision": "sha256-268865cb3e7fcb82edd0aa4b099d426b40955ecd07aa4de8c4b7d8415ccf828a"
+    }
+  },
+  "declared": {
+    "base": {
+      "$schema": "https://shelfkit.dev/schemas/profile.json",
+      "id": "base",
+      "title": "Base",
+      "items": [
+        "vue-cloudflare",
+        "drizzle@sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27"
+      ],
+      "bundles": [],
+      "extends": [],
+      "compile": {
+        "targets": [
+          "copilot",
+          "claude"
+        ],
+        "pin": "revision",
+        "onConflict": "fail"
+      }
+    },
+    "full": {
+      "$schema": "https://shelfkit.dev/schemas/profile.json",
+      "id": "full",
+      "title": "Everything",
+      "items": [
+        "pr-description",
+        "context7",
+        "playwright",
+        "linear",
+        "typescript-language-server",
+        "frontend-design",
+        "api-architect",
+        "release-tools",
+        "vue-sfc-patterns"
+      ],
+      "bundles": [
+        "code-quality"
+      ],
+      "extends": [
+        "base"
+      ],
+      "compile": {
+        "name": "full-stack",
+        "targets": [
+          "claude",
+          "copilot",
+          "cursor",
+          "codex",
+          "kiro"
+        ],
+        "allowNonconformantTargets": true
+      }
+    },
+    "minimal": {
+      "id": "minimal",
+      "title": "Minimal",
+      "items": [
+        "pr-description"
+      ],
+      "bundles": [],
+      "extends": [],
+      "compile": {
+        "pin": "latest"
+      }
+    }
+  },
+  "profiles": {
+    "base": {
+      "id": "base",
+      "path": "profiles/base.json",
+      "revision": "sha256-59edd61460ec961e5d6a5b9e5e0c27f00cb9246694ba35f35cbb1db784a9e9df",
+      "compile": {
+        "name": "base",
+        "targets": [
+          "claude",
+          "copilot"
+        ],
+        "pin": "revision",
+        "onConflict": "fail",
+        "vendorAuthored": true,
+        "allowNonconformantTargets": false
+      },
+      "items": [
+        {
+          "id": "drizzle",
+          "kind": "library",
+          "revision": "sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27",
+          "current": "sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27",
+          "pinned": true,
+          "origin": {
+            "via": "profile",
+            "profile": "base"
+          }
+        },
+        {
+          "id": "vue-cloudflare",
+          "kind": "stack",
+          "revision": "sha256-16c1a0487837b9c6399927856435f896cc0987033e938fe5d7964e955403cc88",
+          "current": "sha256-16c1a0487837b9c6399927856435f896cc0987033e938fe5d7964e955403cc88",
+          "pinned": false,
+          "origin": {
+            "via": "profile",
+            "profile": "base"
+          }
+        }
+      ],
+      "notices": []
+    },
+    "full": {
+      "id": "full",
+      "path": "profiles/full.json",
+      "revision": "sha256-04dd5e97077489cb42319e9ade109ce0da1c698b3f0f6e68faafe80c5a1f38e7",
+      "compile": {
+        "name": "full-stack",
+        "targets": [
+          "claude",
+          "codex",
+          "copilot",
+          "cursor",
+          "kiro"
+        ],
+        "pin": "revision",
+        "onConflict": "fail",
+        "vendorAuthored": true,
+        "allowNonconformantTargets": true
+      },
+      "items": [
+        {
+          "id": "api-architect",
+          "kind": "agent",
+          "revision": "sha256-87fc8946f86f5c1658c6c3fb4a67a1d5e64fe64f7e7dea3de66b2c09591690b7",
+          "current": "sha256-87fc8946f86f5c1658c6c3fb4a67a1d5e64fe64f7e7dea3de66b2c09591690b7",
+          "pinned": false,
+          "origin": {
+            "via": "profile",
+            "profile": "full"
+          }
+        },
+        {
+          "id": "context7",
+          "kind": "mcp",
+          "revision": "sha256-f9a2c1a397b3e9861606480c0a9e484eb2fc197b8ad733a67d7c7d537dc6b0cf",
+          "current": "sha256-f9a2c1a397b3e9861606480c0a9e484eb2fc197b8ad733a67d7c7d537dc6b0cf",
+          "pinned": false,
+          "origin": {
+            "via": "profile",
+            "profile": "full"
+          }
+        },
+        {
+          "id": "drizzle",
+          "kind": "library",
+          "revision": "sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27",
+          "current": "sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27",
+          "pinned": true,
+          "origin": {
+            "via": "profile",
+            "profile": "base"
+          }
+        },
+        {
+          "id": "format-on-save",
+          "kind": "hook",
+          "revision": "sha256-ef0d7985f6dda4f14099da1305c35807e14a277f7f767bce70e622fd448f194e",
+          "current": "sha256-ef0d7985f6dda4f14099da1305c35807e14a277f7f767bce70e622fd448f194e",
+          "pinned": false,
+          "origin": {
+            "via": "bundle",
+            "profile": "full",
+            "bundle": "code-quality"
+          }
+        },
+        {
+          "id": "frontend-design",
+          "kind": "skill",
+          "revision": "sha256-2a9fd69242f1f87f7289076ddf3ea2f4848a243eeaf58b687a968296b063b8a2",
+          "current": "sha256-2a9fd69242f1f87f7289076ddf3ea2f4848a243eeaf58b687a968296b063b8a2",
+          "pinned": false,
+          "origin": {
+            "via": "profile",
+            "profile": "full"
+          }
+        },
+        {
+          "id": "linear",
+          "kind": "mcp",
+          "revision": "sha256-bea789294a8183fa1add50ea796ebcb5b82afde26839e5aaa01b20445edb6e5d",
+          "current": "sha256-bea789294a8183fa1add50ea796ebcb5b82afde26839e5aaa01b20445edb6e5d",
+          "pinned": false,
+          "origin": {
+            "via": "profile",
+            "profile": "full"
+          }
+        },
+        {
+          "id": "playwright",
+          "kind": "mcp",
+          "revision": "sha256-8a1274d5be0244875b38c2452e672e6f3b624f5d3b154903220923e46cbd0fb0",
+          "current": "sha256-8a1274d5be0244875b38c2452e672e6f3b624f5d3b154903220923e46cbd0fb0",
+          "pinned": false,
+          "origin": {
+            "via": "profile",
+            "profile": "full"
+          }
+        },
+        {
+          "id": "pr-description",
+          "kind": "prompt",
+          "revision": "sha256-86f8d019e7c8cd65294bb80bd6e05dae6510eb2ef06bebd3213bccffd3df9892",
+          "current": "sha256-86f8d019e7c8cd65294bb80bd6e05dae6510eb2ef06bebd3213bccffd3df9892",
+          "pinned": false,
+          "origin": {
+            "via": "profile",
+            "profile": "full"
+          }
+        },
+        {
+          "id": "release-tools",
+          "kind": "plugin",
+          "revision": "sha256-401c4494849400d9d850f16ec40b787b87805ff7734ac30fa53f19a4072040ce",
+          "current": "sha256-401c4494849400d9d850f16ec40b787b87805ff7734ac30fa53f19a4072040ce",
+          "pinned": false,
+          "origin": {
+            "via": "profile",
+            "profile": "full"
+          }
+        },
+        {
+          "id": "review-checklist",
+          "kind": "skill",
+          "revision": "sha256-03b37402deb7655ac6fc54e33e533c72025891164e132088b132ace816f55312",
+          "current": "sha256-03b37402deb7655ac6fc54e33e533c72025891164e132088b132ace816f55312",
+          "pinned": false,
+          "origin": {
+            "via": "bundle",
+            "profile": "full",
+            "bundle": "code-quality"
+          }
+        },
+        {
+          "id": "typescript-language-server",
+          "kind": "lsp",
+          "revision": "sha256-8439085687c7617a6cac2febfd40a6610645eaed43634eb2699621db07b94efd",
+          "current": "sha256-8439085687c7617a6cac2febfd40a6610645eaed43634eb2699621db07b94efd",
+          "pinned": false,
+          "origin": {
+            "via": "profile",
+            "profile": "full"
+          }
+        },
+        {
+          "id": "vue-cloudflare",
+          "kind": "stack",
+          "revision": "sha256-16c1a0487837b9c6399927856435f896cc0987033e938fe5d7964e955403cc88",
+          "current": "sha256-16c1a0487837b9c6399927856435f896cc0987033e938fe5d7964e955403cc88",
+          "pinned": false,
+          "origin": {
+            "via": "profile",
+            "profile": "base"
+          }
+        },
+        {
+          "id": "vue-sfc-patterns",
+          "kind": "instructions",
+          "revision": "sha256-268865cb3e7fcb82edd0aa4b099d426b40955ecd07aa4de8c4b7d8415ccf828a",
+          "current": "sha256-268865cb3e7fcb82edd0aa4b099d426b40955ecd07aa4de8c4b7d8415ccf828a",
+          "pinned": false,
+          "origin": {
+            "via": "profile",
+            "profile": "full"
+          }
+        }
+      ],
+      "notices": [
+        {
+          "path": "profiles/full.json",
+          "code": "producer-nonconformant-target",
+          "message": "target `kiro` is outside the OpenAPM v0.1 producer set, so this profile's manifest is Producer-nonconformant (opted in)"
+        },
+        {
+          "path": "profiles/full.json",
+          "code": "unratified-lsp",
+          "message": "`typescript-language-server` compiles to `dependencies.lsp`, which is absent from the published OpenAPM v0.1 schema: it passes validation without being defined by it"
+        }
+      ]
+    },
+    "minimal": {
+      "id": "minimal",
+      "path": "profiles/minimal.json",
+      "revision": "sha256-45c555ef58f2f77e21485bd89e08562159ae32367a7df86718fdaa3e2eef240c",
+      "compile": {
+        "name": "minimal",
+        "targets": [],
+        "pin": "latest",
+        "onConflict": "fail",
+        "vendorAuthored": true,
+        "allowNonconformantTargets": false
+      },
+      "items": [
+        {
+          "id": "pr-description",
+          "kind": "prompt",
+          "revision": "sha256-86f8d019e7c8cd65294bb80bd6e05dae6510eb2ef06bebd3213bccffd3df9892",
+          "current": "sha256-86f8d019e7c8cd65294bb80bd6e05dae6510eb2ef06bebd3213bccffd3df9892",
+          "pinned": false,
+          "origin": {
+            "via": "profile",
+            "profile": "minimal"
+          }
+        }
+      ],
+      "notices": []
+    }
+  },
+  "check": [
+    {
+      "path": "profiles/full.json",
+      "code": "producer-nonconformant-target",
+      "message": "target `kiro` is outside the OpenAPM v0.1 producer set, so this profile's manifest is Producer-nonconformant (opted in)"
+    },
+    {
+      "path": "profiles/full.json",
+      "code": "unratified-lsp",
+      "message": "`typescript-language-server` compiles to `dependencies.lsp`, which is absent from the published OpenAPM v0.1 schema: it passes validation without being defined by it"
+    }
+  ]
+}

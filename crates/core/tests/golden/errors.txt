@@ -1,0 +1,39 @@
+bundles/stray.json: `items` references unknown item `ghost-in-bundle`
+bundles/stray.json: `no-body` is pinned to sha256-2222222222222222222222222222222222222222222222222222222222222222, but the shelf holds it only at its current revision sha256-99da60a4e330cf9bf76c88e99a67c576c49758163ce8ed058e089a8d8158e40a; update the pin
+items/README.md: unexpected file: items live in items/<kind>/<id>/
+items/agents/wrong-kind/item.json: `kind` is `prompt`, which lives in items/prompts/, not items/agents/
+items/libraries/typo/item.json: library item: unknown field `note`, expected one of `detect`, `docs`, `notes`
+items/mcp/leaky/item.json: `/description` holds a literal that looks like a credential (a password in a URL); use a secret reference such as { "secret": "NAME" }
+items/mcp/leaky/item.json: `/headers/Authorization` holds a literal that looks like a credential (an Authorization credential); use a secret reference such as { "secret": "NAME" }
+items/mcp/plain-http-relay/item.json: `/headers/X-Api-Key` holds a literal that looks like a credential (a literal value in a slot that carries a secret); use a secret reference such as { "secret": "NAME" }
+items/mcp/plain-http-relay/item.json: a hosted MCP server's upstream `url` must be https, got `http://mcp.example.com/mcp`
+items/prompts/Bad_Id/item.json: id `Bad_Id` must be lowercase kebab-case
+items/prompts/bad-variables/item.json: variable `x` is declared twice
+items/prompts/bad-variables/item.json: variable `x` is required and has a default; pick one
+items/prompts/double__under/item.json: id `double__under` must not contain `__` (reserved for MCP namespacing)
+items/prompts/ide-only/item.json: target `intellij`: is rejected by APM's manifest validator: it is an MCP-only integration, not a manifest target
+items/prompts/ide-only/item.json: target `vscode`: is an APM alias; use the slug `copilot` verbatim
+items/prompts/kiro-only/item.json: target `kiro`: is outside the OpenAPM v0.1 producer set; set `allowNonconformantTargets` to opt in
+items/prompts/leaky-body/prompt.md: `line 3` holds a literal that looks like a credential (a password in a URL); use a secret reference such as { "secret": "NAME" }
+items/prompts/needs-ghost/item.json: `requires` references unknown item `ghost`
+items/prompts/no-body: missing `prompt.md`
+items/skills/bad-frontmatter/SKILL.md: invalid SKILL.md frontmatter: `name` is `another-name` but must equal the item id `bad-frontmatter`
+items/skills/bad-frontmatter/SKILL.md: invalid SKILL.md frontmatter: unknown key `version`; agentskills.io allows only allowed-tools, compatibility, description, license, metadata, name
+items/stacks/broken-json/item.json: invalid JSON: EOF while parsing a value at line 2 column 0
+items/stacks/no-markers/item.json: `recommends` references unknown item `phantom`
+items/stacks/no-markers/item.json: a stack needs at least one marker: markers are what make it detectable
+items/widgets: unknown kind directory `widgets`; expected one of skills, prompts, instructions, agents, hooks, plugins, mcp, lsp, libraries, stacks
+profiles/a.json: `extends` cycle: a -> b -> a
+profiles/cli.json: `bundles` references unknown bundle `no-bundle`
+profiles/cli.json: `extends` references unknown profile `nowhere`
+profiles/cli.json: `items` lists `no-body` and `no-body@sha256-1111111111111111111111111111111111111111111111111111111111111111`; pick one pin
+profiles/cli.json: `items` references unknown item `ghost-item`
+profiles/cli.json: `no-body` is pinned to sha256-1111111111111111111111111111111111111111111111111111111111111111, but the shelf holds it only at its current revision sha256-99da60a4e330cf9bf76c88e99a67c576c49758163ce8ed058e089a8d8158e40a; update the pin
+profiles/cli.json: target `kiro`: is outside the OpenAPM v0.1 producer set; set `compile.allowNonconformantTargets` here or in a profile it extends to opt in
+profiles/cli.json: target `openclaw`: is rejected by APM's manifest validator, which refuses experimental-flag targets
+profiles/mismatch.json: `id` is `other` but the file is `mismatch.json`
+profiles/notes.txt: unexpected file: profiles/ holds only <id>.json files
+profiles/self.json: `extends` cycle: self -> self
+profiles/uses-stray.json: `items` lists `no-body` and bundle `stray` lists `no-body@sha256-2222222222222222222222222222222222222222222222222222222222222222`; pick one pin
+shelf.json: `defaultProfile` references unknown profile `missing`
+shelf.json: source `dup` is declared twice

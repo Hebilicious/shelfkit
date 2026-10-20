@@ -1,0 +1,22 @@
+{
+  "id": "cli",
+  "title": "CLI",
+  "items": [
+    "ghost-item",
+    "no-body",
+    "no-body@sha256-1111111111111111111111111111111111111111111111111111111111111111"
+  ],
+  "bundles": [
+    "no-bundle"
+  ],
+  "extends": [
+    "nowhere"
+  ],
+  "compile": {
+    "targets": [
+      "kiro",
+      "claude",
+      "openclaw"
+    ]
+  }
+}

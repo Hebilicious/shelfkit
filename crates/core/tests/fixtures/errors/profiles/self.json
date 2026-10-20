@@ -1,0 +1,7 @@
+{
+  "id": "self",
+  "title": "Self",
+  "extends": [
+    "self"
+  ]
+}

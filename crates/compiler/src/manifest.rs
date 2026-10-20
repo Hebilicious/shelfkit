@@ -1,4 +1,4 @@
-use shelfkit_core::{Item, ItemKind, Profile, Result};
+use shelfkit_core::{Error, Item, ItemKind, Profile, Result};
 
 /// A file the compiler wants written into the target repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,8 +10,9 @@ pub struct VendorFile {
 /// The result of compiling a profile.
 ///
 /// This is the single object rendered by `shelfkit compile --dry-run`, by the
-/// composer's manifest preview, and by the MCP `shelf_plan_compile` tool, so
-/// three surfaces cannot drift.
+/// composer's manifest preview, and by the MCP `shelf.compile.plan` capability,
+/// so three surfaces cannot drift. Its JSON form is frozen in
+/// `packages/schema/src/capabilities.ts` (`CompilePlanSchema`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompiledManifest {
     /// The rendered `apm.yml`.
@@ -30,8 +31,9 @@ pub fn compile(profile: &Profile, items: &[Item]) -> Result<CompiledManifest> {
     let mut deps: Vec<String> = Vec::new();
 
     for item in items {
-        Item::validate_id(&item.id)?;
-        match item.kind {
+        shelfkit_core::item::validate_id(&item.id)
+            .map_err(|kind| Error::new(format!("<item {}>", item.id), kind))?;
+        match item.kind() {
             ItemKind::Mcp => {}
             _ => deps.push(format!(
                 "./vendor/{}",
@@ -49,11 +51,8 @@ pub fn compile(profile: &Profile, items: &[Item]) -> Result<CompiledManifest> {
     let mut yml = String::new();
     yml.push_str(&format!("name: {name}\n"));
     yml.push_str("version: 0.0.0\n");
-    if !profile.compile.targets.is_empty() {
-        yml.push_str(&format!(
-            "targets: [{}]\n",
-            profile.compile.targets.join(", ")
-        ));
+    if let Some(targets) = profile.compile.targets.as_ref().filter(|t| !t.is_empty()) {
+        yml.push_str(&format!("targets: [{}]\n", targets.join(", ")));
     }
     if !deps.is_empty() {
         deps.sort();
@@ -74,26 +73,28 @@ pub fn compile(profile: &Profile, items: &[Item]) -> Result<CompiledManifest> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shelfkit_core::CompileOptions;
+    use shelfkit_core::{CompileOptions, ItemRef};
 
     fn item(id: &str, kind: ItemKind) -> Item {
-        Item {
-            id: id.to_owned(),
-            kind,
-            title: id.to_owned(),
-            description: String::new(),
-            tags: Vec::new(),
-            targets: Vec::new(),
-            requires: Vec::new(),
-        }
+        // The smallest valid payload for the kinds these tests use.
+        let payload = match kind {
+            ItemKind::Mcp => r#", "flavour": "stdio", "command": "npx""#,
+            _ => "",
+        };
+        let json = format!(r#"{{ "id": "{id}", "kind": "{kind}", "title": "{id}"{payload} }}"#);
+        Item::from_json(json.as_bytes()).unwrap()
     }
 
     fn profile(items: Vec<&str>) -> Profile {
         Profile {
+            schema: None,
             id: "default".into(),
             title: "Default".into(),
             description: String::new(),
-            items: items.into_iter().map(str::to_owned).collect(),
+            items: items
+                .into_iter()
+                .map(|id| ItemRef::parse(id).unwrap())
+                .collect(),
             bundles: Vec::new(),
             extends: Vec::new(),
             compile: CompileOptions::default(),

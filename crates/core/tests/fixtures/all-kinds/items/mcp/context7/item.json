@@ -1,0 +1,24 @@
+{
+  "id": "context7",
+  "kind": "mcp",
+  "title": "Context7",
+  "description": "Library documentation.",
+  "flavour": "remote",
+  "name": "io.github.upstash/context7",
+  "url": "https://mcp.context7.com/mcp",
+  "transport": "http",
+  "headers": {
+    "CONTEXT7_API_KEY": {
+      "secret": "CONTEXT7_API_KEY"
+    }
+  },
+  "source": {
+    "id": "glama",
+    "url": "https://glama.ai/api/mcp/v1",
+    "licenseId": "MIT",
+    "shareAlike": false,
+    "creditText": "MCP data from Glama",
+    "linkTarget": "https://glama.ai",
+    "recordUrl": "https://glama.ai/mcp/servers/context7"
+  }
+}

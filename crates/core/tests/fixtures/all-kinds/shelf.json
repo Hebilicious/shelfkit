@@ -1,0 +1,23 @@
+{
+  "$schema": "https://shelfkit.dev/schemas/shelf.json",
+  "name": "all-kinds",
+  "owner": "Hebilicious",
+  "description": "A fixture shelf with one or more items of every kind.",
+  "defaultProfile": "full",
+  "registry": {
+    "namespace": "fixture",
+    "public": true
+  },
+  "sources": [
+    {
+      "id": "anthropics",
+      "kind": "git",
+      "repo": "https://github.com/anthropics/skills"
+    },
+    {
+      "id": "glama",
+      "kind": "catalog",
+      "url": "https://glama.ai/api/mcp/v1"
+    }
+  ]
+}

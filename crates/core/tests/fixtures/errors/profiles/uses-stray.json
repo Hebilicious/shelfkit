@@ -1,0 +1,10 @@
+{
+  "id": "uses-stray",
+  "title": "Uses stray",
+  "items": [
+    "no-body"
+  ],
+  "bundles": [
+    "stray"
+  ]
+}

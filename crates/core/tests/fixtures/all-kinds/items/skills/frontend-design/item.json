@@ -1,0 +1,27 @@
+{
+  "id": "frontend-design",
+  "kind": "skill",
+  "title": "Frontend design",
+  "description": "Imported skill with full provenance.",
+  "tags": [
+    "design",
+    "frontend"
+  ],
+  "targets": [
+    "claude",
+    "agent-skills"
+  ],
+  "source": {
+    "id": "anthropics",
+    "repo": "https://github.com/anthropics/skills",
+    "path": "skills/frontend-design",
+    "ref": "main",
+    "resolvedCommit": "0123456789abcdef0123456789abcdef01234567",
+    "license": "Apache License 2.0",
+    "licenseId": "Apache-2.0",
+    "shareAlike": false,
+    "creditText": "Skill from Anthropic's skills repository",
+    "linkTarget": "https://github.com/anthropics/skills",
+    "recordUrl": "https://github.com/anthropics/skills/tree/main/skills/frontend-design"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "id": "format-on-save",
+  "kind": "hook",
+  "title": "Format on save",
+  "description": "Runs the formatter after an edit."
+}

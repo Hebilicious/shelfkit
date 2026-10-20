@@ -1,0 +1,9 @@
+{
+  "id": "no-markers",
+  "kind": "stack",
+  "title": "No markers",
+  "markers": {},
+  "recommends": [
+    "phantom"
+  ]
+}

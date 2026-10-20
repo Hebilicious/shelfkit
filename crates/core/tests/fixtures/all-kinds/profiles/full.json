@@ -1,0 +1,33 @@
+{
+  "$schema": "https://shelfkit.dev/schemas/profile.json",
+  "id": "full",
+  "title": "Everything",
+  "items": [
+    "pr-description",
+    "context7",
+    "playwright",
+    "linear",
+    "typescript-language-server",
+    "frontend-design",
+    "api-architect",
+    "release-tools",
+    "vue-sfc-patterns"
+  ],
+  "bundles": [
+    "code-quality"
+  ],
+  "extends": [
+    "base"
+  ],
+  "compile": {
+    "name": "full-stack",
+    "targets": [
+      "claude",
+      "copilot",
+      "cursor",
+      "codex",
+      "kiro"
+    ],
+    "allowNonconformantTargets": true
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "id": "review-checklist",
+  "kind": "skill",
+  "title": "Review checklist",
+  "description": "An authored skill.",
+  "requires": [
+    "pr-description"
+  ]
+}

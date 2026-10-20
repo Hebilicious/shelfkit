@@ -1,0 +1,16 @@
+{
+  "name": "errors",
+  "defaultProfile": "missing",
+  "sources": [
+    {
+      "id": "dup",
+      "kind": "git",
+      "repo": "https://example.com/a"
+    },
+    {
+      "id": "dup",
+      "kind": "git",
+      "repo": "https://example.com/b"
+    }
+  ]
+}

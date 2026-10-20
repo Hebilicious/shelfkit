@@ -1,0 +1,17 @@
+{
+  "$schema": "https://shelfkit.dev/schemas/profile.json",
+  "id": "base",
+  "title": "Base",
+  "items": [
+    "vue-cloudflare",
+    "drizzle@sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27"
+  ],
+  "compile": {
+    "targets": [
+      "copilot",
+      "claude"
+    ],
+    "pin": "revision",
+    "onConflict": "fail"
+  }
+}

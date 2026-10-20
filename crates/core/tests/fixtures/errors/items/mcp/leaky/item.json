@@ -1,0 +1,11 @@
+{
+  "id": "leaky",
+  "kind": "mcp",
+  "title": "Leaky",
+  "flavour": "remote",
+  "url": "https://mcp.example.com/mcp",
+  "headers": {
+    "Authorization": "Bearer abcdefghijklmnopqrstuvwxyz0123456789"
+  },
+  "description": "Connect with https://admin:hunter2@mcp.example.com/"
+}

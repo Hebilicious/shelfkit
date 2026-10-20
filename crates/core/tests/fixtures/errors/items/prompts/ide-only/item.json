@@ -1,0 +1,9 @@
+{
+  "id": "ide-only",
+  "kind": "prompt",
+  "title": "IDE only",
+  "targets": [
+    "intellij",
+    "vscode"
+  ]
+}

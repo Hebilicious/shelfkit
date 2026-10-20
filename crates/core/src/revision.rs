@@ -1,5 +1,7 @@
-use crate::Result;
+use crate::error::ErrorKind;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fmt;
 
 /// A content-addressed snapshot of one item.
@@ -38,19 +40,34 @@ impl Revision {
         Self(format!("sha256-{}", hex(&hasher.finalize())))
     }
 
-    pub fn parse(value: &str) -> Result<Self> {
-        let hex_part = value
-            .strip_prefix("sha256-")
-            .ok_or_else(|| crate::Error::Invalid {
-                path: "<revision>".into(),
-                message: format!("revision must start with `sha256-`, got `{value}`"),
-            })?;
+    /// The revision of one item directory, from its files keyed by path
+    /// relative to the item root. This is the only way the loader computes a
+    /// revision, so `compile` and `push` hash exactly the same bytes.
+    pub fn of_files(files: &BTreeMap<String, Vec<u8>>) -> Self {
+        Self::compute(
+            files
+                .iter()
+                .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+        )
+    }
 
-        if hex_part.len() != 64 || !hex_part.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(crate::Error::Invalid {
-                path: "<revision>".into(),
-                message: format!("revision digest must be 64 hex characters, got `{hex_part}`"),
-            });
+    /// Parse a revision as written in a profile pin or on the wire. The caller
+    /// attaches the file the value came from.
+    pub fn parse(value: &str) -> Result<Self, ErrorKind> {
+        let hex_part = value.strip_prefix("sha256-").ok_or_else(|| {
+            ErrorKind::Invalid(format!("revision must start with `sha256-`, got `{value}`"))
+        })?;
+
+        // Lowercase only, as `compute` writes it: two spellings of one digest
+        // would compare unequal everywhere a revision is a key.
+        if hex_part.len() != 64
+            || !hex_part
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(ErrorKind::Invalid(format!(
+                "revision digest must be 64 lowercase hex characters, got `{hex_part}`"
+            )));
         }
 
         Ok(Self(value.to_owned()))
@@ -67,7 +84,27 @@ impl fmt::Display for Revision {
     }
 }
 
+impl Serialize for Revision {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Revision {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(&value).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Normalize CRLF to LF so a Windows checkout hashes the same as a Linux one.
+///
+/// Public so a consumer that emits item content (the compiler's vendored
+/// files) can produce the same bytes on every platform.
+pub fn normalize_line_endings(bytes: &[u8]) -> Vec<u8> {
+    strip_cr(bytes)
+}
+
 fn strip_cr(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -128,6 +165,28 @@ mod tests {
     fn parse_rejects_malformed() {
         assert!(Revision::parse("sha256-abc").is_err());
         assert!(Revision::parse("abc").is_err());
+        assert!(Revision::parse(&format!("sha256-{}", "A".repeat(64))).is_err());
         assert!(Revision::parse(&format!("sha256-{}", "a".repeat(64))).is_ok());
+    }
+
+    #[test]
+    fn of_files_matches_compute() {
+        let files: BTreeMap<String, Vec<u8>> = [
+            ("prompt.md".to_owned(), b"body\r\n".to_vec()),
+            ("item.json".to_owned(), b"{}".to_vec()),
+        ]
+        .into_iter()
+        .collect();
+        let direct = Revision::compute([
+            ("item.json", b"{}".as_slice()),
+            ("prompt.md", b"body\n".as_slice()),
+        ]);
+        assert_eq!(Revision::of_files(&files), direct);
+    }
+
+    #[test]
+    fn computed_revisions_parse() {
+        let revision = Revision::compute([("a", b"b".as_slice())]);
+        assert_eq!(Revision::parse(revision.as_str()).unwrap(), revision);
     }
 }
