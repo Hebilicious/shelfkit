@@ -15,6 +15,18 @@ runs:
       shell: bash
       run: moon setup
 
+    # The runner image ships its own rustup default (1.99.0 on ubuntu-26.04),
+    # and a cargo subcommand such as clippy can resolve through it rather than
+    # the pinned toolchain. Two compilers then share one target directory and
+    # fail with E0514. Making the pin rustup's default, for this job and every
+    # process it starts, leaves one compiler on the runner.
+    - name: Make the pinned Rust the only one
+      shell: bash
+      run: |
+        rust="$(sed -n 's/^rust *= *"\(.*\)"/\1/p' .prototools)"
+        rustup default "$rust"
+        echo "RUSTUP_TOOLCHAIN=$rust" >> "$GITHUB_ENV"
+
     - name: Show resolved tool versions
       shell: bash
       run: |

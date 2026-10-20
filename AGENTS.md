@@ -55,6 +55,8 @@ moon run worker:setup      # provision a Cloudflare account and deploy
 
 Every toolchain is pinned in `.prototools`, and `.moon/toolchains.yml` tells moon to manage them. The two pins must agree: proto resolves `.prototools`, and moon only manages a toolchain this file declares. The filename is plural; moon ignores `toolchain.yml` without warning.
 
+CI runners ship their own rustup default, which can be newer than the pin; a cargo subcommand such as clippy then compiles with it, and two compilers sharing `target/` fail with E0514. The toolchains action makes the `.prototools` pin rustup's default for the whole job, so keep that step when changing CI.
+
 ## Testing
 
 `moon run :test` runs every project's tests. Rust tests live beside the code they cover; the compiler's golden-file tests assert the `apm.yml` shape and are what catch an APM change. Prefer a test that fails for a real reason over one that restates the implementation: the revision test for CRLF normalization caught a genuine hashing bug before the first commit.
