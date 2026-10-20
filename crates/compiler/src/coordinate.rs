@@ -513,6 +513,7 @@ mod tests {
             path: None,
             tier: None,
             profile: None,
+            secret: None,
         }
     }
 

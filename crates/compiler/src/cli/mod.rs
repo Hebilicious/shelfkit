@@ -10,6 +10,9 @@
 
 pub mod add;
 pub mod apm;
+mod hosted;
+mod keychain;
+mod network;
 pub mod output;
 pub mod serve;
 pub mod system;
@@ -19,6 +22,7 @@ use crate::manifest::compile;
 use crate::recommend::recommend;
 use apm::Runner;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+pub use hosted::{KEY_ENV, URL_ENV, normalize_url};
 use output::{APM_YML, Change};
 use serde::Serialize;
 use shelfkit_core::item::Markers;
@@ -26,7 +30,7 @@ use shelfkit_core::{DirSource, Errors, ItemKind, OnConflict, Payload, Shelf, loa
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-pub use system::{HostSystem, Platform, System};
+pub use system::{HostSystem, HttpRequest, HttpResponse, KEYCHAIN_SERVICE, Platform, System};
 
 /// Where a command runs, and what it may reach.
 pub struct Context<'a> {
@@ -46,7 +50,7 @@ pub struct Context<'a> {
         MCP and LSP servers, libraries, stacks) and profiles that select them. `compile` turns a profile \
         into an apm.yml plus vendored content and stops; APM installs it. ShelfKit never writes a lockfile \
         and runs APM only when `install` is asked for.\n\n\
-        Not in this build: `search`, `login` and `push` (issue #5).",
+        Not in this build: `search`.",
     after_help = "See docs/PRD.md for the specification."
 )]
 struct Cli {
@@ -113,6 +117,65 @@ enum Command {
     /// visible to other processes). Keys are never printed or logged. APM 0.33.0 sends no credentials over plain
     /// http, so APM installs only from a public shelf on loopback.
     Serve(ServeArgs),
+    /// Keep a key for a hosted deployment in the OS keychain.
+    ///
+    /// Reads the key from the terminal without echoing it (or a line of standard input), checks it against the
+    /// deployment, stores it under the keychain service `shelfkit` with the URL as the account, and remembers the URL
+    /// as the default. The key is never printed. `SHELFKIT_KEY`, when set, is used instead of the keychain.
+    Login(LoginArgs),
+    /// Remove the key kept for a hosted deployment from the OS keychain.
+    Logout(LoginArgs),
+    /// Upload the shelf to a hosted deployment and publish its profiles to its registry.
+    ///
+    /// Every file is uploaded once by its sha256, the set becomes the hosted shelf's snapshot (the deployment's
+    /// engine validates it first), and each profile is packaged exactly as `serve` packages it and published at its
+    /// `version`, or `0.0.0+sha256.<revision>`. A hosted shelf that was changed there (in the web UI, by an import) is
+    /// not overwritten without `--force`.
+    Push(PushArgs),
+    /// Write a hosted shelf's snapshot into a directory, removing the shelf files it no longer has.
+    ///
+    /// A local file it would replace or remove whose content the service has never had is work that was never pushed:
+    /// the fetch is refused, naming each one, unless `--force`.
+    Fetch(FetchArgs),
+}
+
+#[derive(Args)]
+struct LoginArgs {
+    /// The deployment, as https://<host>. Defaults to SHELFKIT_URL, then the one `login` remembered.
+    url: Option<String>,
+}
+
+#[derive(Args)]
+struct PushArgs {
+    /// The deployment. Defaults to SHELFKIT_URL, then the one `login` remembered.
+    #[arg(long)]
+    url: Option<String>,
+    /// A message for the snapshot.
+    #[arg(long, short)]
+    message: Option<String>,
+    /// Upload and commit, but publish no profile.
+    #[arg(long)]
+    no_publish: bool,
+    /// Replace a hosted shelf that has changes made there.
+    #[arg(long)]
+    force: bool,
+}
+
+#[derive(Args)]
+struct FetchArgs {
+    /// The deployment. Defaults to SHELFKIT_URL, then the one `login` remembered.
+    #[arg(long)]
+    url: Option<String>,
+    /// The shelf. Defaults to the local shelf.json's `registry.namespace`, then the key's own shelf.
+    #[arg(long, value_name = "SHELF")]
+    id: Option<String>,
+    /// The directory to write into. Defaults to the shelf (`--shelf`, or the nearest shelf.json), else the current
+    /// directory.
+    #[arg(long, value_name = "DIR")]
+    out: Option<PathBuf>,
+    /// Replace or remove local files the service has never had (work that was never pushed).
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Args)]
@@ -318,6 +381,19 @@ where
         Command::Doctor(args) => doctor(ctx, shelf, &args),
         Command::Install(args) => return install(ctx, &args),
         Command::Serve(args) => serve_command(ctx, shelf, &args),
+        Command::Login(args) => hosted::login(ctx, args.url.as_deref()),
+        Command::Logout(args) => hosted::logout(ctx, args.url.as_deref()),
+        Command::Push(args) => push_command(ctx, shelf, &args),
+        Command::Fetch(args) => hosted::fetch(
+            ctx,
+            shelf,
+            &hosted::FetchOptions {
+                force: args.force,
+                id: args.id.as_deref(),
+                out: args.out.as_deref(),
+                url: args.url.as_deref(),
+            },
+        ),
     };
     match outcome {
         Ok(()) => 0,
@@ -332,6 +408,20 @@ where
         }
         Err(Failure::Reported) => 1,
     }
+}
+
+fn push_command(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &PushArgs) -> Outcome {
+    let root = shelf_root(ctx, shelf)?;
+    hosted::push(
+        ctx,
+        &root,
+        &hosted::PushOptions {
+            force: args.force,
+            message: args.message.as_deref(),
+            publish: !args.no_publish,
+            url: args.url.as_deref(),
+        },
+    )
 }
 
 fn absolute(ctx: &Context<'_>, path: Option<&Path>) -> PathBuf {

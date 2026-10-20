@@ -1,0 +1,795 @@
+"""A compile applied to a repository, as `shelf.report` recorded it."""
+type Activity {
+  apmYmlDigest: String!
+  commit: String
+  id: ID!
+  keyId: String
+  message: String
+  outcome: String!
+  profile: String!
+  profileRevision: String!
+  recordedAt: DateTime!
+  repository: String!
+
+  """The profile has moved on since."""
+  stale: Boolean!
+}
+
+"""
+A scoped key. Its plaintext is never stored; `prefix` is enough to recognise it and not to use it.
+"""
+type ApiKey {
+  createdAt: DateTime!
+  id: ID!
+  lastUsedAt: DateTime
+  name: String!
+  prefix: String!
+  revokedAt: DateTime
+  scopes: [String!]!
+}
+
+"""
+What a write that changes the shelf's files answers: the new snapshot, or why it was refused (`invalid`: the engine refused the shelf; `missing`: upload these objects first; `conflict`: the shelf moved since `parent`).
+"""
+type CommitResult {
+  changedItems: [String!]!
+  changedProfiles: [String!]!
+  errors: [ShelfProblem!]!
+  missing: [String!]!
+  ok: Boolean!
+  reason: String
+  removedItems: [String!]!
+  snapshot: Snapshot
+}
+
+"""
+A compiled profile: exactly what `shelfkit compile --dry-run --json` prints and `shelf.compile.plan` returns.
+"""
+type CompilePlan {
+  apmYml: String!
+  apmYmlDigest: String!
+  files: JSON!
+  installCommand: String!
+
+  """The whole plan as JSON."""
+  json: JSON!
+  notes: JSON!
+  profile: String!
+  profileRevision: String!
+}
+
+"""
+Something the composer's conflict panel shows: an engine error (`error`), or a resolver notice or compile note.
+"""
+type Conflict {
+  code: String!
+  message: String!
+  path: String!
+  severity: Severity!
+}
+
+"""
+Where an item lands in apm.yml when a profile pinned by revision compiles it: an upstream `dependencies.apm` entry (`entry`, YAML), the profile's vendored package, a `dependencies.mcp` or `dependencies.lsp` entry, or `unresolvable` with the reason.
+"""
+type Coordinate {
+  entry: String
+  kind: String!
+  message: String
+  name: String
+}
+
+"""An RFC 3339 UTC timestamp."""
+scalar DateTime
+
+"""What in the shelf names an item: its reverse dependencies."""
+type Dependents {
+  bundles: [String!]!
+  profiles: [String!]!
+  recommendedBy: [String!]!
+  requiredBy: [String!]!
+}
+
+"""An imported item's pin against its upstream now."""
+type Drift {
+  checkedAt: DateTime
+  error: String
+  latest: JSON
+
+  """
+  What the item is pinned to: its `source`'s ref, commit, version, and digest.
+  """
+  pinned: JSON
+  status: DriftStatus!
+}
+
+"""
+Whether an imported item's upstream has moved since it was pinned. `authored`: not imported. `unchecked`: imported, not checked yet.
+"""
+enum DriftStatus {
+  authored
+  current
+  error
+  gone
+  moved
+  unchecked
+}
+
+"""
+An import: a source, the candidates it offers, what was picked with which pins, and how it went.
+"""
+type ImportJob {
+  candidates: JSON!
+  createdAt: DateTime!
+  error: String
+  id: ID!
+  imported: [String!]!
+  picks: JSON!
+  source: JSON!
+  status: String!
+  updatedAt: DateTime!
+  warnings: [String!]!
+}
+
+"""
+An item: an addressable primitive of the shelf, at its current revision.
+"""
+type Item {
+  asCommand: Boolean
+
+  """
+  The text of the file the kind is defined by (prompt.md, SKILL.md, agent.md, AGENTS.fragment.md).
+  """
+  body: String
+  coordinate: Coordinate!
+  createdAt: DateTime!
+  dependents: Dependents!
+  description: String!
+
+  """The item's item.json."""
+  document: JSON!
+  drift: Drift!
+  favourite: Boolean!
+  files: [ItemFile!]!
+  id: ID!
+  kind: ItemKind!
+  path: String!
+  revision: String!
+
+  """One past or current revision."""
+  revisionAt(revision: String!): ItemRevision
+
+  """Every revision, newest first."""
+  revisions: [ItemRevision!]!
+
+  """The scan state of the current revision."""
+  scanStatus: ScanStatus!
+
+  """
+  Every verdict on every revision, newest first, disagreeing ones included.
+  """
+  scans: [ScanRecord!]!
+
+  """
+  Provenance: where the item came from, its pin, licence, and attribution. Null when authored here.
+  """
+  source: JSON
+  tags: [String!]!
+  targets: [String!]!
+  title: String!
+  updatedAt: DateTime!
+
+  """A prompt's variables; empty for other kinds."""
+  variables: JSON!
+}
+
+"""
+A file of an item at one revision, its path relative to the item directory.
+"""
+type ItemFile {
+  """The text, or base64 when `encoding` is `base64`."""
+  contents: String!
+  encoding: String!
+  path: String!
+  sha256: String!
+  size: Int!
+}
+
+"""
+A file of an item, relative to its directory: text, or base64 for bytes that are not UTF-8.
+"""
+input ItemFileInput {
+  contents: String!
+  encoding: String = "utf-8"
+  path: String!
+}
+
+"""The ten item kinds (`docs/PRD.md` section 5.2)."""
+enum ItemKind {
+  agent
+  hook
+  instructions
+  library
+  lsp
+  mcp
+  plugin
+  prompt
+  skill
+  stack
+}
+
+type ItemList {
+  nodes: [SearchHit!]!
+  total: Int!
+}
+
+"""
+One immutable snapshot of an item: what a profile pins and what a scan verdict attaches to.
+"""
+type ItemRevision {
+  createdAt: DateTime!
+  document: JSON!
+  files: [ItemFile!]!
+  keyId: String
+  message: String
+  revision: String!
+  snapshot: String!
+}
+
+"""
+Any JSON value: a shelf document (item.json, a profile) exactly as the shelf holds it.
+"""
+scalar JSON
+
+"""
+A key just created. `secret` is its plaintext, shown this once and stored nowhere.
+"""
+type KeySecret {
+  key: ApiKey!
+  secret: String!
+}
+
+type Mutation {
+  """
+  Make these files the shelf's snapshot, after uploading each to `/raw/{shelf}/objects/{sha256}`: `shelfkit push`. The first snapshot creates the shelf (owner only).
+  """
+  commitSnapshot(
+    files: [SnapshotFileInput!]!
+    message: String
+
+    """The snapshot this one replaces; refused if the shelf has moved since."""
+    parent: String
+    shelf: ID!
+  ): CommitResult!
+
+  """
+  Create a scoped key on a shelf. The owner only. The plaintext is in this answer and nowhere else.
+  """
+  createKey(
+    name: String!
+
+    """
+    read, read:{shelf}/{profile}, publish:{shelf}/{profile}, publish:{shelf}/*, mcp:{shelf}/{item}.
+    """
+    scopes: [String!]!
+    shelf: ID!
+  ): KeySecret!
+  createShareLink(profile: ID!, shelf: ID!): ShareLinkSecret!
+  deleteItem(id: ID!, shelf: ID!): CommitResult!
+  deleteProfile(id: ID!, shelf: ID!): CommitResult!
+
+  """
+  Queue indexing a shelf from a GitHub repository through the REST API; the result arrives as a `snapshot` event.
+  """
+  indexRepository(
+    ref: String
+
+    """owner/repo on GitHub."""
+    repository: String!
+
+    """The directory holding the shelf; the root by default."""
+    root: String
+    shelf: ID!
+  ): Boolean!
+  pickImport(
+    job: ID!
+
+    """`[{ candidate, id?, pin? }]`."""
+    picks: JSON!
+    shelf: ID!
+  ): ImportJob!
+
+  """
+  Create or change a secret name and bind it to the one origin its value may be sent to. The owner only.
+  """
+  putSecretName(
+    description: String
+    name: String!
+
+    """The one origin (https://host[:port]) the value may be sent to."""
+    origin: String!
+    shelf: ID!
+  ): Boolean!
+  putSource(
+    shelf: ID!
+
+    """A shelf.json source entry."""
+    source: JSON!
+  ): CommitResult!
+
+  """Record that the viewer used an item (copied it): its recents."""
+  recordUse(item: ID!, shelf: ID!): Boolean!
+  removeSecretName(name: String!, shelf: ID!): Boolean!
+  removeSource(id: String!, shelf: ID!): CommitResult!
+
+  """
+  Record that a plan was applied to a repository: `shelf.report` over GraphQL.
+  """
+  reportActivity(
+    """`shelf.report`'s input."""
+    input: JSON!
+  ): JSON!
+
+  """
+  Revoke a key. It fails on GraphQL, the registry, and /mcp from the next request. The owner only.
+  """
+  revokeKey(id: ID!, shelf: ID!): Boolean!
+  revokeShareLink(id: ID!, shelf: ID!): Boolean!
+
+  """
+  Create or replace a profile (profiles/<id>.json), validated by the engine with the whole shelf.
+  """
+  saveProfile(document: JSON!, message: String, shelf: ID!): CommitResult!
+  setFavourite(favourite: Boolean!, item: ID!, shelf: ID!): Boolean!
+
+  """
+  Serve anonymous reads, or stop: shelf.json's `registry.public`. The owner only.
+  """
+  setVisibility(public: Boolean!, shelf: ID!): CommitResult!
+
+  """
+  Hold a key in an HttpOnly cookie for the browser, so the SPA never reads it.
+  """
+  signIn(key: String!): Viewer!
+  signOut: Boolean!
+
+  """
+  Start an import: discovery runs on the job queue, and the job moves to `ready` with its candidates.
+  """
+  startImport(
+    shelf: ID!
+
+    """`{ kind, repo?, url?, ref?, path?, sourceId?, profile? }`."""
+    source: JSON!
+  ): ImportJob!
+
+  """
+  Edit a prompt in place. The edit is a new revision of the prompt and a new snapshot of the shelf.
+  """
+  updatePrompt(
+    asCommand: Boolean
+
+    """The new prompt.md."""
+    body: String
+    description: String
+    id: ID!
+    message: String
+    shelf: ID!
+    tags: [String!]
+    title: String
+    variables: JSON
+  ): CommitResult!
+
+  """Create or replace an item."""
+  writeItem(
+    """The item.json."""
+    document: JSON!
+
+    """Every other file of the item; they replace the item's files."""
+    files: [ItemFileInput!]!
+    message: String
+    shelf: ID!
+  ): CommitResult!
+}
+
+type PlanResult {
+  errors: [ShelfProblem!]!
+  plan: CompilePlan
+}
+
+type Profile {
+  """
+  The registry dependency that installs this profile: `{shelf}/{profile}` on the shelf's registry.
+  """
+  apmCoordinate: String!
+  description: String!
+
+  """The profile as profiles/<id>.json holds it."""
+  document: JSON!
+  id: ID!
+
+  """The resolved items."""
+  items: [Item!]!
+  plan: PlanResult!
+  published: RegistryPackage
+  resolution: Resolution!
+  revision: String!
+  revisions: [ProfileRevision!]!
+  title: String!
+  version: String
+}
+
+"""
+An unsaved profile, resolved and compiled for the composer. Nothing is written.
+"""
+type ProfilePreview {
+  conflicts: [Conflict!]!
+  errors: [ShelfProblem!]!
+  plan: CompilePlan
+  resolution: Resolution
+}
+
+type ProfileRevision {
+  createdAt: DateTime!
+  document: JSON!
+  revision: String!
+  snapshot: String!
+}
+
+type Query {
+  """
+  The share links the viewer may manage: every one for a member, else those of the profiles it may edit. A key that may create a profile's link lists it here even when it cannot read the shelf.
+  """
+  shareLinks(shelf: ID!): [ShareLink!]!
+
+  """The profile a share link names. Needs no key."""
+  sharedProfile(token: String!): SharedProfile
+
+  """One shelf, or null when there is none the viewer can read."""
+  shelf(id: ID!): Shelf
+
+  """
+  The shelves the viewer can reach: every shelf for the owner, a key's own shelf otherwise.
+  """
+  shelves: [Shelf!]!
+  viewer: Viewer!
+}
+
+type RecentItem {
+  item: Item!
+  usedAt: DateTime!
+  uses: Int!
+}
+
+"""
+What a repository's stack markers match: the stack-marker tester and `shelf.recommend`.
+"""
+type Recommendation {
+  items: [RecommendedItem!]!
+
+  """The markers read from the sample."""
+  markers: JSON!
+  profiles: JSON!
+
+  """The stacks whose markers matched."""
+  stacks: [String!]!
+}
+
+type RecommendedItem {
+  item: Item!
+
+  """The markers this item matched; empty when only recommended."""
+  matched: JSON!
+  recommendedBy: [String!]!
+}
+
+"""A profile published to the shelf's OpenAPM registry."""
+type RegistryPackage {
+  package: String!
+  versions: JSON!
+}
+
+"""
+A profile with bundles, extends, and requires expanded: the composer's resolution rail.
+"""
+type Resolution {
+  compile: JSON!
+
+  """Every problem, by severity."""
+  conflicts: [Conflict!]!
+  items: [ResolvedItem!]!
+  json: JSON!
+  notices: JSON!
+
+  """Items pinned to a revision in the profile."""
+  pinned: [ResolvedItem!]!
+  revision: String!
+
+  """
+  Items the profile names by id alone; they compile at the shelf's current revision.
+  """
+  unpinned: [ResolvedItem!]!
+}
+
+type ResolvedItem {
+  current: String!
+  id: ID!
+  kind: ItemKind!
+
+  """Why the item is in the profile."""
+  origin: JSON!
+  pinned: Boolean!
+  revision: String!
+}
+
+"""
+A scanner's verdict on one revision, recorded against the hash ShelfKit computed.
+"""
+type ScanRecord {
+  detailsUrl: String
+  id: ID!
+  observed: String
+  recordedAt: DateTime!
+  revision: String!
+  scanner: String!
+  summary: String
+  verdict: String!
+}
+
+"""
+A revision's scan state. `unscanned` is not `clean`: no scanner has seen this revision. `disputed`: scanners disagree.
+"""
+enum ScanStatus {
+  clean
+  disputed
+  flagged
+  unscanned
+}
+
+type SearchHit {
+  item: Item!
+
+  """The matching text, when the match is in the item's content."""
+  snippet: String
+}
+
+"""
+A secret name items and sources may reference as `{ "secret": "NAME" }`. Its value is the Worker secret `SHELFKIT_SECRET_<NAME>`, set with Wrangler, and is sent only to `origin`; `configured` says whether it is set.
+"""
+type SecretName {
+  configured: Boolean!
+  createdAt: DateTime!
+  description: String
+  name: String!
+
+  """The one origin the value may be sent to; null releases it nowhere."""
+  origin: String
+}
+
+enum Severity {
+  error
+  info
+  warning
+}
+
+type ShareLink {
+  createdAt: DateTime!
+  id: ID!
+  profile: String!
+  revokedAt: DateTime
+}
+
+"""
+A share link just created: `token` is shown once; the public page is `/share/{token}`.
+"""
+type ShareLinkSecret {
+  link: ShareLink!
+  token: String!
+}
+
+"""A profile behind a share link: read-only, no key."""
+type SharedProfile {
+  document: JSON!
+  errors: [ShelfProblem!]!
+  id: ID!
+  items: JSON!
+  plan: CompilePlan
+  resolution: JSON!
+  shelf: String!
+  title: String!
+}
+
+"""One shelf: one Durable Object, one registry namespace."""
+type Shelf {
+  """
+  Which repositories compiled which profile revision, newest first, and whether it is stale.
+  """
+  activity(before: DateTime, limit: Int, profile: String): [Activity!]!
+
+  """Every bundle, as bundles/<id>.json holds it."""
+  bundles: [JSON!]!
+  databaseBytes: Float!
+  defaultProfile: String
+  description: String!
+  favourites: [Item!]!
+
+  """The current snapshot's files: what `shelfkit fetch` downloads."""
+  files: [SnapshotFile!]!
+  id: ID!
+  importJob(id: ID!): ImportJob
+  importJobs: [ImportJob!]!
+  item(id: ID!): Item
+  itemCount: Int!
+
+  """
+  The inventory: every item, or those matching `query`, filtered by kind and tag.
+  """
+  items(
+    kinds: [ItemKind!]
+    limit: Int
+    offset: Int
+
+    """Full-text over titles, descriptions, tags, and bodies."""
+    query: String
+
+    """Items carrying every one of these tags."""
+    tags: [String!]
+  ): ItemList!
+
+  """The shelf's scoped keys. The owner only."""
+  keys: [ApiKey!]!
+
+  """
+  Which of these digests a committed snapshot of the shelf has ever referenced: content the service has. `shelfkit fetch` replaces a local file only when its content is known here, so it never discards unpushed work.
+  """
+  knownObjects(
+    """Lowercase hex SHA-256 digests, at most 2000."""
+    sha256: [String!]!
+  ): [String!]!
+
+  """shelf.json."""
+  manifest: JSON!
+  name: String!
+  notices: JSON!
+  owner: String
+  packages: [RegistryPackage!]!
+
+  """
+  Resolve and compile a profile document that is not saved: the composer's live preview.
+  """
+  previewProfile(document: JSON!): ProfilePreview!
+  profile(id: ID!): Profile
+  profileCount: Int!
+  profiles: [Profile!]!
+
+  """The prompt library: prompts only, searchable by body."""
+  prompts(
+    favouritesOnly: Boolean
+    limit: Int
+    offset: Int
+
+    """Full-text over prompt bodies, titles, descriptions, and tags."""
+    query: String
+    tags: [String!]
+  ): ItemList!
+
+  """Whether anonymous reads are served."""
+  public: Boolean!
+
+  """Items this key used most recently."""
+  recents(limit: Int): [RecentItem!]!
+  recommend(dependencies: [String!], files: [String!], packageManager: String): Recommendation!
+
+  """The base URL APM's `registries` entry names for this deployment."""
+  registryUrl: String!
+  secretNames: [SecretName!]!
+  shareLinks: [ShareLink!]!
+  snapshot: Snapshot
+  snapshots(limit: Int): [Snapshot!]!
+
+  """shelf.json's `sources`."""
+  sources: JSON!
+
+  """
+  The composer's stack-marker tester: which stacks a sample package.json matches, and what they bring.
+  """
+  stackMatch(
+    """Files at the repository's root, besides package.json."""
+    files: [String!]
+    packageJson: String!
+  ): Recommendation!
+  tags: [TagCount!]!
+  viewerAccess: ShelfAccess!
+}
+
+"""What the viewer may do on this shelf."""
+type ShelfAccess {
+  member: Boolean!
+  owner: Boolean!
+
+  """Profiles the viewer may edit besides all of them when `write`."""
+  profiles: [String!]!
+  read: Boolean!
+
+  """Hosted MCP items the viewer may relay; `*` for every one (the owner)."""
+  relay: [String!]!
+  write: Boolean!
+}
+
+"""A change to a shelf, pushed from its Durable Object."""
+type ShelfEvent {
+  at: DateTime!
+  id: String!
+  kind: ShelfEventKind!
+}
+
+enum ShelfEventKind {
+  activity
+  import
+  item
+  keys
+  package
+  profile
+  scan
+  settings
+  snapshot
+  upstream
+}
+
+"""A problem with the shelf, in the file it came from."""
+type ShelfProblem {
+  message: String!
+  path: String!
+}
+
+"""
+One state of the shelf's files. Its manifest is the R2 object named by `digest`.
+"""
+type Snapshot {
+  createdAt: DateTime!
+  digest: String!
+  fileCount: Int!
+  keyId: String
+  message: String
+  origin: String!
+  parent: String
+  totalBytes: Float!
+}
+
+"""
+A file of the current snapshot: download it from `/raw/{shelf}/objects/{sha256}`.
+"""
+type SnapshotFile {
+  path: String!
+  sha256: String!
+  size: Int!
+}
+
+input SnapshotFileInput {
+  path: String!
+  sha256: String!
+  size: Int!
+}
+
+type Subscription {
+  """
+  Every change to the shelf, over server-sent events (send `Accept: text/event-stream`).
+  """
+  shelfChanged(shelf: ID!): ShelfEvent!
+}
+
+type TagCount {
+  count: Int!
+  tag: String!
+}
+
+"""Who the request is: the owner, a scoped key, or nobody."""
+type Viewer {
+  authenticated: Boolean!
+  keyId: String
+  keyName: String
+  owner: Boolean!
+  scopes: [String!]!
+
+  """The shelf a scoped key belongs to."""
+  shelf: String
+}

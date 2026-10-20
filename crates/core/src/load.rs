@@ -864,6 +864,17 @@ impl Loader<'_> {
             if let Err(ErrorKind::Invalid(message)) = item::validate_id(&source.id) {
                 self.invalid(SHELF_JSON, format!("`sources`: {message}"));
             }
+            if let Some(name) = &source.secret
+                && !crate::secret::is_secret_name(name)
+            {
+                self.invalid(
+                    SHELF_JSON,
+                    format!(
+                        "source `{}`: secret name `{name}` must be UPPER_SNAKE_CASE",
+                        source.id
+                    ),
+                );
+            }
             if !seen.insert(source.id.as_str()) {
                 self.invalid(
                     SHELF_JSON,

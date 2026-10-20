@@ -601,3 +601,28 @@ fn the_schema_package_lists_exactly_the_notice_codes_rust_emits() {
         .collect();
     assert_eq!(listed, emitted);
 }
+
+#[test]
+fn a_source_names_its_secret_by_reference_only() {
+    let shelf = |secret: &str| {
+        let mut source = MemorySource::new();
+        source.insert(
+            "shelf.json",
+            format!(
+                r#"{{ "name": "t", "sources": [{{ "id": "private", "kind": "git", "repo": "https://github.com/acme/private", "secret": "{secret}" }}] }}"#
+            )
+            .into_bytes(),
+        );
+        load(&source)
+    };
+    let loaded = shelf("GITHUB_TOKEN").unwrap();
+    assert_eq!(
+        loaded.manifest.sources[0].secret.as_deref(),
+        Some("GITHUB_TOKEN")
+    );
+    let errors = shelf("ghp_notaname").unwrap_err();
+    assert!(
+        errors.to_string().contains("must be UPPER_SNAKE_CASE"),
+        "{errors}"
+    );
+}

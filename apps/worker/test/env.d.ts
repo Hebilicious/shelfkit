@@ -1,0 +1,16 @@
+/// <reference types="@cloudflare/vitest-plugin/types" />
+import "vitest";
+
+declare module "vitest" {
+  interface ProvidedContext {
+    /** A fixture shelf with every item kind: path from its root to base64 contents. */
+    readonly allKindsShelf: Record<string, string>;
+    /** ShelfKit's own shelf. */
+    readonly ownShelf: Record<string, string>;
+    /** The registry conformance suite: `cases.json`, and each archive in base64 by its `file`. */
+    readonly conformance: {
+      readonly cases: string;
+      readonly archives: Record<string, string>;
+    };
+  }
+}

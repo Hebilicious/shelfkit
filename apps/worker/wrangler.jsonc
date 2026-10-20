@@ -15,9 +15,12 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     // Everything that is not a static file goes to the Worker.
-    "run_worker_first": ["/graphql", "/mcp", "/apm/*"],
+    "run_worker_first": ["/health", "/graphql", "/mcp", "/apm/*", "/raw/*"],
   },
-  // One Durable Object per shelf, with its own SQLite database.
+  // The shelf object's migrations are generated SQL files, bundled as text (`drizzle/migrations.js` imports them).
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }],
+  // One Durable Object per shelf, with its own SQLite database. The migration entries below are generated from the
+  // classes `src/index.ts` exports (`moon run worker:do-migrations`), and the gate fails when they disagree.
   "durable_objects": {
     "bindings": [{ "name": "SHELF", "class_name": "ShelfIndex" }],
   },
@@ -27,6 +30,8 @@
       "new_sqlite_classes": ["ShelfIndex"],
     },
   ],
+  // Content by sha256 under `objects/`; published archives under `archives/`, which a bucket lock keeps immutable;
+  // `shelves/` lists the shelves held.
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "shelfkit-blobs" }],
   "queues": {
     "producers": [{ "binding": "JOBS", "queue": "shelfkit-jobs" }],

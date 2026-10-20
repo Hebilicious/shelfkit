@@ -128,6 +128,12 @@ export const SourceSchema = v.strictObject({
   version: v.optional(v.string()),
 });
 
+/** A secret name: what `{ "secret": NAME }` and a source's `secret` refer to. */
+export const SecretNameSchema = v.pipe(
+  v.string(),
+  v.regex(/^[A-Z][A-Z0-9_]*$/u, "must be UPPER_SNAKE_CASE")
+);
+
 /** A secret is a reference to a name the runtime resolves, never a literal. A literal is for values that are not secret. */
 export const SecretValueSchema = v.union([
   v.string(),
@@ -356,6 +362,119 @@ export const ProfileSummarySchema = v.strictObject({
   title: v.string(),
 });
 
+/** A bundle exactly as `bundles/<id>.json` holds it: a named item list with no compile settings. */
+export const BundleSchema = v.strictObject({
+  $schema: v.optional(v.string()),
+  description: v.optional(v.string()),
+  id: ProfileIdSchema,
+  items: v.array(ItemRefSchema),
+  title: v.string(),
+});
+
+/** The kinds of place items come from (`docs/PRD.md` section 6): the Rust `SourceKind`. */
+export const SourceKindSchema = v.picklist([
+  "git",
+  "apm-registry",
+  "shelfkit",
+  "catalog",
+  "marketplace",
+  "path",
+]);
+
+/** An entry in `shelf.json`'s `sources`: the Rust `ShelfSource`. */
+export const ShelfSourceSchema = v.strictObject({
+  id: v.string(),
+  kind: SourceKindSchema,
+  path: v.optional(v.string()),
+  /** For a `shelfkit` source: the profile to import. */
+  profile: v.optional(v.string()),
+  repo: v.optional(v.string()),
+  /** The secret name of a credential the source needs; released only to the origin the owner bound it to. */
+  secret: v.optional(SecretNameSchema),
+  tier: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0))),
+  url: v.optional(v.string()),
+});
+
+/** `shelf.json`: the Rust `Manifest`. */
+export const ShelfManifestSchema = v.strictObject({
+  $schema: v.optional(v.string()),
+  defaultProfile: v.optional(v.string()),
+  description: v.optional(v.string()),
+  name: v.string(),
+  owner: v.optional(v.string()),
+  /** How the shelf appears as an OpenAPM registry; a hosted service addresses the shelf by `namespace`. */
+  registry: v.optional(
+    v.strictObject({
+      namespace: ShelfIdSchema,
+      public: v.optional(v.boolean()),
+    })
+  ),
+  sources: v.optional(v.array(ShelfSourceSchema)),
+});
+
+/** Where an item lands in `apm.yml` when a profile pinned by revision compiles it: the Rust `Coordinate`. */
+export const CoordinateSchema = v.variant("kind", [
+  /** A `dependencies.apm` reference to its upstream; `entry` is that entry as YAML. */
+  v.strictObject({ entry: v.string(), kind: v.literal("upstream") }),
+  /** Its content is vendored into the profile's local package. */
+  v.strictObject({ kind: v.literal("vendored") }),
+  v.strictObject({ kind: v.literal("mcp"), name: v.nullable(v.string()) }),
+  v.strictObject({ kind: v.literal("lsp"), name: v.string() }),
+  /** Its `source` cannot be referenced; compiling it fails with `message`. */
+  v.strictObject({ kind: v.literal("unresolvable"), message: v.string() }),
+]);
+
+/** A whole shelf indexed by the engine: the Rust `engine::Inventory`. */
+export const InventorySchema = v.strictObject({
+  bundles: v.array(BundleSchema),
+  items: v.array(
+    v.strictObject({
+      coordinate: CoordinateSchema,
+      /** Relative to the item directory, sorted. */
+      files: v.array(v.string()),
+      item: ItemSchema,
+      /** The item directory, relative to the shelf root. */
+      path: v.string(),
+      revision: RevisionSchema,
+    })
+  ),
+  manifest: ShelfManifestSchema,
+  notices: v.array(NoticeSchema),
+  profiles: v.array(
+    v.strictObject({
+      profile: ProfileSchema,
+      resolution: ResolvedProfileSchema,
+    })
+  ),
+});
+
+/** What `shelfkit recommend --json` prints: the Rust `Recommendation`. */
+export const RecommendationSchema = v.strictObject({
+  items: v.array(
+    v.strictObject({
+      id: ItemIdSchema,
+      kind: ItemKindSchema,
+      matched: MarkersSchema,
+      recommendedBy: v.array(ItemIdSchema),
+      title: v.string(),
+    })
+  ),
+  profiles: v.array(
+    v.strictObject({
+      id: ProfileIdSchema,
+      items: v.array(ItemIdSchema),
+      title: v.string(),
+    })
+  ),
+});
+
+export type Bundle = v.InferOutput<typeof BundleSchema>;
+export type Coordinate = v.InferOutput<typeof CoordinateSchema>;
+export type Inventory = v.InferOutput<typeof InventorySchema>;
+export type Recommendation = v.InferOutput<typeof RecommendationSchema>;
+export type ShelfManifest = v.InferOutput<typeof ShelfManifestSchema>;
+export type ShelfSource = v.InferOutput<typeof ShelfSourceSchema>;
+export type SourceKind = v.InferOutput<typeof SourceKindSchema>;
 export type ItemKind = v.InferOutput<typeof ItemKindSchema>;
 export type Item = v.InferOutput<typeof ItemSchema>;
 export type ItemSummary = v.InferOutput<typeof ItemSummarySchema>;

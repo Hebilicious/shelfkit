@@ -5,11 +5,18 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
+    "@pothos/core": "catalog:",
     "@shelfkit/engine": "workspace:*",
-    "@shelfkit/schema": "workspace:*"
+    "@shelfkit/importers": "workspace:*",
+    "@shelfkit/schema": "workspace:*",
+    "drizzle-orm": "catalog:",
+    "graphql": "catalog:",
+    "graphql-yoga": "catalog:",
+    "valibot": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "catalog:",
+    "drizzle-kit": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "wrangler": "catalog:"

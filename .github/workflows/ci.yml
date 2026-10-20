@@ -27,6 +27,11 @@ jobs:
 
       - run: moon ci --include-relations
 
+      # `wrangler check startup`, with a CPU budget: a heavy module-scope build is the documented way to trip the
+      # Worker's startup limit. `moon ci` runs it when the Worker is affected; this runs it on every pull request, from
+      # moon's cache when it already ran.
+      - run: moon run worker:startup-check
+
       - if: always()
         uses: actions/upload-artifact@v5
         with:
@@ -47,3 +52,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: moon run :build :check :lint :test
+
+      # Already part of `worker:check`; named here so the startup check is visible in CI.
+      - run: moon run worker:startup-check
