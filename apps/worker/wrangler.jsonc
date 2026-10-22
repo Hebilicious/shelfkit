@@ -26,16 +26,18 @@
   },
   // The shelf object's migrations are generated SQL files, bundled as text (`drizzle/migrations.js` imports them).
   "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }],
-  // One Durable Object per shelf, with its own SQLite database. The migration entries below are generated from the
-  // classes `src/index.ts` exports (`moon run worker:do-migrations`), and the gate fails when they disagree.
+  // One Durable Object per shelf, with its own SQLite database, and one per person who signs in to the browser
+  // (`AccountIndex`: their passkeys and sign-in links). The migration entries below are generated from the classes
+  // `src/index.ts` exports (`moon run worker:do-migrations`), and the gate fails when they disagree.
   "durable_objects": {
-    "bindings": [{ "name": "SHELF", "class_name": "ShelfIndex" }],
+    "bindings": [
+      { "name": "SHELF", "class_name": "ShelfIndex" },
+      { "name": "ACCOUNT", "class_name": "AccountIndex" },
+    ],
   },
   "migrations": [
-    {
-      "tag": "v1",
-      "new_sqlite_classes": ["ShelfIndex"],
-    },
+    { "tag": "v1", "new_sqlite_classes": ["ShelfIndex"] },
+    { "tag": "v2", "new_sqlite_classes": ["AccountIndex"] },
   ],
   // Content by sha256 under `objects/`; published archives under `archives/`, which a bucket lock keeps immutable;
   // `shelves/` lists the shelves held.

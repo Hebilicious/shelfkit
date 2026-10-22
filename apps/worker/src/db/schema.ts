@@ -182,18 +182,39 @@ export const apiKey = sqliteTable(
 );
 
 /**
- * What the owner granted a GitHub account on this shelf, for the browser: the same scopes a key holds. Keyed by the
- * account's numeric id, which GitHub never reassigns; the login is what it was when granted, for display. Revoking
- * deletes the row, and a browser signed in as that account loses the access at its next request.
+ * What the owner granted a person on this shelf, for the browser: the same scopes a key holds. Keyed by the person's
+ * principal: `person:<32 hex>` for someone who accepted an invite, or `github:<numeric id>` for a GitHub account when
+ * GitHub sign-in is enabled. `name` is what to call them. Revoking deletes the row, and a browser signed in as that
+ * person loses the access at its next request.
  */
-export const githubGrant = sqliteTable("github_grant", {
+export const accessGrant = sqliteTable("access_grant", {
   createdAt: text("created_at").notNull(),
-  githubId: text("github_id").primaryKey(),
-  login: text().notNull(),
+  name: text().notNull(),
+  principal: text().primaryKey(),
   scopes: text({ mode: "json" }).$type<string[]>().notNull(),
 });
 
-/** Favourite items, per key. The owner key's id is `owner`; a GitHub account's is `github:<id>`. */
+/**
+ * An invite: a one-time link that gives whoever opens it a grant on this shelf, until `expires_at`. Only the SHA-256
+ * of its token is kept. Used, it records whom it was used by; revoked, it no longer opens.
+ */
+export const invite = sqliteTable(
+  "invite",
+  {
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    id: text().primaryKey(),
+    name: text().notNull(),
+    revokedAt: text("revoked_at"),
+    scopes: text({ mode: "json" }).$type<string[]>().notNull(),
+    tokenHash: text("token_hash").notNull(),
+    usedAt: text("used_at"),
+    usedBy: text("used_by"),
+  },
+  (table) => [uniqueIndex("invite_token").on(table.tokenHash)]
+);
+
+/** Favourite items, per key. The owner key's id is `owner`; a signed-in person's is their principal. */
 export const favourite = sqliteTable(
   "favourite",
   {

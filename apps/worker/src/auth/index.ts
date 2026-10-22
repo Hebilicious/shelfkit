@@ -4,22 +4,25 @@
  * Nothing caches a key's or a grant's resolution.
  *
  * Programs present a key: `Authorization: Bearer <key>`, or HTTP Basic with the key as the password (the registry's
- * alternative form). A browser presents the session cookie that signing in with GitHub sets (`browser.ts`,
- * `github.ts`), which names a GitHub account and holds no key and no GitHub token. An `Authorization` header wins over
- * the cookie. `/mcp` is for programs and reads the header only (`authenticateHeader`). See `docs/PRD.md` section 10.3.
+ * alternative form). A browser presents the session cookie that signing in sets (`browser.ts`): with a passkey
+ * (`passkeys.ts`), a one-time link (`links.ts`), or GitHub when it is enabled (`github.ts`). It names a principal and
+ * holds no key. An `Authorization` header wins over the cookie. `/mcp` is for programs and reads the header only
+ * (`authenticateHeader`). See `docs/PRD.md` section 10.3.
  */
 import { ShelfIdSchema } from "@shelfkit/schema";
 import * as v from "valibot";
 
 import { readCookie, SESSION_COOKIE, verifySession } from "./browser.ts";
 import { parseSecret, sameHash, secretHash } from "./keys.ts";
-import type { GitHubIdentity, Session } from "./session.ts";
+import { accountStub } from "./principals.ts";
+import { OWNER_PRINCIPAL } from "./session.ts";
+import type { Person, Session } from "./session.ts";
 
-export type { GitHubIdentity, Session, ShelfAccess } from "./session.ts";
+export type { Person, Session, ShelfAccess } from "./session.ts";
 export {
   access,
-  githubKeyId,
   grantSession,
+  OWNER_PRINCIPAL,
   mayEditProfile,
   mayRelay,
   registryAccess,
@@ -140,9 +143,14 @@ export async function authenticateHeader(
 }
 
 /**
- * Resolve the browser's session cookie: the owner when it names the deployment's owner account (`OWNER_GITHUB_ID`),
- * else a `github` session that each shelf's object resolves to its grant. `null` when the cookie is not a valid
- * session, or the deployment has no `SESSION_SECRET` to check it with.
+ * Resolve the browser's session cookie. `null` when the cookie is not a valid session, the deployment has no
+ * `SESSION_SECRET` to check it with, or the person it names was removed by the owner.
+ *
+ * - `owner`, or the owner's GitHub account (`github:<OWNER_GITHUB_ID>`), is the owner;
+ * - an invited person is a `person` session, once their account object says the account still exists;
+ * - any other GitHub account is a `person` session.
+ *
+ * A `person` session holds what each shelf's object grants its principal, read on every call.
  */
 export async function sessionForCookie(
   env: Env,
@@ -152,36 +160,54 @@ export async function sessionForCookie(
   if (secret === undefined || secret === "") {
     return null;
   }
-  const identity = await verifySession(secret, token);
-  return identity === null ? null : sessionForGitHub(env, identity);
+  const claims = await verifySession(secret, token);
+  if (claims === null) {
+    return null;
+  }
+  const { person } = claims;
+  if (person.id.startsWith("person:")) {
+    const current = await accountStub(env, person.id).person();
+    return current === null ? null : { kind: "person", person: current };
+  }
+  return sessionForPerson(env, person);
 }
 
-/** The session of a GitHub account: the owner's when it is the deployment's owner account. */
-export function sessionForGitHub(env: Env, identity: GitHubIdentity): Session {
-  const owner = env.OWNER_GITHUB_ID?.trim();
-  return owner !== undefined && owner !== "" && owner === identity.id
-    ? { github: identity, keyId: "owner", kind: "owner" }
-    : { github: identity, kind: "github" };
+/** The session of someone who signed in: the owner's when it is the owner principal or the owner's GitHub account. */
+export function sessionForPerson(env: Env, person: Person): Session {
+  const ownerGitHub = env.OWNER_GITHUB_ID?.trim();
+  if (
+    person.id === OWNER_PRINCIPAL ||
+    (ownerGitHub !== undefined &&
+      ownerGitHub !== "" &&
+      person.id === `github:${ownerGitHub}`)
+  ) {
+    return {
+      keyId: "owner",
+      kind: "owner",
+      person: { id: OWNER_PRINCIPAL, name: person.name },
+    };
+  }
+  return { kind: "person", person };
 }
 
 /**
- * Where the deployment lists the shelves that granted a GitHub account access: an empty object
- * `grants/<github id>/<shelf>` per grant, written and removed by the shelf's object with the grant. It only says where
- * to look, so a signed-in account's shelf list asks only those shelves; each shelf's object still decides access from
- * its own `github_grant` table.
+ * Where the deployment lists the shelves that granted a principal access: an empty object
+ * `grants/<principal>/<shelf>` per grant, written and removed by the shelf's object with the grant. It only says where
+ * to look, so a signed-in person's shelf list asks only those shelves; each shelf's object still decides access from
+ * its own `access_grant` table.
  */
 export const GRANT_MARKERS = "grants/";
 
-export function grantMarker(githubId: string, shelf: string): string {
-  return `${GRANT_MARKERS}${githubId}/${shelf}`;
+export function grantMarker(principal: string, shelf: string): string {
+  return `${GRANT_MARKERS}${principal}/${shelf}`;
 }
 
-/** The shelves whose grant markers name a GitHub account, every page of them. */
+/** The shelves whose grant markers name a principal, every page of them. */
 export async function grantedShelves(
   env: Env,
-  githubId: string
+  principal: string
 ): Promise<string[]> {
-  const prefix = `${GRANT_MARKERS}${githubId}/`;
+  const prefix = `${GRANT_MARKERS}${principal}/`;
   const shelves: string[] = [];
   let cursor: string | undefined;
   do {

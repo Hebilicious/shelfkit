@@ -157,7 +157,7 @@ tasks:
     options:
       runInCI: false
   setup:
-    description: "Provision R2, the bucket lock, the queues, the owner key, the session secret, and the owner's GitHub account, deploy, check /health, then create the deployment's GitHub App for signing in. Idempotent. Pass options after `--`: --dry-run, --keychain, --rotate-owner-key, --rotate-session-secret, --github-owner <login>, --github-org <org>, --recreate-github-app."
+    description: "Provision R2, the bucket lock, the queues, the owner key, and the session secret, deploy, check /health, then open the owner's one-time sign-in link to add a passkey. Idempotent. Pass options after `--`: --dry-run, --keychain, --no-open, --rotate-owner-key, --rotate-session-secret, and --github-sign-in (with --github-owner <login>, --github-org <org>, --recreate-github-app) to let people sign in with GitHub too."
     command: "../../node_modules/.bin/tsx ../../scripts/setup.ts"
     deps:
       - "web:build"

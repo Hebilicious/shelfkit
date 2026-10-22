@@ -1,5 +1,8 @@
 /**
- * Signing in with GitHub, for the browser: `GET /auth/github/start` and `GET /auth/github/callback`.
+ * Signing in with GitHub, for the browser, when the deployment enables it (`moon run worker:setup -- --github-sign-in`):
+ * `GET /auth/github/start` and `GET /auth/github/callback`. Passkeys and one-time links are the default
+ * (`passkeys.ts`, `links.ts`); this is the opt-in alternative, and a GitHub account signs in as the principal
+ * `github:<numeric id>`, or as the owner when it is `OWNER_GITHUB_ID`.
  *
  * The deployment has its own GitHub App (or OAuth App), created by `moon run worker:setup`, that requests no
  * permissions: it only tells the Worker who signed in. The flow is OAuth's authorization code flow with PKCE:
@@ -80,6 +83,11 @@ function configOf(env: Env): GitHubConfig | null {
     sessionSecret,
     web: web.replace(/\/+$/u, ""),
   };
+}
+
+/** Whether the deployment signs people in with GitHub: it has the app's client id and secret, and a session secret. */
+export function githubSignInEnabled(env: Env): boolean {
+  return configOf(env) !== null;
 }
 
 /** Characters `next` may never hold: controls, space, and `\`, which browsers read as `/` or drop from a URL. */
@@ -221,7 +229,10 @@ async function finish(
   if (identity === null) {
     return failed("github");
   }
-  const session = await signSession(config.sessionSecret, identity);
+  const session = await signSession(config.sessionSecret, {
+    id: `github:${identity.id}`,
+    name: `@${identity.login}`,
+  });
   // Checked again on the way out, so no `next` reaches a `Location` header unchecked.
   return redirect(localPath(pending.output.next, url.origin), [
     stateCookie("", 0),

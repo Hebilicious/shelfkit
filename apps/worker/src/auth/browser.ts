@@ -1,29 +1,44 @@
 /**
- * The browser's session cookie, set when someone signs in with GitHub (`github.ts`).
+ * The browser's session cookie, set when someone signs in: with a passkey (`passkeys.ts`), a one-time sign-in link
+ * (`links.ts`), or GitHub when it is enabled (`github.ts`).
  *
- * It holds no GitHub token and no key: only the GitHub account's numeric id, its login for display, and an expiry,
- * signed with HMAC-SHA256 under the Worker secret `SESSION_SECRET`. The Worker resolves it to a `Session` on every
- * request (`auth/index.ts`), so what the account may do is read fresh each time: the owner when the id is
- * `OWNER_GITHUB_ID`, otherwise each shelf's grant to it. Rotating `SESSION_SECRET` signs every browser out.
+ * It holds no key, no passkey, and no GitHub token: only the principal (`owner`, `person:<id>`, or `github:<id>`),
+ * a name to show, when it was issued, and an expiry, signed with HMAC-SHA256 under the Worker secret
+ * `SESSION_SECRET`. The Worker resolves it to a `Session` on every request (`auth/index.ts`), so what the principal
+ * may do is read fresh each time, and a person whose account the owner removed is signed out at their next request.
+ * Rotating `SESSION_SECRET` signs every browser out.
  *
  * `HttpOnly`, so the SPA never reads it; `Secure`; `SameSite=Strict`, so no other site's request carries it; and the
  * `__Host-` prefix, so it is set only by this origin, for every path, with no `Domain`.
  */
 import * as v from "valibot";
 
-import type { GitHubIdentity } from "./session.ts";
+import type { Person } from "./session.ts";
 
 export const SESSION_COOKIE = "__Host-shelfkit_session";
 
 /** How long a sign-in lasts: 30 days. */
 export const SESSION_SECONDS = 30 * 24 * 60 * 60;
 
+/** A principal, as `Person.id` names it. */
+export const PrincipalSchema = v.pipe(
+  v.string(),
+  v.regex(/^(?:owner|person:[0-9a-f]{32}|github:[1-9][0-9]{0,19})$/u)
+);
+
 const ClaimsSchema = v.strictObject({
   exp: v.pipe(v.number(), v.integer()),
-  login: v.pipe(v.string(), v.minLength(1), v.maxLength(39)),
-  sub: v.pipe(v.string(), v.regex(/^[1-9][0-9]{0,19}$/u)),
-  v: v.literal(1),
+  iat: v.pipe(v.number(), v.integer()),
+  name: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
+  sub: PrincipalSchema,
+  v: v.literal(2),
 });
+
+/** A verified session: who, and when it was issued (seconds). */
+export interface SessionClaims {
+  readonly person: Person;
+  readonly issuedAt: number;
+}
 
 const encoder = new TextEncoder();
 
@@ -111,32 +126,37 @@ export async function verifyClaims(
   }
 }
 
-/** A signed session for `identity`, valid for `SESSION_SECONDS` from `now` (milliseconds). */
+/** A signed session for `person`, valid for `SESSION_SECONDS` from `now` (milliseconds). */
 export async function signSession(
   secret: string,
-  identity: GitHubIdentity,
+  person: Person,
   now: number = Date.now()
 ): Promise<string> {
+  const issued = Math.floor(now / 1000);
   const claims: v.InferOutput<typeof ClaimsSchema> = {
-    exp: Math.floor(now / 1000) + SESSION_SECONDS,
-    login: identity.login,
-    sub: identity.id,
-    v: 1,
+    exp: issued + SESSION_SECONDS,
+    iat: issued,
+    name: person.name.slice(0, 64),
+    sub: person.id,
+    v: 2,
   };
   return await signClaims(secret, claims);
 }
 
-/** The account a session names, or `null` when it is malformed, signed with another secret, or expired. */
+/** Who a session names, or `null` when it is malformed, signed with another secret, or expired. */
 export async function verifySession(
   secret: string,
   token: string,
   now: number = Date.now()
-): Promise<GitHubIdentity | null> {
+): Promise<SessionClaims | null> {
   const claims = v.safeParse(ClaimsSchema, await verifyClaims(secret, token));
   if (!claims.success || claims.output.exp <= Math.floor(now / 1000)) {
     return null;
   }
-  return { id: claims.output.sub, login: claims.output.login };
+  return {
+    issuedAt: claims.output.iat,
+    person: { id: claims.output.sub, name: claims.output.name },
+  };
 }
 
 /** `Set-Cookie` for a new session. */

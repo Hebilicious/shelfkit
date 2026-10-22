@@ -23,7 +23,7 @@ import { runJob } from "../src/jobs/consumer.ts";
 import { once } from "../src/runtime/once.ts";
 import { resolveSecret } from "../src/secrets.ts";
 import type { ShelfIndex } from "../src/shelf-index.ts";
-import { FAKE_ACCOUNTS, TEST_SESSION_SECRET } from "./fake-github.ts";
+import { TEST_SESSION_SECRET } from "./fake-github.ts";
 import {
   createKey,
   data,
@@ -39,8 +39,8 @@ import {
 /** The session cookie a browser holds once the owner's GitHub account signed in. */
 async function ownerSessionCookie(): Promise<string> {
   const token = await signSession(TEST_SESSION_SECRET, {
-    id: String(FAKE_ACCOUNTS.owner.id),
-    login: FAKE_ACCOUNTS.owner.login,
+    id: "owner",
+    name: "Owner",
   });
   return `__Host-shelfkit_session=${token}`;
 }
@@ -268,8 +268,8 @@ describe("4. a stale session in the browser's cookie", () => {
   it("is cleared, and the request is anonymous, so the browser can sign in again", async () => {
     // Signed with a secret the deployment no longer has: what every browser holds after `SESSION_SECRET` rotates.
     const stale = await signSession("a-rotated-secret", {
-      id: String(FAKE_ACCOUNTS.owner.id),
-      login: FAKE_ACCOUNTS.owner.login,
+      id: "owner",
+      name: "Owner",
     });
     const headers = {
       cookie: `__Host-shelfkit_session=${stale}`,

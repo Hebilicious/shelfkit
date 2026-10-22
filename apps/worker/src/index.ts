@@ -6,7 +6,8 @@
  *   /mcp       stateless MCP tools (`mcp/`, issue #6)
  *   /graphql   everything the UI and CLI do, including key management (`graphql/`)
  *   /raw/*     a shelf's content-addressed files, for `shelfkit push` and `fetch` (`raw.ts`)
- *   /auth/github/*  signing the browser in with GitHub (`auth/github.ts`)
+ *   /auth/passkey/*  signing the browser in with a passkey, and adding one (`auth/passkeys.ts`)
+ *   /auth/github/*   signing the browser in with GitHub, when enabled (`auth/github.ts`)
  *   /health    liveness
  *   /*         the SPA, from the assets binding
  *
@@ -17,6 +18,7 @@
  */
 import { githubRoute } from "./auth/github.ts";
 import { authenticateHeader } from "./auth/index.ts";
+import { passkeyRoute } from "./auth/passkeys.ts";
 import { graphqlRoute } from "./graphql/route.ts";
 import { unauthorized } from "./http.ts";
 import { consume, scheduled } from "./jobs/consumer.ts";
@@ -24,6 +26,7 @@ import { handleMcp } from "./mcp/index.ts";
 import { rawRoute } from "./raw.ts";
 import { registryRoute } from "./registry.ts";
 
+export { AccountIndex } from "./auth/accounts.ts";
 export { ShelfIndex } from "./shelf-index.ts";
 
 export default {
@@ -44,6 +47,9 @@ export default {
     }
     if (pathname.startsWith("/auth/github/")) {
       return await githubRoute(request, env);
+    }
+    if (pathname.startsWith("/auth/passkey/")) {
+      return await passkeyRoute(request, env);
     }
     if (pathname === "/mcp") {
       const session = await authenticateHeader(request, env);

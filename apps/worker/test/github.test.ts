@@ -110,14 +110,14 @@ const ViewerSchema = v.object({
   shelves: v.array(v.object({ id: v.string() })),
   viewer: v.object({
     authenticated: v.boolean(),
-    githubId: v.nullable(v.string()),
-    login: v.nullable(v.string()),
+    name: v.nullable(v.string()),
     owner: v.boolean(),
+    principal: v.nullable(v.string()),
   }),
 });
 
 const VIEWER =
-  "{ viewer { authenticated owner login githubId } shelves { id } }";
+  "{ viewer { authenticated owner name principal } shelves { id } }";
 
 /** GraphQL as the browser sends it: the cookie, from this origin. */
 async function asBrowser(
@@ -180,9 +180,9 @@ describe("signing in with GitHub", () => {
       shelves: [{ id: "acme" }],
       viewer: {
         authenticated: true,
-        githubId: String(FAKE_ACCOUNTS.owner.id),
-        login: FAKE_ACCOUNTS.owner.login,
+        name: `@${FAKE_ACCOUNTS.owner.login}`,
         owner: true,
+        principal: "owner",
       },
     });
   });
@@ -203,7 +203,8 @@ describe("signing in with GitHub", () => {
     );
     expect(Object.keys(claims ?? {}).toSorted()).toStrictEqual([
       "exp",
-      "login",
+      "iat",
+      "name",
       "sub",
       "v",
     ]);
@@ -331,8 +332,8 @@ describe("signing in with GitHub", () => {
     );
     // A cookie the deployment's real secret signed: with no secret configured, even it is refused.
     const cookie = await signSession(TEST_SESSION_SECRET, {
-      id: String(FAKE_ACCOUNTS.owner.id),
-      login: FAKE_ACCOUNTS.owner.login,
+      id: `github:${FAKE_ACCOUNTS.owner.id}`,
+      name: `@${FAKE_ACCOUNTS.owner.login}`,
     });
     const presented = await authenticateRequest(
       new Request(`${ORIGIN}/graphql`, {
@@ -367,19 +368,20 @@ describe("the session cookie", () => {
     const owner = btoa(
       JSON.stringify({
         exp: 4_000_000_000,
-        login: "shelf-owner",
-        sub: String(FAKE_ACCOUNTS.owner.id),
-        v: 1,
+        iat: 1,
+        name: "Owner",
+        sub: "owner",
+        v: 2,
       })
     ).replace(/=+$/u, "");
     const expired = await signSession(
       TEST_SESSION_SECRET,
-      { id: String(FAKE_ACCOUNTS.owner.id), login: "shelf-owner" },
+      { id: "owner", name: "Owner" },
       Date.now() - 31 * 24 * 60 * 60 * 1000
     );
     const rotated = await signSession("another-secret", {
-      id: String(FAKE_ACCOUNTS.owner.id),
-      login: "shelf-owner",
+      id: "owner",
+      name: "Owner",
     });
     for (const token of [
       `${owner}.${signature}`,
@@ -434,14 +436,14 @@ describe("the session cookie", () => {
 
 const GrantSchema = v.object({
   grantAccess: v.object({
-    githubId: v.string(),
-    login: v.string(),
+    name: v.string(),
+    principal: v.string(),
     scopes: v.array(v.string()),
   }),
 });
 
 const GRANT = `mutation Grant($shelf: ID!, $login: String!, $scopes: [String!]!) {
-  grantAccess(shelf: $shelf, login: $login, scopes: $scopes) { githubId login scopes }
+  grantAccess(shelf: $shelf, login: $login, scopes: $scopes) { principal name scopes }
 }`;
 
 /** The error the owner's grant of `scopes` on `acme` to `login` is refused with. */
@@ -482,9 +484,9 @@ describe("a GitHub account that is not the owner", () => {
       shelves: [],
       viewer: {
         authenticated: true,
-        githubId: String(FAKE_ACCOUNTS.ada.id),
-        login: "ada",
+        name: "@ada",
         owner: false,
+        principal: `github:${FAKE_ACCOUNTS.ada.id}`,
       },
     });
     const shelf = await asBrowser(cookie, SHELF, { shelf: "acme" });
@@ -506,8 +508,8 @@ describe("a GitHub account that is not the owner", () => {
       shelf: "acme",
     });
     expect(granted.grantAccess).toStrictEqual({
-      githubId: String(FAKE_ACCOUNTS.ada.id),
-      login: "ada",
+      name: "@ada",
+      principal: `github:${FAKE_ACCOUNTS.ada.id}`,
       scopes: ["read", "publish:acme/*"],
     });
     const reached = await viewerOf(cookie);
@@ -570,8 +572,8 @@ describe("a GitHub account that is not the owner", () => {
     expect(v.parse(ShelfSchema, before.data).shelf?.id).toBe("acme");
     const revoked = await data(
       v.object({ revokeAccess: v.boolean() }),
-      "mutation Revoke($shelf: ID!, $id: ID!) { revokeAccess(shelf: $shelf, githubId: $id) }",
-      { id: String(FAKE_ACCOUNTS.ada.id), shelf: "acme" }
+      "mutation Revoke($shelf: ID!, $id: ID!) { revokeAccess(shelf: $shelf, principal: $id) }",
+      { id: `github:${FAKE_ACCOUNTS.ada.id}`, shelf: "acme" }
     );
     expect(revoked.revokeAccess).toBeTruthy();
     const after = await asBrowser(cookie, SHELF, { shelf: "acme" });
@@ -622,19 +624,19 @@ describe("a GitHub account that is not the owner", () => {
       await data(GrantSchema, GRANT, { login: "ada", scopes: ["read"], shelf });
     }
     const markers = await env.BLOBS.list({
-      prefix: `grants/${FAKE_ACCOUNTS.ada.id}/`,
+      prefix: `grants/github:${FAKE_ACCOUNTS.ada.id}/`,
     });
     // A shelf whose marker is gone is not listed, though its grant still holds when the shelf is opened.
-    await env.BLOBS.delete(`grants/${FAKE_ACCOUNTS.ada.id}/other`);
+    await env.BLOBS.delete(`grants/github:${FAKE_ACCOUNTS.ada.id}/other`);
     const listed = await viewerOf(cookie);
     const opened = await asBrowser(cookie, SHELF, { shelf: "other" });
     await data(
       v.object({ revokeAccess: v.boolean() }),
-      "mutation Revoke($shelf: ID!, $id: ID!) { revokeAccess(shelf: $shelf, githubId: $id) }",
-      { id: String(FAKE_ACCOUNTS.ada.id), shelf: "acme" }
+      "mutation Revoke($shelf: ID!, $id: ID!) { revokeAccess(shelf: $shelf, principal: $id) }",
+      { id: `github:${FAKE_ACCOUNTS.ada.id}`, shelf: "acme" }
     );
     const left = await env.BLOBS.list({
-      prefix: `grants/${FAKE_ACCOUNTS.ada.id}/`,
+      prefix: `grants/github:${FAKE_ACCOUNTS.ada.id}/`,
     });
     expect({
       left: left.objects.map((object) => object.key),
@@ -645,8 +647,8 @@ describe("a GitHub account that is not the owner", () => {
       left: [],
       listed: [{ id: "acme" }],
       markers: [
-        `grants/${FAKE_ACCOUNTS.ada.id}/acme`,
-        `grants/${FAKE_ACCOUNTS.ada.id}/other`,
+        `grants/github:${FAKE_ACCOUNTS.ada.id}/acme`,
+        `grants/github:${FAKE_ACCOUNTS.ada.id}/other`,
       ],
       opened: "other",
     });
@@ -663,14 +665,14 @@ describe("a GitHub account that is not the owner", () => {
       v.object({
         shelf: v.object({
           grants: v.array(
-            v.object({ login: v.string(), scopes: v.array(v.string()) })
+            v.object({ name: v.string(), scopes: v.array(v.string()) })
           ),
         }),
       }),
-      `{ shelf(id: "acme") { grants { login scopes } } }`
+      `{ shelf(id: "acme") { grants { name scopes } } }`
     );
     expect(listed.shelf.grants).toStrictEqual([
-      { login: "grace", scopes: ["read"] },
+      { name: "@grace", scopes: ["read"] },
     ]);
     const key = await createKey("acme", ["read"]);
     const asKey = await graphql(
@@ -678,7 +680,7 @@ describe("a GitHub account that is not the owner", () => {
         {
           shelf(id: "acme") {
             grants {
-              login
+              name
             }
           }
         }

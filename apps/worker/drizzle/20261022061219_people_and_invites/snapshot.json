@@ -1,11 +1,15 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "13f7ea92-7571-48ab-b666-619e8c57e7d1",
+  "id": "344e5df6-dec1-47b8-8d28-17ccebc30b12",
   "prevIds": [
     "aebbeb9d-dd56-4e68-825a-e788d183cbe8"
   ],
   "ddl": [
+    {
+      "name": "access_grant",
+      "entityType": "tables"
+    },
     {
       "name": "activity",
       "entityType": "tables"
@@ -31,11 +35,11 @@
       "entityType": "tables"
     },
     {
-      "name": "github_grant",
+      "name": "import_job",
       "entityType": "tables"
     },
     {
-      "name": "import_job",
+      "name": "invite",
       "entityType": "tables"
     },
     {
@@ -89,6 +93,46 @@
     {
       "name": "upstream",
       "entityType": "tables"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "access_grant"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "access_grant"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "principal",
+      "entityType": "columns",
+      "table": "access_grant"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "scopes",
+      "entityType": "columns",
+      "table": "access_grant"
     },
     {
       "type": "text",
@@ -392,46 +436,6 @@
     },
     {
       "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "table": "github_grant"
-    },
-    {
-      "type": "text",
-      "notNull": false,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "github_id",
-      "entityType": "columns",
-      "table": "github_grant"
-    },
-    {
-      "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "login",
-      "entityType": "columns",
-      "table": "github_grant"
-    },
-    {
-      "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "scopes",
-      "entityType": "columns",
-      "table": "github_grant"
-    },
-    {
-      "type": "text",
       "notNull": false,
       "autoincrement": false,
       "default": null,
@@ -539,6 +543,96 @@
       "name": "warnings",
       "entityType": "columns",
       "table": "import_job"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "invite"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "table": "invite"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "invite"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "invite"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "revoked_at",
+      "entityType": "columns",
+      "table": "invite"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "scopes",
+      "entityType": "columns",
+      "table": "invite"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "token_hash",
+      "entityType": "columns",
+      "table": "invite"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "used_at",
+      "entityType": "columns",
+      "table": "invite"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "used_by",
+      "entityType": "columns",
+      "table": "invite"
     },
     {
       "type": "text",
@@ -1402,6 +1496,15 @@
     },
     {
       "columns": [
+        "principal"
+      ],
+      "nameExplicit": false,
+      "name": "access_grant_pk",
+      "table": "access_grant",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
         "id"
       ],
       "nameExplicit": false,
@@ -1447,11 +1550,11 @@
     },
     {
       "columns": [
-        "github_id"
+        "id"
       ],
       "nameExplicit": false,
-      "name": "github_grant_pk",
-      "table": "github_grant",
+      "name": "import_job_pk",
+      "table": "import_job",
       "entityType": "pks"
     },
     {
@@ -1459,8 +1562,8 @@
         "id"
       ],
       "nameExplicit": false,
-      "name": "import_job_pk",
-      "table": "import_job",
+      "name": "invite_pk",
+      "table": "invite",
       "entityType": "pks"
     },
     {
@@ -1585,6 +1688,20 @@
       "name": "api_key_hash",
       "entityType": "indexes",
       "table": "api_key"
+    },
+    {
+      "columns": [
+        {
+          "value": "token_hash",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "invite_token",
+      "entityType": "indexes",
+      "table": "invite"
     },
     {
       "columns": [
