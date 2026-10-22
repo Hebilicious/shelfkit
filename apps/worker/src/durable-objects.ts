@@ -14,4 +14,5 @@ export interface DurableObjectClass {
 
 export const DURABLE_OBJECTS: readonly DurableObjectClass[] = [
   { binding: "SHELF", className: "ShelfIndex" },
+  { binding: "ACCOUNT", className: "AccountIndex" },
 ];

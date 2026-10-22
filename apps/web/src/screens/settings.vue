@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 
 import { execute, messageOf } from "../api/graphql.ts";
 import { readSources } from "../api/json.ts";
 import type { ShelfSourceEntry } from "../api/json.ts";
 import {
+  AccessQuery,
   CreateKeyMutation,
   CreateShareLinkMutation,
   PutSecretNameMutation,
@@ -16,8 +17,11 @@ import {
   SetVisibilityMutation,
   SettingsQuery,
 } from "../api/operations.ts";
+import AccountPanel from "../components/account-panel.vue";
+import PeoplePanel from "../components/people-panel.vue";
 import QueryState from "../components/query-state.vue";
 import { copyToClipboard } from "../composables/clipboard.ts";
+import { loadSignInMethods } from "../composables/session.ts";
 import { useShelfId } from "../composables/shelf-context.ts";
 import { notify, notifyError } from "../composables/toasts.ts";
 import { useQuery } from "../composables/use-query.ts";
@@ -31,6 +35,22 @@ const query = useQuery(async () => {
 
 const settings = computed(() => query.data.value?.shelf ?? null);
 const owner = computed(() => settings.value?.viewerAccess.owner === true);
+
+// Keys, people, and invites are the owner's business, read only when the viewer is the owner.
+const accessQuery = useQuery(async () => {
+  if (!owner.value) {
+    return null;
+  }
+  const data = await execute(AccessQuery, { shelf: shelf.value });
+  return data.shelf;
+}, [shelf, owner]);
+const keys = computed(() => accessQuery.data.value?.keys ?? []);
+const grants = computed(() => accessQuery.data.value?.grants ?? []);
+const invites = computed(() => accessQuery.data.value?.invites ?? []);
+
+onMounted(() => {
+  void loadSignInMethods();
+});
 const canWrite = computed(() => settings.value?.viewerAccess.write === true);
 const sources = computed(() => readSources(settings.value?.sources ?? null));
 const shareLinks = computed(() => query.data.value?.shareLinks ?? []);
@@ -118,7 +138,7 @@ async function createKey(): Promise<void> {
     newSecret.value = data.createKey.secret;
     keyForm.name = "";
     keyForm.scopes = [];
-    await query.refresh();
+    await accessQuery.refresh();
   } catch (error) {
     notifyError(error);
   }
@@ -131,7 +151,7 @@ async function revokeKey(id: string): Promise<void> {
   try {
     await execute(RevokeKeyMutation, { id, shelf: shelf.value });
     notify("Key revoked. It fails everywhere from the next request.");
-    await query.refresh();
+    await accessQuery.refresh();
   } catch (error) {
     notifyError(error);
   }
@@ -288,6 +308,7 @@ async function removeSecretName(
 <template>
   <main class="page settings">
     <h1>Settings</h1>
+    <AccountPanel />
     <QueryState :loading="query.loading.value" :error="query.error.value" :empty="settings === null" />
     <template v-if="settings !== null">
       <section class="panel">
@@ -313,10 +334,19 @@ async function removeSecretName(
         </div>
         <p class="small muted">Storage used by the shelf's database: {{ Math.round(settings.databaseBytes / 1024) }} KiB.</p>
       </section>
+      <PeoplePanel
+        v-if="owner"
+        :grants="grants"
+        :invites="invites"
+        :scope-choices="scopeChoices"
+        :shelf="shelf"
+        @changed="accessQuery.refresh()"
+      />
       <section v-if="owner" class="panel">
         <h2>Keys</h2>
         <p class="small muted">
-          A key is shown once, when it is created. Give the CLI or an agent one with only the scopes it needs.
+          Keys are for programs: the CLI, an agent, CI, or APM's registry client. People sign in with GitHub instead. A
+          key is shown once, when it is created; give each program one with only the scopes it needs.
         </p>
         <div v-if="newSecret !== null" class="panel secret" role="status">
           <strong>Copy this key now; it is not shown again.</strong>
@@ -337,7 +367,7 @@ async function removeSecretName(
             </tr>
           </thead>
           <tbody>
-            <tr v-for="key in settings.keys" :key="key.id">
+            <tr v-for="key in keys" :key="key.id">
               <td>{{ key.name }}</td>
               <td class="mono">{{ key.prefix }}…</td>
               <td class="mono small">{{ key.scopes.join(" ") }}</td>
@@ -351,7 +381,7 @@ async function removeSecretName(
             </tr>
           </tbody>
         </table>
-        <form class="stack" @submit.prevent="createKey">
+        <form aria-label="New key" class="stack" @submit.prevent="createKey">
           <label class="field">New key's name <input v-model="keyForm.name" placeholder="laptop CLI" required /></label>
           <fieldset>
             <legend>Scopes</legend>

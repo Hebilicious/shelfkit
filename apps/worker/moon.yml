@@ -61,11 +61,12 @@ tasks:
       - "wrangler.jsonc"
   test:
     description: "Run the Worker in workerd with Miniflare's bindings: the registry conformance suite, auth on every surface, the shelf object, and the jobs."
-    command: "node_modules/.bin/vitest run"
+    command: "node_modules/.bin/vitest run --project default"
     deps:
       - "web:build"
       - "engine:build"
       - "mcp-conform"
+      - "test-github"
     inputs:
       - "@group(sources)"
       - "test/**/*"
@@ -75,6 +76,16 @@ tasks:
       - "/packages/importers/test/fixtures/http/**/*"
       - "/shelf/**/*"
 
+  test-github:
+    description: "The Worker tests that need GitHub sign-in enabled (vitest.config.ts's `github` project), before the default deployment's: the two projects' Miniflare instances do not run side by side."
+    command: "node_modules/.bin/vitest run --project github"
+    deps:
+      - "web:build"
+      - "engine:build"
+    inputs:
+      - "@group(sources)"
+      - "test/**/*"
+      - "vitest.config.ts"
   mcp-conform:
     description: "Run acid-cat conform against the /mcp composition (AcidCat's binding plus the relay), in Node."
     command: "node_modules/.bin/vitest run --config test/mcp/conform.config.ts"
@@ -157,7 +168,7 @@ tasks:
     options:
       runInCI: false
   setup:
-    description: "Provision R2, the bucket lock, the queues, and the owner key, then deploy and check /health. Idempotent. Pass options after `--`: --dry-run, --keychain, --rotate-owner-key."
+    description: "Provision R2, the bucket lock, the queues, the owner key, and the session secret, deploy, check /health, then open the owner's one-time sign-in link to add a passkey. Idempotent. Pass options after `--`: --dry-run, --keychain, --no-open, --rotate-owner-key, --rotate-session-secret, --no-github-sign-in (turn it off), and --github-sign-in (with --github-owner <login>, --github-org <org>, --recreate-github-app) to let people sign in with GitHub too."
     command: "../../node_modules/.bin/tsx ../../scripts/setup.ts"
     deps:
       - "web:build"

@@ -1,6 +1,6 @@
 /**
  * One auth module for every surface: a key works on GraphQL, the registry, `/raw`, and `/mcp`, and once revoked it fails
- * on all of them at the next request.
+ * on all of them at the next request. The browser's sign-in with GitHub is `github.test.ts`.
  */
 import { abortAllDurableObjects, reset } from "cloudflare:test";
 import { exports } from "cloudflare:workers";
@@ -175,52 +175,5 @@ describe("a key", () => {
       key.secret
     );
     expect(answer.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
-  });
-});
-
-/** Push a shelf, create a key on it, and sign in with that key: the `Set-Cookie` the answer carries. */
-async function signIn(): Promise<string> {
-  await push("acme", shelfOf("acme", false));
-  const key = await createKey("acme", ["read"]);
-  const signedIn = await graphql(
-    "mutation SignIn($key: String!) { signIn(key: $key) { shelf } }",
-    { key: key.secret }
-  );
-  return signedIn.headers.get("set-cookie") ?? "";
-}
-
-describe("the browser's cookie", () => {
-  beforeEach(fresh);
-
-  it("is set HttpOnly, Secure, and SameSite=Strict by signIn", async () => {
-    const cookie = await signIn();
-    expect(cookie).toContain("shelfkit_key=");
-    expect(cookie).toContain("HttpOnly");
-    expect(cookie).toContain("Secure");
-    expect(cookie).toContain("SameSite=Strict");
-  });
-
-  it("authenticates like the header, and is cleared by signOut", async () => {
-    const cookie = await signIn();
-    const viewer = await graphql(VIEWER, {}, undefined, {
-      cookie: cookie.split(";")[0] ?? "",
-      origin: ORIGIN,
-    });
-    expect(v.parse(ViewerSchema, viewer.data).viewer.shelf).toBe("acme");
-
-    const signedOut = await graphql("mutation { signOut }");
-    expect(signedOut.headers.get("set-cookie")).toContain("Max-Age=0");
-  });
-
-  it("is refused by signIn for a key that is not valid", async () => {
-    const answer = await graphql(`
-      mutation {
-        signIn(key: "sko_nope") {
-          owner
-        }
-      }
-    `);
-    expect(answer.errors?.[0]?.extensions?.code).toBe("UNAUTHENTICATED");
-    expect(answer.headers.get("set-cookie")).toBeNull();
   });
 });

@@ -5,13 +5,42 @@
  */
 import { parseScopes, registryScopes } from "./scopes.ts";
 
+/**
+ * Someone signed in in a browser: a principal and what to call them.
+ *
+ * - `owner`: the deployment's owner, by passkey, a sign-in link, or (when GitHub sign-in is enabled) the owner's
+ *   GitHub account;
+ * - `person:<32 hex>`: someone the owner invited, signed in by passkey or sign-in link; their passkeys are in the
+ *   account object of that name (`auth/accounts.ts`);
+ * - `github:<numeric id>`: a GitHub account, when GitHub sign-in is enabled. The id, which GitHub never reassigns.
+ */
+export interface Person {
+  readonly id: string;
+  readonly name: string;
+}
+
+export const OWNER_PRINCIPAL = "owner";
+
 export type Session =
   /** No credential was presented. */
   | { readonly kind: "anonymous" }
   /** A credential was presented and is not a key the service knows: malformed, unknown, or revoked. */
   | { readonly kind: "invalid" }
-  /** The owner key: every scope on every shelf, and key and settings management. */
-  | { readonly kind: "owner"; readonly keyId: "owner" }
+  /**
+   * The owner: every scope on every shelf, and key, grant, and settings management. Presented as the owner key, or as
+   * the browser's session cookie for the owner principal (`person`).
+   */
+  | {
+      readonly kind: "owner";
+      readonly keyId: "owner";
+      readonly person?: Person;
+    }
+  /**
+   * A browser signed in as someone who is not the owner. What they may do on a shelf is that shelf's grant to their
+   * principal, which the shelf's object looks up on every call and turns into a `key` session (`grantSession`), so a
+   * revoked grant fails at once. Without a grant, they are anonymous there.
+   */
+  | { readonly kind: "person"; readonly person: Person }
   /**
    * The Worker itself, running a queued job or the cron (an import, an upstream check, a scan). Never resolved from a
    * request: only the job code makes one, and only it may record discoveries, drift, and verdicts.
@@ -44,6 +73,28 @@ export interface ShelfAccess {
   readonly relay: "all" | ReadonlySet<string>;
 }
 
+/**
+ * A person's session on one shelf, from the scopes that shelf granted their principal: a key session, as a key's would
+ * be, whose id (for favourites, recents, and records) is the principal.
+ */
+export function grantSession(
+  shelf: string,
+  person: Person,
+  scopes: readonly string[]
+): Session {
+  return {
+    keyId: person.id,
+    kind: "key",
+    name: person.name,
+    scopes,
+    shelf,
+  };
+}
+
+/**
+ * What a session may do on one shelf. A `person` session is resolved to its grant by the shelf's object before it
+ * gets here; one that was not is treated as anonymous.
+ */
 export function access(
   session: Session,
   shelf: string,
@@ -108,7 +159,8 @@ export function mayRelay(granted: ShelfAccess, item: string): boolean {
  * private shelf exists.
  */
 export function registryAccess(session: Session, owner: string) {
-  if (session.kind === "anonymous") {
+  // A `person` session the shelf's object did not resolve to its grant holds nothing here.
+  if (session.kind === "anonymous" || session.kind === "person") {
     return { credential: "anonymous" } as const;
   }
   if (session.kind === "owner" || session.kind === "system") {

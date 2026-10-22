@@ -24,18 +24,27 @@ import type { GraphQLSchema } from "graphql";
 import * as v from "valibot";
 
 import {
+  GitHubRateLimitedError,
+  githubSignInEnabled,
+  lookUpAccount,
+} from "../auth/github.ts";
+import {
   access,
+  grantedShelves,
   listShelves,
   shelfExists,
-  sessionForKey,
   shelfStub,
-  signInCookie,
   signOutCookie,
 } from "../auth/index.ts";
+import type { Session } from "../auth/index.ts";
 import { parseSecret, secretHash } from "../auth/keys.ts";
+import type { PasskeyRecord } from "../auth/principals.ts";
 import type { JobMessage } from "../jobs/messages.ts";
 import type {
+  GrantRecord,
   ImportJobRecord,
+  InvitePreview as InvitePreviewRecord,
+  InviteRecord,
   ItemDetail,
   RevisionRecord,
   ShelfSummary,
@@ -43,6 +52,7 @@ import type {
 import type { Committed, ShelfEvent, ShelfProblem } from "../shelf/api.ts";
 import { PRIMARY_FILE } from "../shelf/files.ts";
 import type { GraphQLContext } from "./context.ts";
+import * as people from "./people.ts";
 
 interface ShelfNode {
   readonly id: string;
@@ -206,6 +216,26 @@ async function existingShelf(context: GraphQLContext, shelf: string) {
   return exists ? shelfStub(context.env, shelf) : null;
 }
 
+/**
+ * The session as one shelf sees it: for a browser signed in as someone who is not the owner, that shelf's grant to
+ * them (a key session) or anonymous, asked of the shelf's object once per request. Any other session is itself.
+ */
+async function shelfSession(
+  context: GraphQLContext,
+  shelf: string
+): Promise<Session> {
+  const { session } = context;
+  if (session.kind !== "person") {
+    return session;
+  }
+  return await context.memo(`session ${shelf}`, async () => {
+    const target = await existingShelf(context, shelf);
+    return target === null
+      ? { kind: "anonymous" }
+      : await target.effectiveSession(session);
+  });
+}
+
 /** The shelf's object for a mutation, or `NOT_FOUND` when the deployment holds no such shelf. */
 async function held(context: GraphQLContext, shelf: string) {
   const target = await existingShelf(context, shelf);
@@ -227,9 +257,18 @@ function encoding(value: string | null | undefined): "utf-8" | "base64" {
   throw badInput(`\`${value}\` is not an encoding: use utf-8 or base64`);
 }
 
+/** Whether the session is someone: a key, or a signed-in browser. */
+function signedIn(session: Session): boolean {
+  return (
+    session.kind === "owner" ||
+    session.kind === "key" ||
+    session.kind === "person"
+  );
+}
+
 function requireKey(context: GraphQLContext): void {
-  if (context.session.kind !== "owner" && context.session.kind !== "key") {
-    throw new GraphQLError("this needs a key", {
+  if (!signedIn(context.session)) {
+    throw new GraphQLError("this needs a key, or signing in", {
       extensions: { code: "UNAUTHENTICATED" },
     });
   }
@@ -1220,6 +1259,172 @@ export function buildSchema(): GraphQLSchema {
     }),
   });
 
+  const Grant = builder.objectRef<GrantRecord>("Grant").implement({
+    description:
+      "Someone the owner let sign in to this shelf in the browser, with the scopes a key would hold.",
+    fields: (t) => ({
+      createdAt: t.field({
+        resolve: (row) => row.createdAt,
+        type: "DateTime",
+      }),
+      kind: t.string({
+        description:
+          "`person` (someone who accepted an invite) or `github` (a GitHub account).",
+        resolve: (row) =>
+          row.principal.startsWith("github:") ? "github" : "person",
+      }),
+      name: t.exposeString("name", { description: "What to call them." }),
+      principal: t.exposeID("principal", {
+        description: "`person:<id>` or `github:<numeric id>`.",
+      }),
+      scopes: t.exposeStringList("scopes"),
+    }),
+  });
+
+  const Invite = builder.objectRef<InviteRecord>("Invite").implement({
+    description:
+      "A one-time link that gives whoever opens it a grant on the shelf. Its token is shown once, when it is made.",
+    fields: (t) => ({
+      createdAt: t.field({
+        resolve: (row) => row.createdAt,
+        type: "DateTime",
+      }),
+      expiresAt: t.field({
+        resolve: (row) => row.expiresAt,
+        type: "DateTime",
+      }),
+      id: t.exposeID("id"),
+      name: t.exposeString("name", { description: "Who it is for." }),
+      revokedAt: t.field({
+        nullable: true,
+        resolve: (row) => row.revokedAt,
+        type: "DateTime",
+      }),
+      scopes: t.exposeStringList("scopes"),
+      usedAt: t.field({
+        nullable: true,
+        resolve: (row) => row.usedAt,
+        type: "DateTime",
+      }),
+    }),
+  });
+
+  const InviteSecret = builder
+    .objectRef<{ readonly invite: InviteRecord; readonly url: string }>(
+      "InviteSecret"
+    )
+    .implement({
+      description:
+        "A new invite and its link: the link is in this answer and nowhere else.",
+      fields: (t) => ({
+        invite: t.field({ resolve: (row) => row.invite, type: Invite }),
+        url: t.exposeString("url"),
+      }),
+    });
+
+  const InvitePreview = builder
+    .objectRef<InvitePreviewRecord>("InvitePreview")
+    .implement({
+      description: "What an invite offers, before it is accepted.",
+      fields: (t) => ({
+        expiresAt: t.field({
+          resolve: (row) => row.expiresAt,
+          type: "DateTime",
+        }),
+        name: t.exposeString("name"),
+        scopes: t.exposeStringList("scopes"),
+        shelf: t.exposeID("shelf"),
+        shelfName: t.exposeString("shelfName"),
+      }),
+    });
+
+  const Passkey = builder.objectRef<PasskeyRecord>("Passkey").implement({
+    description: "A passkey of the signed-in account.",
+    fields: (t) => ({
+      createdAt: t.field({
+        resolve: (row) => row.createdAt,
+        type: "DateTime",
+      }),
+      id: t.exposeID("id"),
+      label: t.exposeString("label"),
+      lastUsedAt: t.field({
+        nullable: true,
+        resolve: (row) => row.lastUsedAt,
+        type: "DateTime",
+      }),
+    }),
+  });
+
+  const SignInLink = builder
+    .objectRef<{ readonly url: string; readonly expiresAt: string }>(
+      "SignInLink"
+    )
+    .implement({
+      description:
+        "A one-time link that signs a browser in: shown once, used once, before `expiresAt`.",
+      fields: (t) => ({
+        expiresAt: t.field({
+          resolve: (row) => row.expiresAt,
+          type: "DateTime",
+        }),
+        url: t.exposeString("url"),
+      }),
+    });
+
+  const SignInLinkPreview = builder
+    .objectRef<{ readonly name: string; readonly switching: boolean }>(
+      "SignInLinkPreview"
+    )
+    .implement({
+      fields: (t) => ({
+        name: t.exposeString("name", {
+          description: "The account the link signs in as.",
+        }),
+        switching: t.exposeBoolean("switching", {
+          description:
+            "Whether the browser is signed in as another account, which the link would replace.",
+        }),
+      }),
+    });
+
+  const LinkRedemption = builder
+    .objectRef<{
+      readonly name: string;
+      readonly owner: boolean;
+      readonly shelf: string | null;
+      readonly offerPasskey: boolean;
+    }>("LinkRedemption")
+    .implement({
+      description: "Who a link signed the browser in as.",
+      fields: (t) => ({
+        name: t.exposeString("name"),
+        offerPasskey: t.exposeBoolean("offerPasskey", {
+          description:
+            "Whether the browser may add a passkey to this account: true for the owner and invited people.",
+        }),
+        owner: t.exposeBoolean("owner"),
+        shelf: t.exposeString("shelf", {
+          description: "The shelf an invite granted access to.",
+          nullable: true,
+        }),
+      }),
+    });
+
+  const SignInMethods = builder
+    .objectRef<{ readonly passkey: boolean; readonly github: boolean }>(
+      "SignInMethods"
+    )
+    .implement({
+      description: "How a browser may sign in to this deployment.",
+      fields: (t) => ({
+        github: t.exposeBoolean("github", {
+          description:
+            "Sign in with GitHub, which the deployment enables with `moon run worker:setup -- --github-sign-in`.",
+        }),
+        passkey: t.exposeBoolean("passkey"),
+      }),
+    });
+
   const ApiKey = builder
     .objectRef<{
       readonly id: string;
@@ -1455,6 +1660,20 @@ export function buildSchema(): GraphQLSchema {
         },
         type: [SnapshotFile],
       }),
+      grants: t.field({
+        description:
+          "The people granted access to the shelf in the browser. The owner only.",
+        resolve: async (shelf, _args, context) => {
+          const found = await stub(context, shelf.id).listGrants(
+            context.session
+          );
+          if (found === null) {
+            throw forbidden("only the owner lists grants");
+          }
+          return found;
+        },
+        type: [Grant],
+      }),
       id: t.id({ resolve: (shelf) => shelf.id }),
       importJob: t.field({
         args: { id: t.arg.id({ required: true }) },
@@ -1474,6 +1693,19 @@ export function buildSchema(): GraphQLSchema {
             shelf.id
           )) ?? [],
         type: [ImportJob],
+      }),
+      invites: t.field({
+        description: "The shelf's invites, newest first. The owner only.",
+        resolve: async (shelf, _args, context) => {
+          const found = await stub(context, shelf.id).listInvites(
+            context.session
+          );
+          if (found === null) {
+            throw forbidden("only the owner lists invites");
+          }
+          return found;
+        },
+        type: [Invite],
       }),
       item: t.field({
         args: { id: t.arg.id({ required: true }) },
@@ -1817,8 +2049,12 @@ export function buildSchema(): GraphQLSchema {
         ],
       }),
       viewerAccess: t.field({
-        resolve: (shelf, _args, context) =>
-          access(context.session, shelf.id, shelf.summary.public),
+        resolve: async (shelf, _args, context) =>
+          access(
+            await shelfSession(context, shelf.id),
+            shelf.id,
+            shelf.summary.public
+          ),
         type: Access,
       }),
     }),
@@ -1827,12 +2063,10 @@ export function buildSchema(): GraphQLSchema {
   const Viewer = builder
     .objectRef<GraphQLContext["session"]>("Viewer")
     .implement({
-      description: "Who the request is: the owner, a scoped key, or nobody.",
+      description:
+        "Who the request is: the owner, a scoped key, someone signed in in the browser, or nobody.",
       fields: (t) => ({
-        authenticated: t.boolean({
-          resolve: (session) =>
-            session.kind === "owner" || session.kind === "key",
-        }),
+        authenticated: t.boolean({ resolve: signedIn }),
         keyId: t.string({
           nullable: true,
           resolve: (session) =>
@@ -1844,8 +2078,28 @@ export function buildSchema(): GraphQLSchema {
           nullable: true,
           resolve: (session) => (session.kind === "key" ? session.name : null),
         }),
+        name: t.string({
+          description:
+            "What to call whoever the browser signed in as: the owner, an invited person, or `@login` for a GitHub account.",
+          nullable: true,
+          resolve: (session) =>
+            session.kind === "owner" || session.kind === "person"
+              ? (session.person?.name ?? null)
+              : null,
+        }),
         owner: t.boolean({ resolve: (session) => session.kind === "owner" }),
+        principal: t.id({
+          description:
+            "The principal the browser signed in as: `owner`, `person:<id>`, or `github:<numeric id>`.",
+          nullable: true,
+          resolve: (session) =>
+            session.kind === "owner" || session.kind === "person"
+              ? (session.person?.id ?? null)
+              : null,
+        }),
         scopes: t.stringList({
+          description:
+            "A scoped key's scopes. A signed-in person's are per shelf: `Shelf.viewerAccess`.",
           resolve: (session) => (session.kind === "key" ? session.scopes : []),
         }),
         shelf: t.string({
@@ -1858,6 +2112,22 @@ export function buildSchema(): GraphQLSchema {
 
   builder.queryType({
     fields: (t) => ({
+      invite: t.field({
+        args: { token: t.arg.string({ required: true }) },
+        description:
+          "What an invite offers, before it is accepted; null when it was used, revoked, or has expired.",
+        nullable: true,
+        resolve: async (_root, args, context) =>
+          await people.previewInvite(context, args.token),
+        type: InvitePreview,
+      }),
+      passkeys: t.field({
+        description:
+          "The passkeys of the signed-in account: the owner's, or an invited person's own.",
+        resolve: async (_root, _args, context) =>
+          await people.passkeys(context),
+        type: [Passkey],
+      }),
       shareLinks: t.field({
         args: { shelf: t.arg.id({ required: true }) },
         description:
@@ -1898,23 +2168,50 @@ export function buildSchema(): GraphQLSchema {
       }),
       shelves: t.field({
         description:
-          "The shelves the viewer can reach: every shelf for the owner, a key's own shelf otherwise.",
+          "The shelves the viewer can reach: every shelf for the owner, a key's own shelf, or the shelves that granted a signed-in person access.",
         resolve: async (_root, _args, context) => {
           const { session } = context;
           if (session.kind === "key") {
             const own = await loadShelf(context, session.shelf);
             return own === null ? [] : [own];
           }
-          if (session.kind !== "owner") {
+          if (session.kind !== "owner" && session.kind !== "person") {
             return [];
           }
-          const listed = await listShelves(context.env);
+          // The owner sees every shelf. A person asks only the shelves their grant markers name, so someone with no
+          // grant (anyone on GitHub, when GitHub sign-in is enabled) costs one R2 list and no shelf object. Each
+          // shelf's object still decides from its own grants.
+          const listed =
+            session.kind === "owner"
+              ? await listShelves(context.env)
+              : await grantedShelves(context.env, session.person.id);
           const found = await Promise.all(
-            listed.map(async (id) => await loadShelf(context, id))
+            listed.map(async (id) => {
+              if (session.kind === "person") {
+                const there = await shelfSession(context, id);
+                if (there.kind !== "key") {
+                  return null;
+                }
+              }
+              return await loadShelf(context, id);
+            })
           );
           return found.filter((shelf): shelf is ShelfNode => shelf !== null);
         },
         type: [Shelf],
+      }),
+      signInLink: t.field({
+        args: { token: t.arg.string({ required: true }) },
+        description:
+          "Whom a sign-in link opens, without using it, and whether opening it would switch this browser from another account; null when it cannot be used.",
+        nullable: true,
+        resolve: async (_root, args, context) =>
+          await people.previewSignInLink(context, args.token),
+        type: SignInLinkPreview,
+      }),
+      signInMethods: t.field({
+        resolve: (_root, _args, context) => people.signInMethods(context),
+        type: SignInMethods,
       }),
       viewer: t.field({
         resolve: (_root, _args, context) => context.session,
@@ -1981,6 +2278,30 @@ export function buildSchema(): GraphQLSchema {
         },
         type: Commit,
       }),
+      createInvite: t.field({
+        args: {
+          name: t.arg.string({
+            description: "Who it is for; what they will be called.",
+            required: true,
+          }),
+          scopes: t.arg.stringList({
+            description:
+              "read, read:{shelf}/{profile}, publish:{shelf}/{profile}, publish:{shelf}/*, mcp:{shelf}/{item}.",
+            required: true,
+          }),
+          shelf: t.arg.id({ required: true }),
+        },
+        description:
+          "Make an invite: a link, used once within 7 days, that gives whoever opens it these scopes on the shelf. The owner only.",
+        resolve: async (_root, args, context) =>
+          await people.createInvite(
+            context,
+            shelfArg(args.shelf),
+            args.name,
+            args.scopes
+          ),
+        type: InviteSecret,
+      }),
       createKey: t.field({
         args: {
           name: t.arg.string({ required: true }),
@@ -2031,6 +2352,13 @@ export function buildSchema(): GraphQLSchema {
         },
         type: ShareLinkSecret,
       }),
+      createSignInLink: t.field({
+        description:
+          "A link that signs a browser in as your own account, used once within 15 minutes: to add a device, or for `shelfkit open` with the owner key.",
+        resolve: async (_root, _args, context) =>
+          await people.newSignInLink(context),
+        type: SignInLink,
+      }),
       deleteItem: t.field({
         args: {
           id: t.arg.id({ required: true }),
@@ -2058,6 +2386,63 @@ export function buildSchema(): GraphQLSchema {
           );
         },
         type: Commit,
+      }),
+      grantAccess: t.field({
+        args: {
+          login: t.arg.string({
+            description:
+              "The GitHub login, resolved to the account's numeric id now.",
+            required: true,
+          }),
+          scopes: t.arg.stringList({
+            description:
+              "read, read:{shelf}/{profile}, publish:{shelf}/{profile}, publish:{shelf}/*, mcp:{shelf}/{item}.",
+            required: true,
+          }),
+          shelf: t.arg.id({ required: true }),
+        },
+        description:
+          "Let a GitHub account sign in to the shelf in the browser with these scopes, replacing any it had, when GitHub sign-in is enabled. The owner only.",
+        resolve: async (_root, args, context) => {
+          if (context.session.kind !== "owner") {
+            throw forbidden("only the owner grants access");
+          }
+          if (!githubSignInEnabled(context.env)) {
+            throw badInput(
+              "GitHub sign-in is not enabled on this deployment: invite people with a link (createInvite) instead"
+            );
+          }
+          const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
+          let account: Awaited<ReturnType<typeof lookUpAccount>>;
+          try {
+            account = await lookUpAccount(context.env, args.login.trim());
+          } catch (error) {
+            if (error instanceof GitHubRateLimitedError) {
+              throw new GraphQLError(error.message, {
+                extensions: { code: "GITHUB_RATE_LIMITED" },
+              });
+            }
+            throw error;
+          }
+          if (account === null) {
+            throw badInput(`GitHub has no account \`${args.login.trim()}\``);
+          }
+          if (account.id === context.env.OWNER_GITHUB_ID?.trim()) {
+            throw badInput(
+              `@${account.login} owns this deployment and already holds every scope`
+            );
+          }
+          const granted = await target.grantAccess(context.session, {
+            person: { id: `github:${account.id}`, name: `@${account.login}` },
+            scopes: args.scopes,
+          });
+          if (!granted.ok) {
+            throw badInput(granted.errors.join("; "));
+          }
+          return granted.grant;
+        },
+        type: Grant,
       }),
       indexRepository: t.boolean({
         args: {
@@ -2188,6 +2573,53 @@ export function buildSchema(): GraphQLSchema {
           return await target.recordUse(context.session, args.shelf, args.item);
         },
       }),
+      redeemLink: t.field({
+        args: {
+          switchAccount: t.arg.boolean({
+            defaultValue: false,
+            description:
+              "Sign in as the link's account even though the browser is signed in as another one. Without it, that is refused (SWITCH_REQUIRED).",
+          }),
+          token: t.arg.string({
+            description: "The link's token: the part of its URL after `#`.",
+            required: true,
+          }),
+        },
+        description:
+          "Use a one-time link: sign in with a sign-in link, or accept an invite. The browser is signed in by the cookie this sets.",
+        resolve: async (_root, args, context) =>
+          await people.redeemLink(
+            context,
+            args.token,
+            args.switchAccount ?? false
+          ),
+        type: LinkRedemption,
+      }),
+      removePasskey: t.boolean({
+        args: {
+          allowLast: t.arg.boolean({
+            defaultValue: false,
+            description: "Remove it even if it is the account's last passkey.",
+          }),
+          id: t.arg.id({ required: true }),
+        },
+        resolve: async (_root, args, context) =>
+          await people.removePasskey(context, args.id, args.allowLast ?? false),
+      }),
+      removePerson: t.boolean({
+        args: {
+          principal: t.arg.id({ required: true }),
+          shelf: t.arg.id({ required: true }),
+        },
+        description:
+          "Remove someone's grant on the shelf and, for an invited person, their account: they are signed out at their next request. The owner only.",
+        resolve: async (_root, args, context) =>
+          await people.removePerson(
+            context,
+            shelfArg(args.shelf),
+            args.principal
+          ),
+      }),
       removeSecretName: t.boolean({
         args: {
           name: t.arg.string({ required: true }),
@@ -2217,6 +2649,14 @@ export function buildSchema(): GraphQLSchema {
         },
         type: Commit,
       }),
+      renamePasskey: t.boolean({
+        args: {
+          id: t.arg.id({ required: true }),
+          label: t.arg.string({ required: true }),
+        },
+        resolve: async (_root, args, context) =>
+          await people.renamePasskey(context, args.id, args.label),
+      }),
       reportActivity: t.field({
         args: {
           input: t.arg({
@@ -2245,6 +2685,35 @@ export function buildSchema(): GraphQLSchema {
           return found.value;
         },
         type: "JSON",
+      }),
+      revokeAccess: t.boolean({
+        args: {
+          principal: t.arg.id({
+            description: "`person:<id>` or `github:<numeric id>`.",
+            required: true,
+          }),
+          shelf: t.arg.id({ required: true }),
+        },
+        description:
+          "Remove someone's grant on the shelf. A browser signed in as them loses the access from its next request. The owner only.",
+        resolve: async (_root, args, context) => {
+          if (context.session.kind !== "owner") {
+            throw forbidden("only the owner revokes access");
+          }
+          const target = await held(context, shelfArg(args.shelf));
+          return await target.revokeAccess(context.session, args.principal);
+        },
+      }),
+      revokeInvite: t.boolean({
+        args: {
+          id: t.arg.id({ required: true }),
+          shelf: t.arg.id({ required: true }),
+        },
+        description: "Revoke an invite nobody has used yet. The owner only.",
+        resolve: async (_root, args, context) => {
+          const target = await held(context, shelfArg(args.shelf));
+          return await target.revokeInvite(context.session, args.id);
+        },
       }),
       revokeKey: t.boolean({
         args: {
@@ -2331,23 +2800,9 @@ export function buildSchema(): GraphQLSchema {
         },
         type: Commit,
       }),
-      signIn: t.field({
-        args: { key: t.arg.string({ required: true }) },
-        description:
-          "Hold a key in an HttpOnly cookie for the browser, so the SPA never reads it.",
-        resolve: async (_root, args, context) => {
-          const session = await sessionForKey(context.env, args.key);
-          if (session.kind !== "owner" && session.kind !== "key") {
-            throw new GraphQLError("the key is not valid", {
-              extensions: { code: "UNAUTHENTICATED" },
-            });
-          }
-          context.cookies.push(signInCookie(args.key));
-          return session;
-        },
-        type: Viewer,
-      }),
       signOut: t.boolean({
+        description:
+          "Sign the browser out: clear its session cookie. A program's key is not affected.",
         resolve: (_root, _args, context) => {
           context.cookies.push(signOutCookie());
           return true;

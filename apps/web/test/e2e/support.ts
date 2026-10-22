@@ -1,6 +1,7 @@
 /**
- * What the Playwright specs share: the deployment they run against, the owner key it trusts, the CLI built from this
- * repository, and seeding a shelf through `shelfkit push`, the way a person would.
+ * What the Playwright specs share: the deployment they run against, the owner key the CLI uses with it, the CLI built
+ * from this repository, seeding a shelf through `shelfkit push`, and signing the browser in with GitHub, the way a
+ * person would.
  */
 import { execFileSync } from "node:child_process";
 import {
@@ -17,6 +18,9 @@ import path from "node:path";
 import { test as base, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import type { Profile } from "@shelfkit/schema";
+import * as v from "valibot";
+
+import { BASE_URL } from "./ports.ts";
 
 /**
  * Every spec's `test`: Playwright's, plus a check that runs on every page the spec opens and fails the test on any
@@ -49,8 +53,7 @@ export const test = base.extend<{ cspViolations: string[] }>({
 
 export { expect } from "@playwright/test";
 
-export const PORT = 8792;
-export const BASE_URL = `http://localhost:${PORT}`;
+export { BASE_URL, PORT } from "./ports.ts";
 
 /** A test value only: the Worker under test is given its hash, as `moon run worker:setup` does for a deployment. */
 export const OWNER_KEY = "sko_e2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee";
@@ -72,11 +75,14 @@ export function temporary(prefix: string): string {
   return mkdtempSync(path.join(tmpdir(), `shelfkit-e2e-${prefix}-`));
 }
 
-/** Run the CLI against the deployment under test, with the owner key, and return its standard output. */
-export function shelfkit(args: readonly string[]): string {
+/** Run the CLI against a deployment under test (the default one unless `url`), with the owner key; its output. */
+export function shelfkit(
+  args: readonly string[],
+  url: string = BASE_URL
+): string {
   return execFileSync(BINARY, args, {
     encoding: "utf-8",
-    env: { ...process.env, SHELFKIT_KEY: OWNER_KEY, SHELFKIT_URL: BASE_URL },
+    env: { ...process.env, SHELFKIT_KEY: OWNER_KEY, SHELFKIT_URL: url },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -88,7 +94,8 @@ export function shelfkit(args: readonly string[]): string {
 export function seedShelf(
   fixture: string,
   namespace: string,
-  prepare?: (root: string) => void
+  prepare?: (root: string) => void,
+  url: string = BASE_URL
 ): string {
   const root = temporary(namespace);
   cpSync(fixture, root, { recursive: true });
@@ -100,8 +107,20 @@ export function seedShelf(
   );
   writeFileSync(manifestPath, manifest);
   // `--force`: a spec's shelf may hold edits from an earlier attempt of the same run.
-  shelfkit(["--shelf", root, "push", "--force", "-m", "seed"]);
+  shelfkit(["--shelf", root, "push", "--force", "-m", "seed"], url);
   return root;
+}
+
+/** A `seedShelf` preparation that makes the shelf private, so only the owner and its grants read it. */
+export function makePrivate(root: string): void {
+  const manifestPath = path.join(root, "shelf.json");
+  writeFileSync(
+    manifestPath,
+    readFileSync(manifestPath, "utf-8").replace(
+      /"public":\s*true/u,
+      '"public": false'
+    )
+  );
 }
 
 /** `shelfkit compile --dry-run --json`: the plan exactly as the CLI prints it. */
@@ -147,16 +166,83 @@ export function sortedTree(root: string): [string, string][] {
   return [...readTree(root)].toSorted(([a], [b]) => a.localeCompare(b));
 }
 
-/** Sign in through the sign-in screen, with the owner key unless another is given; the browser keeps it in the HttpOnly cookie. */
-export async function signIn(
+/**
+ * A virtual passkey authenticator for one page, as Chromium's DevTools protocol provides: a platform authenticator
+ * that keeps passkeys, verifies its user, and answers every prompt by itself.
+ */
+export async function passkeyDevice(page: Page): Promise<void> {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("WebAuthn.enable");
+  await cdp.send("WebAuthn.addVirtualAuthenticator", {
+    options: {
+      automaticPresenceSimulation: true,
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserVerified: true,
+      protocol: "ctap2",
+      transport: "internal",
+    },
+  });
+}
+
+/** A one-time sign-in link for the owner, made with the owner key, as `shelfkit open` and setup make one. */
+export async function ownerSignInLink(
+  request: APIRequestContext,
+  url: string = BASE_URL
+): Promise<string> {
+  const response = await request.post(`${url}/graphql`, {
+    data: { query: "mutation { createSignInLink { url } }" },
+    headers: { authorization: `Bearer ${OWNER_KEY}` },
+  });
+  const answer = v.parse(
+    v.object({
+      data: v.object({ createSignInLink: v.object({ url: v.string() }) }),
+    }),
+    await response.json()
+  );
+  return answer.data.createSignInLink.url;
+}
+
+/**
+ * Open a one-time link, add a passkey on this page's virtual authenticator, and continue: the way someone uses an
+ * enrollment link, a sign-in link, or an invite for the first time. The page ends signed in as `name`.
+ */
+export async function enrollWithLink(
   page: Page,
-  key = OWNER_KEY,
-  viewer = "Owner"
+  link: string,
+  name: string
+): Promise<void> {
+  await page.goto(link);
+  if (link.includes("#ssi_")) {
+    await page.getByRole("button", { name: "Accept the invitation" }).click();
+  }
+  await expect(page.getByTestId("signed-in")).toContainText(name);
+  await page.getByTestId("add-passkey").click();
+  await expect(page.getByTestId("passkey-added")).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByTestId("viewer")).toHaveText(name);
+}
+
+/** Sign in with the passkey this page's authenticator holds, from the sign-in screen. */
+export async function signInWithPasskey(
+  page: Page,
+  name: string
 ): Promise<void> {
   await page.goto("/sign-in");
-  await page.getByLabel("Key").fill(key);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByTestId("viewer")).toHaveText(viewer);
+  await page.getByRole("button", { name: "Sign in with a passkey" }).click();
+  await expect(page.getByTestId("viewer")).toHaveText(name);
+}
+
+/**
+ * Sign the page in as the owner, as a person does on a new device: a sign-in link, a passkey added there, a sign-out,
+ * and a sign-in with that passkey. The browser ends up with the HttpOnly session cookie and no key.
+ */
+export async function signIn(page: Page): Promise<void> {
+  await passkeyDevice(page);
+  await enrollWithLink(page, await ownerSignInLink(page.request), "Owner");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByTestId("viewer")).toHaveCount(0);
+  await signInWithPasskey(page, "Owner");
 }
 
 /** The clipboard's text. */

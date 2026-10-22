@@ -51,21 +51,25 @@ import { DurableObject } from "cloudflare:workers";
 import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import * as v from "valibot";
 
-import { SHELF_MARKERS } from "./auth/index.ts";
+import { githubSignInEnabled } from "./auth/github.ts";
+import { grantMarker, SHELF_MARKERS } from "./auth/index.ts";
 import {
   displayPrefix,
   newShareToken,
   newShelfKey,
   secretHash,
 } from "./auth/keys.ts";
+import { INVITE_SECONDS, linkHash, newInviteToken } from "./auth/links.ts";
+import { accountStub } from "./auth/principals.ts";
 import { parseScope } from "./auth/scopes.ts";
 import {
   access,
+  grantSession,
   mayEditProfile,
   mayRelay,
   registryAccess,
 } from "./auth/session.ts";
-import type { Session, ShelfAccess } from "./auth/session.ts";
+import type { Person, Session, ShelfAccess } from "./auth/session.ts";
 import { migrateDatabase, openDatabase } from "./db/migrate.ts";
 import type { ShelfDatabase } from "./db/migrate.ts";
 import * as table from "./db/schema.ts";
@@ -343,10 +347,13 @@ export class ShelfIndex extends DurableObject<Env> {
   private readonly db: ShelfDatabase;
   private loaded: Loaded | undefined;
   private readonly plans = new Map<string, Plan | CompileFailed>();
-  /** Each open event stream, with the session that opened it, which is checked again before every event. */
+  /**
+   * Each open event stream, with the session that opened it, which is checked again before every event, and the
+   * stream's delivery so far, so its events go out in order even when a check has to wait.
+   */
   private readonly subscribers = new Map<
     WritableStreamDefaultWriter<Uint8Array>,
-    Session
+    { readonly session: Session; delivered: Promise<void> }
   >();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -402,7 +409,37 @@ export class ShelfIndex extends DurableObject<Env> {
     if (shelf === null) {
       return null;
     }
-    return access(session, shelf, this.isPublic());
+    return access(this.effectiveSession(session), shelf, this.isPublic());
+  }
+
+  /**
+   * The session as this shelf sees it. A browser signed in as someone who is not the owner holds this shelf's grant to
+   * their principal, read now, so a removed grant takes effect at once: a key session with the grant's scopes, or
+   * anonymous when there is none. Every other session is itself.
+   */
+  effectiveSession(session: Session): Session {
+    const shelf = this.shelfId();
+    if (session.kind !== "person") {
+      return session;
+    }
+    // A GitHub account's grant holds only while the deployment signs people in with GitHub.
+    if (
+      session.person.id.startsWith("github:") &&
+      !githubSignInEnabled(this.env)
+    ) {
+      return { kind: "anonymous" };
+    }
+    const grant =
+      shelf === null
+        ? undefined
+        : this.db
+            .select({ scopes: table.accessGrant.scopes })
+            .from(table.accessGrant)
+            .where(eq(table.accessGrant.principal, session.person.id))
+            .get();
+    return shelf === null || grant === undefined
+      ? { kind: "anonymous" }
+      : grantSession(shelf, session.person, grant.scopes);
   }
 
   /** The access a reader needs, or the failure that hides the shelf. */
@@ -530,6 +567,232 @@ export class ShelfIndex extends DurableObject<Env> {
       this.broadcast({ at: now(), id, kind: "keys" });
     }
     return revoked.length > 0;
+  }
+
+  // --- People -----------------------------------------------------------------------------------------------------
+
+  /** Who the owner granted access to this shelf, for the browser. The owner only. */
+  listGrants(session: Session): GrantRecord[] | null {
+    if (this.granted(session)?.owner !== true) {
+      return null;
+    }
+    return this.db
+      .select()
+      .from(table.accessGrant)
+      .orderBy(asc(table.accessGrant.createdAt))
+      .all()
+      .map(grantRecord);
+  }
+
+  /** Give `person` `scopes` on this shelf, replacing what they had, and note the shelf under their grant markers. */
+  private async putGrant(
+    shelf: string,
+    person: Person,
+    scopes: readonly string[]
+  ): Promise<GrantRecord> {
+    const record = {
+      createdAt: now(),
+      name: person.name,
+      principal: person.id,
+      scopes: [...new Set(scopes)],
+    };
+    this.db
+      .insert(table.accessGrant)
+      .values(record)
+      .onConflictDoUpdate({
+        set: { name: record.name, scopes: record.scopes },
+        target: table.accessGrant.principal,
+      })
+      .run();
+    await this.env.BLOBS.put(grantMarker(person.id, shelf), new Uint8Array());
+    this.broadcast({ at: record.createdAt, id: person.id, kind: "keys" });
+    return grantRecord(record);
+  }
+
+  /**
+   * Grant a person scopes on this shelf, the same scopes a key holds, replacing any they had. The owner only. Used for
+   * a GitHub account (when GitHub sign-in is enabled), named by its id, which the caller resolved from a login.
+   */
+  async grantAccess(
+    session: Session,
+    input: { readonly person: Person; readonly scopes: readonly string[] }
+  ): Promise<
+    | { readonly ok: true; readonly grant: GrantRecord }
+    | { readonly ok: false; readonly errors: readonly string[] }
+  > {
+    const shelf = this.shelfId();
+    if (shelf === null || this.granted(session)?.owner !== true) {
+      return { errors: ["only the owner grants access"], ok: false };
+    }
+    const errors = scopeErrors(shelf, input.scopes);
+    if (
+      input.person.id.startsWith("github:") &&
+      !githubSignInEnabled(this.env)
+    ) {
+      errors.push("GitHub sign-in is not enabled on this deployment");
+    }
+    if (errors.length > 0) {
+      return { errors, ok: false };
+    }
+    return {
+      grant: await this.putGrant(shelf, input.person, input.scopes),
+      ok: true,
+    };
+  }
+
+  /** Remove a person's grant. A browser signed in as them loses the access at its next request. The owner only. */
+  async revokeAccess(session: Session, principal: string): Promise<boolean> {
+    const shelf = this.shelfId();
+    if (shelf === null || this.granted(session)?.owner !== true) {
+      return false;
+    }
+    const removed = this.db
+      .delete(table.accessGrant)
+      .where(eq(table.accessGrant.principal, principal))
+      .returning({ principal: table.accessGrant.principal })
+      .all();
+    // Removed whether or not a row was: a marker left by an earlier failure goes too.
+    await this.env.BLOBS.delete(grantMarker(principal, shelf));
+    if (removed.length > 0) {
+      // The event also closes the person's open streams, which no longer pass `stillGranted`.
+      this.broadcast({ at: now(), id: principal, kind: "keys" });
+    }
+    return removed.length > 0;
+  }
+
+  // --- Invites -----------------------------------------------------------------------------------------------------
+
+  /**
+   * Make an invite: a one-time link that gives whoever opens it `scopes` on this shelf, for `INVITE_SECONDS`. The
+   * owner only. The token is in this answer and nowhere else; only its hash is kept.
+   */
+  async createInvite(
+    session: Session,
+    input: { readonly name: string; readonly scopes: readonly string[] }
+  ): Promise<
+    | {
+        readonly ok: true;
+        readonly invite: InviteRecord;
+        readonly token: string;
+      }
+    | { readonly ok: false; readonly errors: readonly string[] }
+  > {
+    const shelf = this.shelfId();
+    if (shelf === null || this.granted(session)?.owner !== true) {
+      return { errors: ["only the owner invites people"], ok: false };
+    }
+    const name = input.name.trim();
+    const errors = scopeErrors(shelf, input.scopes);
+    if (name.length === 0 || name.length > 64) {
+      errors.push(
+        "an invite needs a name of 1 to 64 characters: who it is for"
+      );
+    }
+    if (errors.length > 0) {
+      return { errors, ok: false };
+    }
+    const token = newInviteToken(shelf);
+    const row = {
+      createdAt: now(),
+      expiresAt: `${new Date(Date.now() + INVITE_SECONDS * 1000).toISOString().slice(0, 19)}Z`,
+      id: crypto.randomUUID(),
+      name,
+      revokedAt: null,
+      scopes: [...new Set(input.scopes)],
+      tokenHash: await linkHash(token),
+      usedAt: null,
+      usedBy: null,
+    };
+    this.db.insert(table.invite).values(row).run();
+    this.broadcast({ at: row.createdAt, id: row.id, kind: "keys" });
+    return { invite: inviteRecord(row), ok: true, token };
+  }
+
+  /** The shelf's invites, newest first. The owner only. */
+  listInvites(session: Session): InviteRecord[] | null {
+    if (this.granted(session)?.owner !== true) {
+      return null;
+    }
+    return this.db
+      .select()
+      .from(table.invite)
+      .orderBy(desc(table.invite.createdAt))
+      .all()
+      .map(inviteRecord);
+  }
+
+  /** Revoke an invite that has not been used. The owner only. */
+  revokeInvite(session: Session, id: string): boolean {
+    if (this.granted(session)?.owner !== true) {
+      return false;
+    }
+    const revoked = this.db
+      .update(table.invite)
+      .set({ revokedAt: now() })
+      .where(
+        and(
+          eq(table.invite.id, id),
+          isNull(table.invite.revokedAt),
+          isNull(table.invite.usedAt)
+        )
+      )
+      .returning({ id: table.invite.id })
+      .all();
+    if (revoked.length > 0) {
+      this.broadcast({ at: now(), id, kind: "keys" });
+    }
+    return revoked.length > 0;
+  }
+
+  /** The invite a token's hash names, if it can still be used: for the page that offers to accept it. */
+  previewInvite(hash: string): InvitePreview | null {
+    const shelf = this.shelfId();
+    const row = this.usableInvite(hash);
+    if (shelf === null || row === undefined) {
+      return null;
+    }
+    return {
+      expiresAt: row.expiresAt,
+      name: row.name,
+      scopes: row.scopes,
+      shelf,
+      shelfName: this.manifest()?.name ?? shelf,
+    };
+  }
+
+  private usableInvite(hash: string) {
+    const row = this.db
+      .select()
+      .from(table.invite)
+      .where(eq(table.invite.tokenHash, hash))
+      .get();
+    return row === undefined ||
+      row.usedAt !== null ||
+      row.revokedAt !== null ||
+      row.expiresAt <= now()
+      ? undefined
+      : row;
+  }
+
+  /**
+   * Use an invite for `person`: once, before it expires or is revoked. It is spent before anything is awaited, so two
+   * people racing with one link cannot both hold the grant. The grant it gave, or `null`.
+   */
+  async redeemInvite(
+    hash: string,
+    person: Person
+  ): Promise<GrantRecord | null> {
+    const shelf = this.shelfId();
+    const row = this.usableInvite(hash);
+    if (shelf === null || row === undefined) {
+      return null;
+    }
+    this.db
+      .update(table.invite)
+      .set({ usedAt: now(), usedBy: person.id })
+      .where(eq(table.invite.id, row.id))
+      .run();
+    return await this.putGrant(shelf, person, row.scopes);
   }
 
   // --- The shelf ---------------------------------------------------------------------------------------------------
@@ -2202,13 +2465,14 @@ export class ShelfIndex extends DurableObject<Env> {
     if ("respond" in prepared) {
       return this.answer(prepared.respond);
     }
+    const effective = this.effectiveSession(session);
     const respond = () =>
       shelfEngine.registry.respond({
-        access: registryAccess(session, prepared.ownerKey),
+        access: registryAccess(effective, prepared.ownerKey),
         body: request.body,
         contentType: request.contentType,
         context: {
-          shelf: this.registryShelf(session, prepared.ownerKey),
+          shelf: this.registryShelf(effective, prepared.ownerKey),
           versions: this.versions(prepared.packageKey),
         },
         ifNoneMatch: request.ifNoneMatch,
@@ -3116,7 +3380,7 @@ export class ShelfIndex extends DurableObject<Env> {
       Uint8Array
     >();
     const writer = writable.getWriter();
-    this.subscribers.set(writer, session);
+    this.subscribers.set(writer, { delivered: Promise.resolve(), session });
     void this.send(writer, encoder.encode(": connected\n\n"));
     void this.forget(writer);
     return readable;
@@ -3152,16 +3416,55 @@ export class ShelfIndex extends DurableObject<Env> {
    */
   private broadcast(event: ShelfEvent): void {
     const bytes = encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
-    for (const [writer, session] of this.subscribers) {
-      const granted = this.stillGranted(session);
-      if (granted === null || !granted.read) {
-        this.subscribers.delete(writer);
-        void closeQuietly(writer);
-        continue;
-      }
-      if (mayReceive(granted, event)) {
-        void this.send(writer, bytes);
-      }
+    for (const [writer, subscriber] of this.subscribers) {
+      subscriber.delivered = this.after(
+        subscriber.delivered,
+        writer,
+        subscriber.session,
+        event,
+        bytes
+      );
+    }
+  }
+
+  /** Deliver an event once the stream's earlier events have gone. */
+  private async after(
+    earlier: Promise<void>,
+    writer: WritableStreamDefaultWriter<Uint8Array>,
+    session: Session,
+    event: ShelfEvent,
+    bytes: Uint8Array
+  ): Promise<void> {
+    await earlier;
+    await this.deliver(writer, session, event, bytes);
+  }
+
+  /**
+   * Send one event to one stream, or close the stream when its session may no longer read the shelf. An invited
+   * person's account is asked first: once the owner removes them, every stream they hold closes at its next event,
+   * on every shelf, whatever grant it still names here.
+   */
+  private async deliver(
+    writer: WritableStreamDefaultWriter<Uint8Array>,
+    session: Session,
+    event: ShelfEvent,
+    bytes: Uint8Array
+  ): Promise<void> {
+    if (!this.subscribers.has(writer)) {
+      return;
+    }
+    const removed =
+      session.kind === "person" &&
+      session.person.id.startsWith("person:") &&
+      (await accountStub(this.env, session.person.id).person()) === null;
+    const granted = removed ? null : this.stillGranted(session);
+    if (granted === null || !granted.read) {
+      this.subscribers.delete(writer);
+      await closeQuietly(writer);
+      return;
+    }
+    if (mayReceive(granted, event)) {
+      await this.send(writer, bytes);
     }
   }
 
@@ -3179,6 +3482,70 @@ export class ShelfIndex extends DurableObject<Env> {
     }
     return this.granted(session);
   }
+}
+
+/** A GitHub account's grant on the shelf. */
+/** The errors in a set of scopes for a shelf, or none. */
+function scopeErrors(shelf: string, scopes: readonly string[]): string[] {
+  const errors = scopes.flatMap((scope) => {
+    const parsed = parseScope(shelf, scope);
+    return "error" in parsed ? [parsed.error] : [];
+  });
+  if (scopes.length === 0) {
+    errors.push("a grant needs at least one scope");
+  }
+  return errors;
+}
+
+/** A person's grant on the shelf. */
+export interface GrantRecord {
+  readonly principal: string;
+  readonly name: string;
+  readonly scopes: readonly string[];
+  readonly createdAt: string;
+}
+
+function grantRecord(row: typeof table.accessGrant.$inferSelect): GrantRecord {
+  return {
+    createdAt: row.createdAt,
+    name: row.name,
+    principal: row.principal,
+    scopes: row.scopes,
+  };
+}
+
+/** An invite as the owner sees it: never its token. */
+export interface InviteRecord {
+  readonly id: string;
+  readonly name: string;
+  readonly scopes: readonly string[];
+  readonly createdAt: string;
+  readonly expiresAt: string;
+  readonly usedAt: string | null;
+  readonly usedBy: string | null;
+  readonly revokedAt: string | null;
+}
+
+function inviteRecord(row: typeof table.invite.$inferSelect): InviteRecord {
+  return {
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
+    id: row.id,
+    name: row.name,
+    revokedAt: row.revokedAt,
+    scopes: row.scopes,
+    usedAt: row.usedAt,
+    usedBy: row.usedBy,
+  };
+}
+
+/** What an invite offers, as its page shows it before it is accepted. */
+export interface InvitePreview {
+  readonly shelf: string;
+  readonly shelfName: string;
+  readonly name: string;
+  readonly scopes: readonly string[];
+  readonly expiresAt: string;
 }
 
 /** A header's `{ "secret": "NAME" }`, as against a literal value. */
@@ -3249,6 +3616,9 @@ function forbidden(): Committed {
 function keyIdOf(session: Session): string | null {
   if (session.kind === "owner" || session.kind === "key") {
     return session.keyId;
+  }
+  if (session.kind === "person") {
+    return session.person.id;
   }
   return session.kind === "system" ? "system" : null;
 }

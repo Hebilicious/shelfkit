@@ -1,5 +1,5 @@
-//! The hosted service's client: `shelfkit login`, `logout`, `push`, and
-//! `fetch` (`docs/PRD.md` sections 4.1 and 10.3).
+//! The hosted service's client: `shelfkit login`, `logout`, `open`, `push`,
+//! and `fetch` (`docs/PRD.md` sections 4.1 and 10.3).
 //!
 //! A deployment is addressed by its URL. `login` asks for a key created in
 //! the web UI (or the owner key `moon run worker:setup` printed), checks it,
@@ -261,6 +261,77 @@ pub(super) fn logout(ctx: &mut Context<'_>, url: Option<&str>) -> Outcome {
         } else {
             format!("The OS keychain held no key for {url}.")
         }
+    );
+    Ok(())
+}
+
+const SIGN_IN_LINK: &str = "mutation SignInLink { createSignInLink { url expiresAt } }";
+
+/// The program that opens a URL in the user's browser: `xdg-open` (Linux and the BSDs), `open` (macOS), or
+/// `explorer` (Windows), and whether its exit status means anything. `explorer` exits 1 after opening a URL, so its
+/// status is not read.
+fn browser_opener(system: &dyn System) -> Option<(PathBuf, bool)> {
+    let (candidates, meaningful): (&[&str], bool) = match system.platform() {
+        super::system::Platform::Unix => (&["xdg-open", "open"], true),
+        super::system::Platform::Windows => (&["explorer"], false),
+    };
+    candidates
+        .iter()
+        .find_map(|program| system.find(program))
+        .map(|path| (path, meaningful))
+}
+
+/// `shelfkit open [URL]`: make a one-time sign-in link with the owner key and open it in the browser. The link is a
+/// credential until used, so it is printed only with `--print`; without it, a failure to open says to use `--print`.
+pub(super) fn open(ctx: &mut Context<'_>, url: Option<&str>, print: bool) -> Outcome {
+    let remote = Remote::connect(ctx.system, url)?;
+    if !print && browser_opener(ctx.system).is_none() {
+        return Err(
+            "found no browser opener (xdg-open, open, or explorer): run `shelfkit open --print` and open the link yourself"
+                .to_owned()
+                .into(),
+        );
+    }
+    let data = remote.graphql(SIGN_IN_LINK, json!({})).map_err(|error| {
+        format!(
+            "{error}: `shelfkit open` needs the owner key, which signs the browser in as the owner"
+        )
+    })?;
+    let link = data["createSignInLink"]["url"]
+        .as_str()
+        .ok_or_else(|| format!("{} answered with no sign-in link", remote.url()))?
+        .to_owned();
+    if print {
+        let _ = writeln!(ctx.stdout, "{link}");
+        let _ = writeln!(
+            ctx.stderr,
+            "This link signs a browser in as the owner. It works once, within 15 minutes: open it, add a passkey \
+             there, and let nobody else see it."
+        );
+        return Ok(());
+    }
+    let Some((program, meaningful)) = browser_opener(ctx.system) else {
+        return Err("found no browser opener: run `shelfkit open --print`"
+            .to_owned()
+            .into());
+    };
+    let cwd = absolute(ctx, None);
+    let code = ctx
+        .system
+        .run(&program, &[link], &cwd)
+        .map_err(|error| format!("opening the browser: {error}; run `shelfkit open --print`"))?;
+    if meaningful && code != 0 {
+        return Err(format!(
+            "the browser opener exited {code}, so the link may not have opened; it was not printed. Run `shelfkit open \
+             --print` for a new one"
+        )
+        .into());
+    }
+    let _ = writeln!(
+        ctx.stdout,
+        "Opened {} in your browser, signed in as the owner. Add a passkey there to sign in on that device without a \
+         link; the link itself works once, within 15 minutes.",
+        remote.url()
     );
     Ok(())
 }

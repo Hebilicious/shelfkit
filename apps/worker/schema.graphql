@@ -115,6 +115,25 @@ enum DriftStatus {
 }
 
 """
+Someone the owner let sign in to this shelf in the browser, with the scopes a key would hold.
+"""
+type Grant {
+  createdAt: DateTime!
+
+  """
+  `person` (someone who accepted an invite) or `github` (a GitHub account).
+  """
+  kind: String!
+
+  """What to call them."""
+  name: String!
+
+  """`person:<id>` or `github:<numeric id>`."""
+  principal: ID!
+  scopes: [String!]!
+}
+
+"""
 An import: a source, the candidates it offers, what was picked with which pins, and how it went.
 """
 type ImportJob {
@@ -128,6 +147,38 @@ type ImportJob {
   status: String!
   updatedAt: DateTime!
   warnings: [String!]!
+}
+
+"""
+A one-time link that gives whoever opens it a grant on the shelf. Its token is shown once, when it is made.
+"""
+type Invite {
+  createdAt: DateTime!
+  expiresAt: DateTime!
+  id: ID!
+
+  """Who it is for."""
+  name: String!
+  revokedAt: DateTime
+  scopes: [String!]!
+  usedAt: DateTime
+}
+
+"""What an invite offers, before it is accepted."""
+type InvitePreview {
+  expiresAt: DateTime!
+  name: String!
+  scopes: [String!]!
+  shelf: ID!
+  shelfName: String!
+}
+
+"""
+A new invite and its link: the link is in this answer and nowhere else.
+"""
+type InviteSecret {
+  invite: Invite!
+  url: String!
 }
 
 """
@@ -248,6 +299,20 @@ type KeySecret {
   secret: String!
 }
 
+"""Who a link signed the browser in as."""
+type LinkRedemption {
+  name: String!
+
+  """
+  Whether the browser may add a passkey to this account: true for the owner and invited people.
+  """
+  offerPasskey: Boolean!
+  owner: Boolean!
+
+  """The shelf an invite granted access to."""
+  shelf: String
+}
+
 type Mutation {
   """
   Make these files the shelf's snapshot, after uploading each to `/raw/{shelf}/objects/{sha256}`: `shelfkit push`. The first snapshot creates the shelf (owner only).
@@ -262,6 +327,20 @@ type Mutation {
   ): CommitResult!
 
   """
+  Make an invite: a link, used once within 7 days, that gives whoever opens it these scopes on the shelf. The owner only.
+  """
+  createInvite(
+    """Who it is for; what they will be called."""
+    name: String!
+
+    """
+    read, read:{shelf}/{profile}, publish:{shelf}/{profile}, publish:{shelf}/*, mcp:{shelf}/{item}.
+    """
+    scopes: [String!]!
+    shelf: ID!
+  ): InviteSecret!
+
+  """
   Create a scoped key on a shelf. The owner only. The plaintext is in this answer and nowhere else.
   """
   createKey(
@@ -274,8 +353,27 @@ type Mutation {
     shelf: ID!
   ): KeySecret!
   createShareLink(profile: ID!, shelf: ID!): ShareLinkSecret!
+
+  """
+  A link that signs a browser in as your own account, used once within 15 minutes: to add a device, or for `shelfkit open` with the owner key.
+  """
+  createSignInLink: SignInLink!
   deleteItem(id: ID!, shelf: ID!): CommitResult!
   deleteProfile(id: ID!, shelf: ID!): CommitResult!
+
+  """
+  Let a GitHub account sign in to the shelf in the browser with these scopes, replacing any it had, when GitHub sign-in is enabled. The owner only.
+  """
+  grantAccess(
+    """The GitHub login, resolved to the account's numeric id now."""
+    login: String!
+
+    """
+    read, read:{shelf}/{profile}, publish:{shelf}/{profile}, publish:{shelf}/*, mcp:{shelf}/{item}.
+    """
+    scopes: [String!]!
+    shelf: ID!
+  ): Grant!
 
   """
   Queue indexing a shelf from a GitHub repository through the REST API; the result arrives as a `snapshot` event.
@@ -318,8 +416,32 @@ type Mutation {
 
   """Record that the viewer used an item (copied it): its recents."""
   recordUse(item: ID!, shelf: ID!): Boolean!
+
+  """
+  Use a one-time link: sign in with a sign-in link, or accept an invite. The browser is signed in by the cookie this sets.
+  """
+  redeemLink(
+    """
+    Sign in as the link's account even though the browser is signed in as another one. Without it, that is refused (SWITCH_REQUIRED).
+    """
+    switchAccount: Boolean = false
+
+    """The link's token: the part of its URL after `#`."""
+    token: String!
+  ): LinkRedemption!
+  removePasskey(
+    """Remove it even if it is the account's last passkey."""
+    allowLast: Boolean = false
+    id: ID!
+  ): Boolean!
+
+  """
+  Remove someone's grant on the shelf and, for an invited person, their account: they are signed out at their next request. The owner only.
+  """
+  removePerson(principal: ID!, shelf: ID!): Boolean!
   removeSecretName(name: String!, shelf: ID!): Boolean!
   removeSource(id: String!, shelf: ID!): CommitResult!
+  renamePasskey(id: ID!, label: String!): Boolean!
 
   """
   Record that a plan was applied to a repository: `shelf.report` over GraphQL.
@@ -328,6 +450,18 @@ type Mutation {
     """`shelf.report`'s input."""
     input: JSON!
   ): JSON!
+
+  """
+  Remove someone's grant on the shelf. A browser signed in as them loses the access from its next request. The owner only.
+  """
+  revokeAccess(
+    """`person:<id>` or `github:<numeric id>`."""
+    principal: ID!
+    shelf: ID!
+  ): Boolean!
+
+  """Revoke an invite nobody has used yet. The owner only."""
+  revokeInvite(id: ID!, shelf: ID!): Boolean!
 
   """
   Revoke a key. It fails on GraphQL, the registry, and /mcp from the next request. The owner only.
@@ -347,9 +481,8 @@ type Mutation {
   setVisibility(public: Boolean!, shelf: ID!): CommitResult!
 
   """
-  Hold a key in an HttpOnly cookie for the browser, so the SPA never reads it.
+  Sign the browser out: clear its session cookie. A program's key is not affected.
   """
-  signIn(key: String!): Viewer!
   signOut: Boolean!
 
   """
@@ -389,6 +522,14 @@ type Mutation {
     message: String
     shelf: ID!
   ): CommitResult!
+}
+
+"""A passkey of the signed-in account."""
+type Passkey {
+  createdAt: DateTime!
+  id: ID!
+  label: String!
+  lastUsedAt: DateTime
 }
 
 type PlanResult {
@@ -437,6 +578,16 @@ type ProfileRevision {
 
 type Query {
   """
+  What an invite offers, before it is accepted; null when it was used, revoked, or has expired.
+  """
+  invite(token: String!): InvitePreview
+
+  """
+  The passkeys of the signed-in account: the owner's, or an invited person's own.
+  """
+  passkeys: [Passkey!]!
+
+  """
   The share links the viewer may manage: every one for a member, else those of the profiles it may edit. A key that may create a profile's link lists it here even when it cannot read the shelf.
   """
   shareLinks(shelf: ID!): [ShareLink!]!
@@ -448,9 +599,15 @@ type Query {
   shelf(id: ID!): Shelf
 
   """
-  The shelves the viewer can reach: every shelf for the owner, a key's own shelf otherwise.
+  The shelves the viewer can reach: every shelf for the owner, a key's own shelf, or the shelves that granted a signed-in person access.
   """
   shelves: [Shelf!]!
+
+  """
+  Whom a sign-in link opens, without using it, and whether opening it would switch this browser from another account; null when it cannot be used.
+  """
+  signInLink(token: String!): SignInLinkPreview
+  signInMethods: SignInMethods!
   viewer: Viewer!
 }
 
@@ -614,9 +771,15 @@ type Shelf {
 
   """The current snapshot's files: what `shelfkit fetch` downloads."""
   files: [SnapshotFile!]!
+
+  """The people granted access to the shelf in the browser. The owner only."""
+  grants: [Grant!]!
   id: ID!
   importJob(id: ID!): ImportJob
   importJobs: [ImportJob!]!
+
+  """The shelf's invites, newest first. The owner only."""
+  invites: [Invite!]!
   item(id: ID!): Item
   itemCount: Int!
 
@@ -742,6 +905,33 @@ type ShelfProblem {
 }
 
 """
+A one-time link that signs a browser in: shown once, used once, before `expiresAt`.
+"""
+type SignInLink {
+  expiresAt: DateTime!
+  url: String!
+}
+
+type SignInLinkPreview {
+  """The account the link signs in as."""
+  name: String!
+
+  """
+  Whether the browser is signed in as another account, which the link would replace.
+  """
+  switching: Boolean!
+}
+
+"""How a browser may sign in to this deployment."""
+type SignInMethods {
+  """
+  Sign in with GitHub, which the deployment enables with `moon run worker:setup -- --github-sign-in`.
+  """
+  github: Boolean!
+  passkey: Boolean!
+}
+
+"""
 One state of the shelf's files. Its manifest is the R2 object named by `digest`.
 """
 type Snapshot {
@@ -782,12 +972,28 @@ type TagCount {
   tag: String!
 }
 
-"""Who the request is: the owner, a scoped key, or nobody."""
+"""
+Who the request is: the owner, a scoped key, someone signed in in the browser, or nobody.
+"""
 type Viewer {
   authenticated: Boolean!
   keyId: String
   keyName: String
+
+  """
+  What to call whoever the browser signed in as: the owner, an invited person, or `@login` for a GitHub account.
+  """
+  name: String
   owner: Boolean!
+
+  """
+  The principal the browser signed in as: `owner`, `person:<id>`, or `github:<numeric id>`.
+  """
+  principal: ID
+
+  """
+  A scoped key's scopes. A signed-in person's are per shelf: `Shelf.viewerAccess`.
+  """
   scopes: [String!]!
 
   """The shelf a scoped key belongs to."""

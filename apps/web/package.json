@@ -8,6 +8,7 @@
     "@shelfkit/engine": "workspace:*",
     "@shelfkit/schema": "workspace:*",
     "@shelfkit/tokens": "workspace:*",
+    "@simplewebauthn/browser": "catalog:",
     "gql.tada": "catalog:",
     "markdown-it": "catalog:",
     "valibot": "catalog:",

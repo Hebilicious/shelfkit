@@ -11,6 +11,7 @@
     "@shelfkit/engine": "workspace:*",
     "@shelfkit/importers": "workspace:*",
     "@shelfkit/schema": "workspace:*",
+    "@simplewebauthn/server": "catalog:",
     "drizzle-orm": "catalog:",
     "graphql": "catalog:",
     "graphql-yoga": "catalog:",

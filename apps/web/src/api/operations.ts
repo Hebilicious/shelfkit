@@ -11,6 +11,8 @@ export const ViewerQuery = graphql(`
     viewer {
       authenticated
       owner
+      name
+      principal
       keyId
       keyName
       scopes
@@ -27,14 +29,80 @@ export const ViewerQuery = graphql(`
   }
 `);
 
-export const SignInMutation = graphql(`
-  mutation SignIn($key: String!) {
-    signIn(key: $key) {
-      authenticated
-      owner
-      keyName
-      shelf
+export const SignInMethodsQuery = graphql(`
+  query SignInMethods {
+    signInMethods {
+      passkey
+      github
     }
+  }
+`);
+
+// One-time links: sign-in links and invites, opened at /link.
+
+export const RedeemLinkMutation = graphql(`
+  mutation RedeemLink($token: String!, $switchAccount: Boolean) {
+    redeemLink(token: $token, switchAccount: $switchAccount) {
+      name
+      owner
+      shelf
+      offerPasskey
+    }
+  }
+`);
+
+export const SignInLinkQuery = graphql(`
+  query SignInLink($token: String!) {
+    signInLink(token: $token) {
+      name
+      switching
+    }
+  }
+`);
+
+export const InviteQuery = graphql(`
+  query Invite($token: String!) {
+    invite(token: $token) {
+      shelf
+      shelfName
+      name
+      scopes
+      expiresAt
+    }
+  }
+`);
+
+export const CreateSignInLinkMutation = graphql(`
+  mutation CreateSignInLink {
+    createSignInLink {
+      url
+      expiresAt
+    }
+  }
+`);
+
+// The signed-in account's passkeys.
+
+export const PasskeysQuery = graphql(`
+  query Passkeys {
+    passkeys {
+      id
+      label
+      createdAt
+      lastUsedAt
+    }
+  }
+`);
+
+export const RenamePasskeyMutation = graphql(`
+  mutation RenamePasskey($id: ID!, $label: String!) {
+    renamePasskey(id: $id, label: $label)
+  }
+`);
+
+export const RemovePasskeyMutation = graphql(`
+  mutation RemovePasskey($id: ID!, $allowLast: Boolean!) {
+    removePasskey(id: $id, allowLast: $allowLast)
   }
 `);
 
@@ -722,15 +790,6 @@ export const SettingsQuery = graphql(`
         id
         title
       }
-      keys {
-        id
-        name
-        prefix
-        scopes
-        createdAt
-        lastUsedAt
-        revokedAt
-      }
       secretNames {
         name
         origin
@@ -745,6 +804,81 @@ export const SettingsQuery = graphql(`
       createdAt
       revokedAt
     }
+  }
+`);
+
+// What only the owner sees: the shelf's keys for programs, and the GitHub accounts granted access in the browser.
+
+export const AccessQuery = graphql(`
+  query Access($shelf: ID!) {
+    shelf(id: $shelf) {
+      id
+      keys {
+        id
+        name
+        prefix
+        scopes
+        createdAt
+        lastUsedAt
+        revokedAt
+      }
+      grants {
+        principal
+        name
+        kind
+        scopes
+        createdAt
+      }
+      invites {
+        id
+        name
+        scopes
+        createdAt
+        expiresAt
+        usedAt
+        revokedAt
+      }
+    }
+  }
+`);
+
+export const CreateInviteMutation = graphql(`
+  mutation CreateInvite($shelf: ID!, $name: String!, $scopes: [String!]!) {
+    createInvite(shelf: $shelf, name: $name, scopes: $scopes) {
+      url
+      invite {
+        id
+        name
+      }
+    }
+  }
+`);
+
+export const RevokeInviteMutation = graphql(`
+  mutation RevokeInvite($shelf: ID!, $id: ID!) {
+    revokeInvite(shelf: $shelf, id: $id)
+  }
+`);
+
+export const RemovePersonMutation = graphql(`
+  mutation RemovePerson($shelf: ID!, $principal: ID!) {
+    removePerson(shelf: $shelf, principal: $principal)
+  }
+`);
+
+export const GrantAccessMutation = graphql(`
+  mutation GrantAccess($shelf: ID!, $login: String!, $scopes: [String!]!) {
+    grantAccess(shelf: $shelf, login: $login, scopes: $scopes) {
+      principal
+      name
+      scopes
+    }
+  }
+`);
+
+export const RevokeAccessMutation = graphql(`
+  mutation RevokeAccess($shelf: ID!, $principal: ID!) {
+    revokeAccess(shelf: $shelf, principal: $principal)
   }
 `);
 

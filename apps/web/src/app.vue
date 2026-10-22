@@ -10,7 +10,7 @@ import {
   openSelection,
   selectSelection,
 } from "./composables/list-nav.ts";
-import { loadSession, shelves, signOut, viewer } from "./composables/session.ts";
+import { loadSession, shelves, signOut, viewer, viewerName } from "./composables/session.ts";
 import { notifyError, undoLatest } from "./composables/toasts.ts";
 import { INITIAL_KEY_STATE, interpret } from "./lib/keys.ts";
 import type { KeyAction, KeyState } from "./lib/keys.ts";
@@ -148,7 +148,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
       </button>
       <template v-if="viewer?.authenticated">
         <span class="small muted" data-testid="viewer">
-          {{ viewer.owner ? "Owner" : (viewer.keyName ?? "Key") }}
+          {{ viewerName(viewer) }}
         </span>
         <button class="quiet small" type="button" @click="leave">Sign out</button>
       </template>

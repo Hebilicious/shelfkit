@@ -15,6 +15,8 @@ catalog:
   "@oxlint/plugins": 1.86.0
   "@playwright/test": 1.63.0
   "@pothos/core": 4.15.1
+  "@simplewebauthn/browser": 14.0.0
+  "@simplewebauthn/server": 14.0.3
   "@types/node": 26.6.1
   "@valibot/to-json-schema": 1.8.0
   "@vitejs/plugin-vue": 6.0.9

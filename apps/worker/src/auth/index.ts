@@ -1,37 +1,44 @@
 /**
  * The one place a request becomes a `Session`: GraphQL, the registry routes, the raw object routes, and `/mcp` all
- * call `authenticate`, so a key revoked in its shelf's Durable Object fails on every surface at once. Nothing caches a
- * key's resolution.
+ * call it, so a key revoked in its shelf's Durable Object, or a grant removed from it, fails on every surface at once.
+ * Nothing caches a key's or a grant's resolution.
  *
- * A key arrives as `Authorization: Bearer <key>`, as HTTP Basic with the key as the password (the registry's
- * alternative form), or, from the browser, in the `HttpOnly` cookie `shelfkit_key`, which the `signIn` mutation sets
- * so the SPA never holds the key. An `Authorization` header wins over the cookie. There are no accounts, sessions, or
- * `/api/auth` routes (`docs/PRD.md` section 10.3).
+ * Programs present a key: `Authorization: Bearer <key>`, or HTTP Basic with the key as the password (the registry's
+ * alternative form). A browser presents the session cookie that signing in sets (`browser.ts`): with a passkey
+ * (`passkeys.ts`), a one-time link (`links.ts`), or GitHub when it is enabled (`github.ts`). It names a principal and
+ * holds no key. An `Authorization` header wins over the cookie. `/mcp` is for programs and reads the header only
+ * (`authenticateHeader`). See `docs/PRD.md` section 10.3.
  */
 import { ShelfIdSchema } from "@shelfkit/schema";
 import * as v from "valibot";
 
+import { readCookie, SESSION_COOKIE, verifySession } from "./browser.ts";
+import { githubSignInEnabled } from "./github.ts";
 import { parseSecret, sameHash, secretHash } from "./keys.ts";
-import type { Session } from "./session.ts";
+import { accountStub } from "./principals.ts";
+import { OWNER_PRINCIPAL } from "./session.ts";
+import type { Person, Session } from "./session.ts";
 
-export type { Session, ShelfAccess } from "./session.ts";
-export { access, mayEditProfile, mayRelay, registryAccess } from "./session.ts";
+export type { Person, Session, ShelfAccess } from "./session.ts";
+export {
+  access,
+  grantSession,
+  OWNER_PRINCIPAL,
+  mayEditProfile,
+  mayRelay,
+  registryAccess,
+} from "./session.ts";
+export { sessionCookie, signOutCookie } from "./browser.ts";
 
-/** The cookie the browser holds its key in. */
-export const KEY_COOKIE = "shelfkit_key";
-
-/** The key a request presents, read from its headers without looking anything up. */
+/** The credential a request presents, read from its headers without looking anything up. */
 export type Presented =
   | { readonly kind: "none" }
   | { readonly kind: "unreadable" }
-  | { readonly kind: "key"; readonly key: string };
+  | { readonly kind: "key"; readonly key: string }
+  | { readonly kind: "session"; readonly token: string };
 
-/** Where a presented key came from: the `Authorization` header, or the browser's cookie. */
+/** Where a presented credential came from: the `Authorization` header, or the browser's cookie. */
 export type CredentialSource = "header" | "cookie";
-
-export function presentedKey(request: Request): Presented {
-  return presented(request).credential;
-}
 
 /** A request's credential and where it came from. */
 interface PresentedCredential {
@@ -44,10 +51,10 @@ function presented(request: Request): PresentedCredential {
   if (header !== null) {
     return { credential: readAuthorization(header), source: "header" };
   }
-  const cookie = readCookie(request.headers.get("cookie"), KEY_COOKIE);
+  const cookie = readCookie(request.headers.get("cookie"), SESSION_COOKIE);
   return cookie === undefined || cookie === ""
     ? { credential: { kind: "none" }, source: null }
-    : { credential: { key: cookie, kind: "key" }, source: "cookie" };
+    : { credential: { kind: "session", token: cookie }, source: "cookie" };
 }
 
 /** `Bearer <key>`, or Basic with the key as the password, as the registry reads them. */
@@ -76,26 +83,13 @@ export function readAuthorization(header: string): Presented {
   return { kind: "unreadable" };
 }
 
-function readCookie(header: string | null, name: string): string | undefined {
-  if (header === null) {
-    return undefined;
-  }
-  for (const part of header.split(";")) {
-    const [key, ...value] = part.trim().split("=");
-    if (key === name) {
-      return value.join("=");
-    }
-  }
-  return undefined;
-}
-
 /** A request's session, where its credential came from, and whether the browser's cookie should be cleared. */
 export interface Authenticated {
   readonly session: Session;
   readonly source: CredentialSource | null;
   /**
-   * The cookie held a key that is no longer valid. The request is anonymous instead, so a browser holding a revoked
-   * key can still sign in again, and the response clears the cookie.
+   * The cookie held a session that is no longer valid: tampered with, expired, or signed with a rotated secret. The
+   * request is anonymous instead, so the browser can sign in again, and the response clears the cookie.
    */
   readonly clearCookie: boolean;
 }
@@ -112,11 +106,17 @@ export async function authenticateRequest(
   if (credential.kind === "unreadable") {
     return { clearCookie: false, session: { kind: "invalid" }, source };
   }
-  const session = await sessionForKey(env, credential.key);
-  if (session.kind === "invalid" && source === "cookie") {
-    return { clearCookie: true, session: { kind: "anonymous" }, source };
+  if (credential.kind === "session") {
+    const session = await sessionForCookie(env, credential.token);
+    return session === null
+      ? { clearCookie: true, session: { kind: "anonymous" }, source }
+      : { clearCookie: false, session, source };
   }
-  return { clearCookie: false, session, source };
+  return {
+    clearCookie: false,
+    session: await sessionForKey(env, credential.key),
+    source,
+  };
 }
 
 /** Resolve the request's credential to a session. A stale cookie is anonymous; a bad header is `invalid`. */
@@ -126,6 +126,104 @@ export async function authenticate(
 ): Promise<Session> {
   const authenticated = await authenticateRequest(request, env);
   return authenticated.session;
+}
+
+/** Resolve the request's `Authorization` header alone, for surfaces only programs use: the cookie is not read. */
+export async function authenticateHeader(
+  request: Request,
+  env: Env
+): Promise<Session> {
+  const header = request.headers.get("authorization");
+  if (header === null) {
+    return { kind: "anonymous" };
+  }
+  const credential = readAuthorization(header);
+  return credential.kind === "key"
+    ? await sessionForKey(env, credential.key)
+    : { kind: "invalid" };
+}
+
+/**
+ * Resolve the browser's session cookie. `null` when the cookie is not a valid session, the deployment has no
+ * `SESSION_SECRET` to check it with, or the person it names was removed by the owner.
+ *
+ * - `owner`, or the owner's GitHub account (`github:<OWNER_GITHUB_ID>`), is the owner;
+ * - an invited person is a `person` session, once their account object says the account still exists;
+ * - any other GitHub account is a `person` session.
+ *
+ * A `person` session holds what each shelf's object grants its principal, read on every call.
+ */
+export async function sessionForCookie(
+  env: Env,
+  token: string
+): Promise<Session | null> {
+  const secret = env.SESSION_SECRET;
+  if (secret === undefined || secret === "") {
+    return null;
+  }
+  const claims = await verifySession(secret, token);
+  if (claims === null) {
+    return null;
+  }
+  const { person } = claims;
+  // A GitHub sign-in, the owner's included, lasts only while the deployment signs people in with GitHub.
+  if (person.id.startsWith("github:") && !githubSignInEnabled(env)) {
+    return null;
+  }
+  if (person.id.startsWith("person:")) {
+    const current = await accountStub(env, person.id).person();
+    return current === null ? null : { kind: "person", person: current };
+  }
+  return sessionForPerson(env, person);
+}
+
+/** The session of someone who signed in: the owner's when it is the owner principal or the owner's GitHub account. */
+export function sessionForPerson(env: Env, person: Person): Session {
+  const ownerGitHub = env.OWNER_GITHUB_ID?.trim();
+  if (
+    person.id === OWNER_PRINCIPAL ||
+    (ownerGitHub !== undefined &&
+      ownerGitHub !== "" &&
+      person.id === `github:${ownerGitHub}`)
+  ) {
+    return {
+      keyId: "owner",
+      kind: "owner",
+      person: { id: OWNER_PRINCIPAL, name: person.name },
+    };
+  }
+  return { kind: "person", person };
+}
+
+/**
+ * Where the deployment lists the shelves that granted a principal access: an empty object
+ * `grants/<principal>/<shelf>` per grant, written and removed by the shelf's object with the grant. It only says where
+ * to look, so a signed-in person's shelf list asks only those shelves; each shelf's object still decides access from
+ * its own `access_grant` table.
+ */
+export const GRANT_MARKERS = "grants/";
+
+export function grantMarker(principal: string, shelf: string): string {
+  return `${GRANT_MARKERS}${principal}/${shelf}`;
+}
+
+/** The shelves whose grant markers name a principal, every page of them. */
+export async function grantedShelves(
+  env: Env,
+  principal: string
+): Promise<string[]> {
+  const prefix = `${GRANT_MARKERS}${principal}/`;
+  const shelves: string[] = [];
+  let cursor: string | undefined;
+  do {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- R2 lists a page at a time, each after the last.
+    const page = await env.BLOBS.list({ cursor, prefix });
+    shelves.push(
+      ...page.objects.map((object) => object.key.slice(prefix.length))
+    );
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor !== undefined);
+  return shelves;
 }
 
 /** Where the deployment lists the shelves it holds: an empty object per shelf, written by the shelf's first commit. */
@@ -203,16 +301,6 @@ export async function sessionForKey(env: Env, key: string): Promise<Session> {
     scopes: found.scopes,
     shelf: parsed.shelf,
   };
-}
-
-/** `Set-Cookie` for signing in: the key, `HttpOnly`, `Secure`, `SameSite=Strict`, for a year. */
-export function signInCookie(key: string): string {
-  return `${KEY_COOKIE}=${key}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=31536000`;
-}
-
-/** `Set-Cookie` for signing out. */
-export function signOutCookie(): string {
-  return `${KEY_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
 }
 
 /**
