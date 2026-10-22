@@ -92,5 +92,8 @@ export default defineConfig({
       conformance: { archives, cases },
       ownShelf: shelfFiles(path.join(repository, "shelf")),
     },
+    // A test drives a whole flow through the Worker (a push, a passkey ceremony, an import), and CI runners are slower
+    // than a workstation: vitest's 5-second default fails them while they are still making progress.
+    testTimeout: 30_000,
   },
 });
