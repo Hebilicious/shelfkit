@@ -135,6 +135,13 @@ enum Command {
     Login(LoginArgs),
     /// Remove the key kept for a hosted deployment from the OS keychain.
     Logout(LoginArgs),
+    /// Open the deployment's web UI in a browser, signed in as the owner.
+    ///
+    /// Uses the owner key it holds (`SHELFKIT_KEY`, or the keychain) to make a one-time sign-in link, which works once,
+    /// within 15 minutes, and opens it with the system's browser opener. The page then offers to add a passkey on that
+    /// device, so it signs in again without a link. With `--print`, or when no opener is found, the link is printed
+    /// instead; it is a credential until used, so open it and let nobody else see it. The key is never printed.
+    Open(OpenArgs),
     /// Upload the shelf to a hosted deployment and publish its profiles to its registry.
     ///
     /// Every file is uploaded once by its sha256, the set becomes the hosted shelf's snapshot (the deployment's
@@ -153,6 +160,15 @@ enum Command {
 struct LoginArgs {
     /// The deployment, as https://<host>. Defaults to SHELFKIT_URL, then the one `login` remembered.
     url: Option<String>,
+}
+
+#[derive(Args)]
+struct OpenArgs {
+    /// The deployment, as https://<host>. Defaults to SHELFKIT_URL, then the one `login` remembered.
+    url: Option<String>,
+    /// Print the link instead of opening it.
+    #[arg(long)]
+    print: bool,
 }
 
 #[derive(Args)]
@@ -413,6 +429,7 @@ where
         Command::Serve(args) => serve_command(ctx, shelf, &args),
         Command::Login(args) => hosted::login(ctx, args.url.as_deref()),
         Command::Logout(args) => hosted::logout(ctx, args.url.as_deref()),
+        Command::Open(args) => hosted::open(ctx, args.url.as_deref(), args.print),
         Command::Push(args) => push_command(ctx, shelf, &args),
         Command::Fetch(args) => hosted::fetch(
             ctx,

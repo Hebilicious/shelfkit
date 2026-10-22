@@ -1,5 +1,5 @@
-//! The hosted service's client: `shelfkit login`, `logout`, `push`, and
-//! `fetch` (`docs/PRD.md` sections 4.1 and 10.3).
+//! The hosted service's client: `shelfkit login`, `logout`, `open`, `push`,
+//! and `fetch` (`docs/PRD.md` sections 4.1 and 10.3).
 //!
 //! A deployment is addressed by its URL. `login` asks for a key created in
 //! the web UI (or the owner key `moon run worker:setup` printed), checks it,
@@ -261,6 +261,74 @@ pub(super) fn logout(ctx: &mut Context<'_>, url: Option<&str>) -> Outcome {
         } else {
             format!("The OS keychain held no key for {url}.")
         }
+    );
+    Ok(())
+}
+
+const SIGN_IN_LINK: &str = "mutation SignInLink { createSignInLink { url expiresAt } }";
+
+/// The program that opens a URL in the user's browser: `xdg-open` (Linux and the BSDs), `open` (macOS), or
+/// `explorer` (Windows).
+fn browser_opener(system: &dyn System) -> Option<(PathBuf, Vec<String>)> {
+    let candidates: &[&str] = match system.platform() {
+        super::system::Platform::Unix => &["xdg-open", "open"],
+        super::system::Platform::Windows => &["explorer"],
+    };
+    candidates
+        .iter()
+        .find_map(|program| system.find(program))
+        .map(|path| (path, Vec::new()))
+}
+
+/// `shelfkit open [URL]`: make a one-time sign-in link with the owner key and open it in the browser.
+pub(super) fn open(ctx: &mut Context<'_>, url: Option<&str>, print: bool) -> Outcome {
+    let remote = Remote::connect(ctx.system, url)?;
+    let data = remote.graphql(SIGN_IN_LINK, json!({})).map_err(|error| {
+        format!(
+            "{error}: `shelfkit open` needs the owner key, which signs the browser in as the owner"
+        )
+    })?;
+    let link = data["createSignInLink"]["url"]
+        .as_str()
+        .ok_or_else(|| format!("{} answered with no sign-in link", remote.url()))?
+        .to_owned();
+    let opener = if print {
+        None
+    } else {
+        browser_opener(ctx.system)
+    };
+    if let Some((program, mut args)) = opener {
+        args.push(link);
+        let cwd = absolute(ctx, None);
+        let code = ctx
+            .system
+            .run(&program, &args, &cwd)
+            .map_err(|error| format!("opening the browser: {error}"))?;
+        if code == 0 {
+            let _ = writeln!(
+                ctx.stdout,
+                "Opened {} in your browser, signed in as the owner. Add a passkey there to sign in on that device \
+                 without a link; the link itself works once, within 15 minutes.",
+                remote.url()
+            );
+            return Ok(());
+        }
+        let _ = writeln!(
+            ctx.stderr,
+            "shelfkit: the browser opener exited {code}; here is the link instead."
+        );
+        let link = args.pop().unwrap_or_default();
+        return print_link(ctx, &link);
+    }
+    print_link(ctx, &link)
+}
+
+fn print_link(ctx: &mut Context<'_>, link: &str) -> Outcome {
+    let _ = writeln!(ctx.stdout, "{link}");
+    let _ = writeln!(
+        ctx.stderr,
+        "This link signs a browser in as the owner. It works once, within 15 minutes: open it, add a passkey there, \
+         and let nobody else see it."
     );
     Ok(())
 }

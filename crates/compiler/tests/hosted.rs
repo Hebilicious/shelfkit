@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 
 const URL: &str = "https://shelf.example.dev";
 const KEY: &str = "sko_secretsecretsecretsecretsecretsecretsecr";
+const SIGN_IN_LINK: &str =
+    "https://shelf.example.dev/link#ssl_owner_linklinklinklinklinklinklinklinklinklinklin";
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -68,6 +70,10 @@ struct Service {
     vars: BTreeMap<String, String>,
     config: PathBuf,
     typed_key: String,
+    /// The browser opener on PATH, when the test gives the machine one.
+    opener: Option<PathBuf>,
+    /// Every command run with the opener, as its arguments.
+    opened: RefCell<Vec<Vec<String>>>,
 }
 
 impl Service {
@@ -78,6 +84,8 @@ impl Service {
             state: RefCell::new(State::default()),
             typed_key: KEY.to_owned(),
             vars: BTreeMap::new(),
+            opener: None,
+            opened: RefCell::new(Vec::new()),
         }
     }
 
@@ -103,6 +111,9 @@ impl Service {
         let query = request["query"].as_str().unwrap();
         let variables = &request["variables"];
         let mut state = self.state.borrow_mut();
+        if query.contains("createSignInLink") {
+            return json!({ "data": { "createSignInLink": { "url": SIGN_IN_LINK, "expiresAt": "2026-10-22T12:15:00Z" } } });
+        }
         if query.contains("viewer") {
             return json!({ "data": { "viewer": { "authenticated": true, "owner": true, "shelf": null, "keyName": null } } });
         }
@@ -164,13 +175,24 @@ fn answer(status: u16, body: &[u8]) -> io::Result<HttpResponse> {
 
 impl System for Service {
     fn find(&self, program: &str) -> Option<PathBuf> {
-        panic!("looked for `{program}` on PATH");
+        match &self.opener {
+            Some(path) if program == "xdg-open" => Some(path.clone()),
+            Some(_) => None,
+            None => panic!("looked for `{program}` on PATH"),
+        }
     }
     fn capture(&self, program: &Path, _: &[&str]) -> io::Result<(i32, String)> {
         panic!("ran {}", program.display());
     }
-    fn run(&self, program: &Path, _: &[String], _: &Path) -> io::Result<i32> {
-        panic!("ran {}", program.display());
+    fn run(&self, program: &Path, args: &[String], _: &Path) -> io::Result<i32> {
+        assert_eq!(
+            Some(program),
+            self.opener.as_deref(),
+            "ran {}",
+            program.display()
+        );
+        self.opened.borrow_mut().push(args.to_vec());
+        Ok(0)
     }
     fn platform(&self) -> Platform {
         Platform::Unix
@@ -313,6 +335,35 @@ fn login_keeps_the_key_in_the_keychain_and_remembers_the_deployment() {
     let out = shelfkit(&service, &scratch("logout-cwd"), &["logout"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert!(service.keychain.borrow().is_empty());
+}
+
+#[test]
+fn open_makes_a_sign_in_link_with_the_owner_key_and_opens_it_without_printing_it() {
+    let mut service = Service::logged_in("open");
+    service.opener = Some(PathBuf::from("/usr/bin/xdg-open"));
+    let ran = shelfkit(&service, &scratch("open-cwd"), &["open"]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        *service.opened.borrow(),
+        vec![vec![SIGN_IN_LINK.to_owned()]]
+    );
+    assert!(ran.stdout.contains("Add a passkey there"), "{}", ran.stdout);
+    assert!(
+        !ran.stdout.contains(SIGN_IN_LINK) && !ran.stderr.contains(SIGN_IN_LINK),
+        "the link was printed"
+    );
+    assert_eq!(service.state.borrow().requests, vec!["POST /graphql"]);
+}
+
+#[test]
+fn open_prints_the_link_when_asked_or_when_there_is_no_browser_opener() {
+    let mut service = Service::logged_in("open-print");
+    service.opener = Some(PathBuf::from("/usr/bin/xdg-open"));
+    let printed = shelfkit(&service, &scratch("open-print-cwd"), &["open", "--print"]);
+    assert_eq!(printed.code, 0, "{}", printed.stderr);
+    assert_eq!(printed.stdout.trim(), SIGN_IN_LINK);
+    assert!(printed.stderr.contains("works once"));
+    assert!(service.opened.borrow().is_empty());
 }
 
 #[test]
