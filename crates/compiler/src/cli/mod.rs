@@ -139,8 +139,9 @@ enum Command {
     ///
     /// Uses the owner key it holds (`SHELFKIT_KEY`, or the keychain) to make a one-time sign-in link, which works once,
     /// within 15 minutes, and opens it with the system's browser opener. The page then offers to add a passkey on that
-    /// device, so it signs in again without a link. With `--print`, or when no opener is found, the link is printed
-    /// instead; it is a credential until used, so open it and let nobody else see it. The key is never printed.
+    /// device, so it signs in again without a link. Only with `--print` is the link printed instead; when no opener
+    /// works, rerun with `--print`. The link is a credential until used, so let nobody else see it. The key is never
+    /// printed.
     Open(OpenArgs),
     /// Upload the shelf to a hosted deployment and publish its profiles to its registry.
     ///
