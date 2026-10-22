@@ -1,12 +1,16 @@
 /**
- * Who the browser is signed in as, and the shelves it reaches. Signing in is a navigation to the Worker's
- * `/auth/github/start`, which ends with an `HttpOnly` session cookie the SPA never reads (`docs/PRD.md` section 10.3).
+ * Who the browser is signed in as, and the shelves it reaches. Signing in (a passkey, a one-time link, or GitHub when
+ * the deployment enables it) ends with an `HttpOnly` session cookie the SPA never reads (`docs/PRD.md` section 10.3).
  */
 import { ref, shallowRef } from "vue";
 
 import { execute, whenRefused } from "../api/graphql.ts";
 import type { ResultOf } from "../api/graphql.ts";
-import { SignOutMutation, ViewerQuery } from "../api/operations.ts";
+import {
+  SignInMethodsQuery,
+  SignOutMutation,
+  ViewerQuery,
+} from "../api/operations.ts";
 
 export type Viewer = ResultOf<typeof ViewerQuery>["viewer"];
 export type ShelfEntry = ResultOf<typeof ViewerQuery>["shelves"][number];
@@ -14,6 +18,21 @@ export type ShelfEntry = ResultOf<typeof ViewerQuery>["shelves"][number];
 export const viewer = shallowRef<Viewer | null>(null);
 export const shelves = shallowRef<readonly ShelfEntry[]>([]);
 export const sessionError = ref<string | null>(null);
+
+/** How this deployment lets a browser sign in: passkeys always, GitHub when it is enabled. */
+export const signInMethods = shallowRef<{
+  readonly passkey: boolean;
+  readonly github: boolean;
+}>({
+  github: false,
+  passkey: true,
+});
+
+/** Read how the deployment lets a browser sign in. */
+export async function loadSignInMethods(): Promise<void> {
+  const data = await execute(SignInMethodsQuery, {});
+  signInMethods.value = data.signInMethods;
+}
 
 /** Read who the request is. */
 export async function loadSession(): Promise<void> {
@@ -32,15 +51,15 @@ whenRefused(() => {
   void loadSession();
 });
 
-/** Where the "Sign in with GitHub" button goes: the Worker's start of the flow, returning to `next` afterwards. */
+/** Where "Sign in with GitHub" goes, when enabled: the Worker's start of the flow, returning to `next` afterwards. */
 export function signInUrl(next: string): string {
   return `/auth/github/start?${new URLSearchParams({ next }).toString()}`;
 }
 
-/** How the header and Settings name the viewer: the GitHub account, the owner key, or a scoped key. */
+/** How the header and Settings name the viewer: who signed in, the owner key, or a scoped key. */
 export function viewerName(current: Viewer): string {
-  if (current.login !== null && current.login !== undefined) {
-    return `@${current.login}`;
+  if (current.name !== null) {
+    return current.name;
   }
   return current.owner ? "Owner" : (current.keyName ?? "Key");
 }

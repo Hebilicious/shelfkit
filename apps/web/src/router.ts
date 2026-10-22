@@ -33,6 +33,11 @@ export const router = createRouter({
       path: "/sign-in",
     },
     {
+      component: async () => await import("./screens/link.vue"),
+      name: "link",
+      path: "/link",
+    },
+    {
       component: async () => await import("./screens/share.vue"),
       name: "share",
       path: "/share/:token",

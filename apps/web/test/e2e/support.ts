@@ -18,8 +18,8 @@ import path from "node:path";
 import { test as base, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import type { Profile } from "@shelfkit/schema";
+import * as v from "valibot";
 
-import { FAKE_ACCOUNTS } from "./github.ts";
 import { BASE_URL } from "./ports.ts";
 
 /**
@@ -75,11 +75,14 @@ export function temporary(prefix: string): string {
   return mkdtempSync(path.join(tmpdir(), `shelfkit-e2e-${prefix}-`));
 }
 
-/** Run the CLI against the deployment under test, with the owner key, and return its standard output. */
-export function shelfkit(args: readonly string[]): string {
+/** Run the CLI against a deployment under test (the default one unless `url`), with the owner key; its output. */
+export function shelfkit(
+  args: readonly string[],
+  url: string = BASE_URL
+): string {
   return execFileSync(BINARY, args, {
     encoding: "utf-8",
-    env: { ...process.env, SHELFKIT_KEY: OWNER_KEY, SHELFKIT_URL: BASE_URL },
+    env: { ...process.env, SHELFKIT_KEY: OWNER_KEY, SHELFKIT_URL: url },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -91,7 +94,8 @@ export function shelfkit(args: readonly string[]): string {
 export function seedShelf(
   fixture: string,
   namespace: string,
-  prepare?: (root: string) => void
+  prepare?: (root: string) => void,
+  url: string = BASE_URL
 ): string {
   const root = temporary(namespace);
   cpSync(fixture, root, { recursive: true });
@@ -103,7 +107,7 @@ export function seedShelf(
   );
   writeFileSync(manifestPath, manifest);
   // `--force`: a spec's shelf may hold edits from an earlier attempt of the same run.
-  shelfkit(["--shelf", root, "push", "--force", "-m", "seed"]);
+  shelfkit(["--shelf", root, "push", "--force", "-m", "seed"], url);
   return root;
 }
 
@@ -163,17 +167,82 @@ export function sortedTree(root: string): [string, string][] {
 }
 
 /**
- * Sign in through the sign-in screen, as a person does: "Sign in with GitHub", then the stand-in GitHub's authorize
- * page, as the owner's account unless another is given. The browser ends up with the HttpOnly session cookie.
+ * A virtual passkey authenticator for one page, as Chromium's DevTools protocol provides: a platform authenticator
+ * that keeps passkeys, verifies its user, and answers every prompt by itself.
  */
-export async function signIn(
+export async function passkeyDevice(page: Page): Promise<void> {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("WebAuthn.enable");
+  await cdp.send("WebAuthn.addVirtualAuthenticator", {
+    options: {
+      automaticPresenceSimulation: true,
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserVerified: true,
+      protocol: "ctap2",
+      transport: "internal",
+    },
+  });
+}
+
+/** A one-time sign-in link for the owner, made with the owner key, as `shelfkit open` and setup make one. */
+export async function ownerSignInLink(
+  request: APIRequestContext,
+  url: string = BASE_URL
+): Promise<string> {
+  const response = await request.post(`${url}/graphql`, {
+    data: { query: "mutation { createSignInLink { url } }" },
+    headers: { authorization: `Bearer ${OWNER_KEY}` },
+  });
+  const answer = v.parse(
+    v.object({
+      data: v.object({ createSignInLink: v.object({ url: v.string() }) }),
+    }),
+    await response.json()
+  );
+  return answer.data.createSignInLink.url;
+}
+
+/**
+ * Open a one-time link, add a passkey on this page's virtual authenticator, and continue: the way someone uses an
+ * enrollment link, a sign-in link, or an invite for the first time. The page ends signed in as `name`.
+ */
+export async function enrollWithLink(
   page: Page,
-  login: string = FAKE_ACCOUNTS.owner.login
+  link: string,
+  name: string
+): Promise<void> {
+  await page.goto(link);
+  if (link.includes("#ssi_")) {
+    await page.getByRole("button", { name: "Accept the invitation" }).click();
+  }
+  await expect(page.getByTestId("signed-in")).toContainText(name);
+  await page.getByTestId("add-passkey").click();
+  await expect(page.getByTestId("passkey-added")).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByTestId("viewer")).toHaveText(name);
+}
+
+/** Sign in with the passkey this page's authenticator holds, from the sign-in screen. */
+export async function signInWithPasskey(
+  page: Page,
+  name: string
 ): Promise<void> {
   await page.goto("/sign-in");
-  await page.getByRole("button", { name: "Sign in with GitHub" }).click();
-  await page.getByRole("link", { name: `Authorize as @${login}` }).click();
-  await expect(page.getByTestId("viewer")).toHaveText(`@${login}`);
+  await page.getByRole("button", { name: "Sign in with a passkey" }).click();
+  await expect(page.getByTestId("viewer")).toHaveText(name);
+}
+
+/**
+ * Sign the page in as the owner, as a person does on a new device: a sign-in link, a passkey added there, a sign-out,
+ * and a sign-in with that passkey. The browser ends up with the HttpOnly session cookie and no key.
+ */
+export async function signIn(page: Page): Promise<void> {
+  await passkeyDevice(page);
+  await enrollWithLink(page, await ownerSignInLink(page.request), "Owner");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByTestId("viewer")).toHaveCount(0);
+  await signInWithPasskey(page, "Owner");
 }
 
 /** The clipboard's text. */

@@ -1,21 +1,26 @@
 /**
  * Settings and sharing: a key is shown once and revoked on a second click, registry visibility is undoable, a share
- * link renders the profile read-only to a browser that is not signed in, and the owner grants and removes another
- * GitHub account's access.
+ * link renders the profile read-only to a browser that is not signed in, and the owner invites people, who sign in
+ * with passkeys of their own, and removes them.
  */
+
+import type { BrowserContext, Page } from "@playwright/test";
 
 import {
   FIXTURES,
   dryRun,
+  enrollWithLink,
   makePrivate,
+  passkeyDevice,
   seedShelf,
   signIn,
+  signInWithPasskey,
   expect,
   test,
 } from "./support.ts";
 
 const SHELF = "settings-e2e";
-/** A private shelf, so a GitHub account reads it only while the owner grants it access. */
+/** A private shelf, so an invited person reads it only while the owner grants them access. */
 const PRIVATE = "people-e2e";
 let seeded = "";
 
@@ -79,39 +84,101 @@ test("a share link shows the profile read-only to a browser with no key", async 
   await anonymous.close();
 });
 
-test("the owner grants a second GitHub account access, and removing it ends that access at its next request", async ({
+/** The owner invites `name` to read the private shelf in Settings, and they accept in their own browser. */
+async function invited(
+  owner: Page,
+  context: BrowserContext,
+  name: string
+): Promise<Page> {
+  await owner.goto(`/shelves/${PRIVATE}/settings`);
+  const form = owner.getByRole("form", { name: "Invite someone" });
+  await form.getByLabel("Their name").fill(name);
+  await form.getByLabel("Read the shelf").check();
+  await form.getByRole("button", { name: "Create invite" }).click();
+  const url = (await owner.getByTestId("invite-url").textContent()) ?? "";
+  expect(url).toMatch(new RegExp(`/link#ssi_${PRIVATE}_`, "u"));
+  const ada = await context.newPage();
+  await passkeyDevice(ada);
+  await enrollWithLink(ada, url, name);
+  return ada;
+}
+
+test("an invited person signs in with their own passkey, reads the shelf, and loses it when the owner removes access", async ({
   browser,
   page,
 }) => {
   await signIn(page);
-  await page.goto(`/shelves/${PRIVATE}/settings`);
-  const grant = page.getByRole("form", { name: "Grant access" });
-  await grant.getByLabel("GitHub account").fill("@ada");
-  await grant.getByLabel("Read the shelf").check();
-  await grant.getByRole("button", { name: "Grant access" }).click();
+  const other = await browser.newContext();
+  const ada = await invited(page, other, "Ada");
+  await ada.getByRole("button", { name: "Sign out" }).click();
+  await signInWithPasskey(ada, "Ada");
+  await ada.goto(`/shelves/${PRIVATE}/prompts/pr-description`);
+  await expect(ada.getByTestId("prompt-title")).toHaveText("PR description");
+  // Read access is not ownership: no keys and no people, but an account and passkeys of her own.
+  await ada.goto(`/shelves/${PRIVATE}/settings`);
+  await expect(ada.getByTestId("account")).toHaveText("Signed in as Ada");
+  await expect(ada.getByTestId("passkeys").getByRole("row")).toHaveCount(2);
+  await expect(
+    ada.getByRole("heading", { exact: true, name: "Keys" })
+  ).toHaveCount(0);
+
+  await page.reload();
   const row = page
     .getByTestId("grants")
     .getByRole("row")
-    .filter({ hasText: "@ada" });
-  await expect(row).toContainText("read");
-
-  const other = await browser.newContext({
-    permissions: ["clipboard-read", "clipboard-write"],
-  });
-  const ada = await other.newPage();
-  await signIn(ada, "ada");
-  await ada.goto(`/shelves/${PRIVATE}/prompts/pr-description`);
-  await expect(ada.getByTestId("prompt-title")).toHaveText("PR description");
-  // Read access is not ownership: no keys, no people, but an account of its own.
-  await ada.goto(`/shelves/${PRIVATE}/settings`);
-  await expect(ada.getByTestId("account")).toHaveText("Signed in as @ada");
-  await expect(ada.getByRole("heading", { name: "Keys" })).toHaveCount(0);
-
-  await row.getByRole("button", { name: "Remove" }).click();
-  await row.getByRole("button", { name: "Remove: sure?" }).click();
+    .filter({ hasText: "Ada" });
+  await row.getByRole("button", { name: "Remove access" }).click();
+  await row.getByRole("button", { name: "Remove access: sure?" }).click();
   await expect(row).toHaveCount(0);
 
   await ada.goto(`/shelves/${PRIVATE}/prompts/pr-description`);
-  await expect(ada.getByText("You cannot read it as @ada")).toBeVisible();
+  await expect(ada.getByText("You cannot read it as Ada")).toBeVisible();
+  await other.close();
+});
+
+test("removing a person signs them out, and their passkey no longer signs in", async ({
+  browser,
+  page,
+}) => {
+  await signIn(page);
+  const other = await browser.newContext();
+  const ada = await invited(page, other, "Bea");
+  await page.reload();
+  const row = page
+    .getByTestId("grants")
+    .getByRole("row")
+    .filter({ hasText: "Bea" });
+  await row.getByRole("button", { name: "Remove the person" }).click();
+  await row.getByRole("button", { name: "Remove the person: sure?" }).click();
+  await expect(row).toHaveCount(0);
+
+  await ada.reload();
+  await expect(ada.getByTestId("viewer")).toHaveCount(0);
+  await ada.goto("/sign-in");
+  await ada.getByRole("button", { name: "Sign in with a passkey" }).click();
+  await expect(ada.getByRole("alert")).toContainText("belongs to no account");
+  await other.close();
+});
+
+test("an invite is listed until it is used, and a used invite does not open again", async ({
+  browser,
+  page,
+}) => {
+  await signIn(page);
+  const other = await browser.newContext();
+  await page.goto(`/shelves/${PRIVATE}/settings`);
+  const form = page.getByRole("form", { name: "Invite someone" });
+  await form.getByLabel("Their name").fill("Grace");
+  await form.getByLabel("Read the shelf").check();
+  await form.getByRole("button", { name: "Create invite" }).click();
+  const url = (await page.getByTestId("invite-url").textContent()) ?? "";
+  await expect(page.getByTestId("invites")).toContainText("Grace");
+  const grace = await other.newPage();
+  await passkeyDevice(grace);
+  await enrollWithLink(grace, url, "Grace");
+  const lateContext = await browser.newContext();
+  const late = await lateContext.newPage();
+  await late.goto(url);
+  await expect(late.getByRole("alert")).toContainText("already used");
   await other.close();
 });
