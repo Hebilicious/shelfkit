@@ -32,7 +32,7 @@ It is deliberately short. Where a decision needs a specific version, a limit, or
 1. **Build on APM, never beside it.** The only manifest in a target repository is `apm.yml`. No ShelfKit-specific repository state, no second lockfile, no parallel format.
 2. **The shelf is a Git repository.** Portable, diffable, reviewable, and readable with nothing installed.
 3. **Pinned by default.** Every compiled reference is a resolved revision. Reproducibility is the point of compiling rather than copying.
-4. **A thin slice.** No organizations, no roles, no policy engine. A shelf has an owner, the GitHub accounts the owner grants scopes to, and optional read-only links.
+4. **A thin slice.** No organizations, no roles, no policy engine. A shelf has an owner, the people the owner invites with scopes, and optional read-only links.
 5. **A published contract is a dependency, not a reimplementation.** Manifest validation uses OpenAPM's published JSON Schemas. Registry serving uses OpenAPM's Registry HTTP API.
 6. **Everything is curated or copied, never generated.** ShelfKit assembles; it does not invent conventions.
 
@@ -468,9 +468,9 @@ Vue 3, Vite, Vize, CSSForge. Everything goes through the same API as the CLI.
 | **Compile** | Pick a profile and repository, read the manifest, copy the install command. |
 | **Import** | Paste a repo, registry, catalog, or shelf URL; pick items; set pins. |
 | **Activity** | Which repositories compiled which profile revision, and what is stale. |
-| **Settings** | People (GitHub accounts granted access), API keys for programs, sources, secret names, registry visibility. |
+| **Settings** | Your passkeys and devices, people and invites, API keys for programs, sources, secret names, registry visibility. |
 
-Signing in is one button, "Sign in with GitHub". No key is ever typed into the browser.
+Signing in is "Sign in with a passkey", or a one-time link on a device without one; "Sign in with GitHub" appears only on a deployment that enables it. No key is ever typed into the browser.
 
 ### 9.1 The prompts screen
 
@@ -495,8 +495,9 @@ The composer is the profile editor: a three-pane screen with the item inventory 
 Cloudflare Worker  (single deployable)
   /apm/v1/*      registry wire contract
   /mcp           MCP tools
-  /graphql       API for the UI and the CLI, including key and grant management
-  /auth/github/* sign-in for the browser
+  /graphql       API for the UI and the CLI, including keys, links, invites, and passkeys
+  /auth/passkey/* passkey sign-in for the browser
+  /auth/github/*  GitHub sign-in, when enabled
   /*             static SPA
 
   Resolver (Rust/WASM)   Importer   Registry
@@ -536,23 +537,35 @@ Subscriptions work: a Durable Object per shelf already exists, so it fans out ch
 
 ### 10.3 Auth
 
-Deliberately minimal. People sign in with GitHub; programs present keys. There are no passwords, no passkeys, no device flow, and no roles.
+Deliberately minimal. People sign in with passkeys; programs present keys. There are no passwords, no device flow, and no roles, and nobody pastes a key into a browser.
 
-**People.** The browser signs in with GitHub, against the deployment's own GitHub App, which setup creates in one click and which asks for no permissions: it only identifies who signs in. `/auth/github/start` and `/auth/github/callback` run the authorization code flow with PKCE, with the state bound to a short-lived `HttpOnly` cookie. The Worker uses GitHub's token once, to read who signed in, and revokes it; it is never stored. The session is an `HttpOnly`, `SameSite=Strict` cookie that names the GitHub account by its numeric id, signed with a Worker secret and expiring after 30 days. Rotating that secret signs every browser out.
+**People** sign in with a **passkey** (WebAuthn), and a **one-time link** opens a browser that has none:
 
-- The **owner** is a GitHub account, recorded by id at setup, since a login can change hands and an id cannot. Signing in as it is signing in as the owner.
-- Anyone else holds what the owner **grants** their account on a shelf, with the same scopes a key carries. Grants live in the shelf's Durable Object and are read on every request, so revoking one takes effect at once. An account with no grant is anonymous.
+- `moon run worker:setup` ends by opening a link that signs the owner in, and the page offers to add a passkey on that device. `shelfkit open` makes such a link later with the owner key the CLI holds, for a new device or a lost passkey.
+- A signed-in browser makes a link for another device: open it there, and add a passkey.
+- The owner **invites** someone with a link carrying a grant on one shelf, in the scope forms a key holds. Whoever opens it gets an account holding that grant (or adds it to theirs, if signed in) and adds a passkey.
+
+A sign-in link lasts 15 minutes and an invite 7 days. Both are single-use and stored only as hashes, and the token travels in the URL's fragment, which no server and no `Referer` sees. The passkey ceremonies run on the Worker (`/auth/passkey/*`): challenges are single-use and last 5 minutes, the origin and the RP id must be the deployment's own, user verification is required, and a signature counter that does not move forward refuses the assertion. A passkey lives in its person's account object: one Durable Object per principal, the owner's (`owner`) and each invited person's (`person:<id>`), holding their passkeys and sign-in links. The owner's grants to people live in each shelf's own object, read on every request, so revoking a grant, or removing a person, takes effect at once. No query spans objects, and there is no shared database.
+
+The session is an `HttpOnly`, `SameSite=Strict` cookie naming the principal, signed with a Worker secret and expiring after 30 days. Rotating that secret signs every browser out.
+
+On Linux, a browser makes and uses passkeys through a passkey provider: its own password manager, a password manager's extension, or a hardware security key. A device without one still signs in with a link from `shelfkit open` or from a signed-in device.
+
+**GitHub sign-in is opt-in.** With `moon run worker:setup -- --github-sign-in`, setup creates the deployment's own GitHub App (asking for no permissions), records the owner's GitHub account by numeric id, and the sign-in screen offers "Sign in with GitHub". `/auth/github/start` and `/auth/github/callback` run the authorization code flow with PKCE; the Worker uses GitHub's token once, to read who signed in, and revokes it. The owner's GitHub account signs in as the owner principal, and the owner grants other GitHub accounts scopes as for anyone else. Without the flag, no GitHub App exists and no button is shown.
 
 **Programs.** The CLI, agents, CI, and APM's registry client send `Authorization: Bearer <key>`, the header the registry wire contract defines. A deployment has an **owner key** and any number of **scoped API keys**, and a middleware in the Worker resolves a key to a scope set before any resolver runs. The scope vocabulary is shared with the registry, so one key can read, publish, or both.
 
-Keys and grants are managed over GraphQL, not REST, because they are a UI and CLI concern like every other operation:
+Keys, links, invites, and passkeys are managed over GraphQL, not REST, because they are a UI and CLI concern like every other operation:
 
 ```graphql
 type Mutation {
   createKey(input: CreateKeyInput!): KeySecret! # plaintext returned once
   revokeKey(id: ID!): Boolean!
-  grantAccess(shelf: ID!, login: String!, scopes: [String!]!): Grant!
-  revokeAccess(shelf: ID!, githubId: ID!): Boolean!
+  createSignInLink: SignInLink!
+  createInvite(shelf: ID!, name: String!, scopes: [String!]!): InviteSecret!
+  redeemLink(token: String!): LinkRedemption!
+  revokeAccess(shelf: ID!, principal: ID!): Boolean!
+  removePerson(shelf: ID!, principal: ID!): Boolean!
 }
 ```
 
@@ -589,7 +602,7 @@ pnpm shelfkit setup      # create resources, write secrets, migrate, deploy
 
 **Wrangler is the deployment path, and the only one.** Wrangler is the platform's own CLI, has no third-party state to keep in sync, and owns Durable Object migrations directly. ShelfKit keeps `wrangler.jsonc` as the source of truth and drives it from `pnpm shelfkit setup` and `pnpm shelfkit deploy`.
 
-Setup ends with the one step that needs a browser: it creates the deployment's GitHub App for signing in. A page on the operator's loopback posts the app's manifest to github.com, the operator clicks "Create GitHub App", and setup stores the app's client id and secret as Worker secrets and discards its private key. A GitHub OAuth App created by hand, with the same two secrets, works the same way.
+Setup ends by opening the owner's enrollment link in the browser, which signs the owner in and adds a passkey there. With `--github-sign-in` it first creates the deployment's GitHub App: a page on the operator's loopback posts the app's manifest to github.com, the operator clicks "Create GitHub App", and setup stores the app's client id and secret as Worker secrets and discards its private key. A GitHub OAuth App created by hand, with the same two secrets, works the same way.
 
 The one place Wrangler is weak is Durable Object migration ergonomics, where a first deploy and a class change both need care. ShelfKit handles that by generating the migration entries from the shelf model rather than expecting an operator to hand-write them, and by checking migration state in CI.
 
@@ -654,7 +667,7 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 - [ ] Drift detection between a shelf item and its upstream
 - [ ] MCP surface: stateless ShelfKit tools, plus the relay variant for remote servers whose credential should not be distributed.
 - [ ] Recommendation from stack markers
-- [ ] Per-source licence enforcement and attribution rendering, plus read-only public profile pages. No roles and no organizations: a shelf has an owner, granted accounts, and links.
+- [ ] Per-source licence enforcement and attribution rendering, plus read-only public profile pages. No roles and no organizations: a shelf has an owner, invited people, and links.
 
 **Exit criterion:** a shelf that consists mostly of curated, pinned imports from three public sources, one of which is another ShelfKit instance, where an agent discovers those MCP servers through `/mcp` and runs them in its own environment.
 
@@ -672,6 +685,6 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 | 6 | APM version tracking. | Pin a supported range and check it in `doctor`. APM is at 0.31.0, ships weekly, and OpenAPM v0.1 is an editor's working draft with no backward-compatibility guarantee before 1.0, though breaking changes carry a 90-day migration window. That cadence is the strongest argument for the golden-file tests in M1 and for never parsing human-oriented output. |
 | 7 | Vize's readiness. | Confined to the Vite config, with both toolchains green in CI. |
 | 8 | APM may absorb registry and curation features. | Stay conformant. If APM ships a hosted registry, ShelfKit's value is curation, the prompts library, MCP hosting, and the UI. |
-| 9 | Cloudflare Access versus nothing. | Nothing by default, since GitHub sign-in and API keys cover the real threat model. Access remains documented as the optional edge gate. |
+| 9 | Cloudflare Access versus nothing. | Nothing by default, since passkeys and API keys cover the real threat model. Access remains documented as the optional edge gate. |
 | 10 | `lsp` depends on a surface APM has not ratified in the published schema. | Ship the kind and validate leniently, warning in `check` and `doctor`. Drop it to an instructions note if APM removes `dependencies.lsp`. |
 | 11 | How much of the registry to implement before APM's client path leaves experimental. | Serve the read endpoints fully, and the `PUT` publish endpoint too. Publishing into ShelfKit from APM is a smaller win than installing from it. |
