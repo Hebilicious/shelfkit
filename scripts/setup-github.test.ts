@@ -14,6 +14,7 @@ import {
   loopbackHandler,
   OWNER_LOOKUP,
   readSecretListing,
+  enrollmentMessage,
   readSignInLink,
 } from "./setup-github.ts";
 
@@ -255,5 +256,26 @@ describe("the owner's enrollment link", () => {
     expect(() =>
       readSignInLink('{"errors":[{"message":"this needs the owner key"}]}')
     ).toThrow(/made no sign-in link/u);
+  });
+});
+
+describe("setup's message about the enrollment link", () => {
+  const link = {
+    expiresAt: "2026-10-22T12:15:00.000Z",
+    url: "https://shelf.example/link#ssl_owner_secret",
+  };
+
+  it("never holds the link once the browser opened it, and holds it otherwise", () => {
+    expect([
+      enrollmentMessage({ ...link, noOpen: false, opened: true }).includes(
+        link.url
+      ),
+      enrollmentMessage({ ...link, noOpen: true, opened: false }).includes(
+        link.url
+      ),
+      enrollmentMessage({ ...link, noOpen: false, opened: false }).includes(
+        link.url
+      ),
+    ]).toStrictEqual([false, true, true]);
   });
 });

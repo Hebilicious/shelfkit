@@ -74,6 +74,11 @@ struct Service {
     opener: Option<PathBuf>,
     /// Every command run with the opener, as its arguments.
     opened: RefCell<Vec<Vec<String>>>,
+    /// What the opener exits with.
+    opener_exit: i32,
+    /// The machine has no browser opener on PATH.
+    opener_missing: bool,
+    platform: Platform,
 }
 
 impl Service {
@@ -86,6 +91,9 @@ impl Service {
             vars: BTreeMap::new(),
             opener: None,
             opened: RefCell::new(Vec::new()),
+            opener_exit: 0,
+            opener_missing: false,
+            platform: Platform::Unix,
         }
     }
 
@@ -175,8 +183,11 @@ fn answer(status: u16, body: &[u8]) -> io::Result<HttpResponse> {
 
 impl System for Service {
     fn find(&self, program: &str) -> Option<PathBuf> {
+        if self.opener_missing {
+            return None;
+        }
         match &self.opener {
-            Some(path) if program == "xdg-open" => Some(path.clone()),
+            Some(path) if program == "xdg-open" || program == "explorer" => Some(path.clone()),
             Some(_) => None,
             None => panic!("looked for `{program}` on PATH"),
         }
@@ -192,10 +203,10 @@ impl System for Service {
             program.display()
         );
         self.opened.borrow_mut().push(args.to_vec());
-        Ok(0)
+        Ok(self.opener_exit)
     }
     fn platform(&self) -> Platform {
-        Platform::Unix
+        self.platform
     }
 
     fn http(&self, request: &HttpRequest) -> io::Result<HttpResponse> {
@@ -356,7 +367,7 @@ fn open_makes_a_sign_in_link_with_the_owner_key_and_opens_it_without_printing_it
 }
 
 #[test]
-fn open_prints_the_link_when_asked_or_when_there_is_no_browser_opener() {
+fn open_prints_the_link_only_when_asked() {
     let mut service = Service::logged_in("open-print");
     service.opener = Some(PathBuf::from("/usr/bin/xdg-open"));
     let printed = shelfkit(&service, &scratch("open-print-cwd"), &["open", "--print"]);
@@ -364,6 +375,41 @@ fn open_prints_the_link_when_asked_or_when_there_is_no_browser_opener() {
     assert_eq!(printed.stdout.trim(), SIGN_IN_LINK);
     assert!(printed.stderr.contains("works once"));
     assert!(service.opened.borrow().is_empty());
+}
+
+#[test]
+fn open_never_prints_the_link_when_the_browser_cannot_be_opened() {
+    let mut failing = Service::logged_in("open-failing");
+    failing.opener = Some(PathBuf::from("/usr/bin/xdg-open"));
+    failing.opener_exit = 3;
+    let ran = shelfkit(&failing, &scratch("open-failing-cwd"), &["open"]);
+    assert_eq!(ran.code, 1);
+    assert!(ran.stderr.contains("--print"), "{}", ran.stderr);
+    assert!(!ran.stdout.contains(SIGN_IN_LINK) && !ran.stderr.contains(SIGN_IN_LINK));
+
+    // With no opener on PATH at all, nothing is asked of the deployment and nothing is printed.
+    let mut missing = Service::logged_in("open-missing");
+    missing.opener_missing = true;
+    let ran = shelfkit(&missing, &scratch("open-missing-cwd"), &["open"]);
+    assert_eq!(ran.code, 1);
+    assert!(ran.stderr.contains("--print"), "{}", ran.stderr);
+    assert!(missing.state.borrow().requests.is_empty());
+}
+
+#[test]
+fn open_does_not_read_windows_explorer_s_exit_status() {
+    let mut service = Service::logged_in("open-windows");
+    service.opener = Some(PathBuf::from("C:/Windows/explorer.exe"));
+    service.opener_exit = 1;
+    service.platform = Platform::Windows;
+    let ran = shelfkit(&service, &scratch("open-windows-cwd"), &["open"]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert!(ran.stdout.contains("Opened"), "{}", ran.stdout);
+    assert!(!ran.stdout.contains(SIGN_IN_LINK) && !ran.stderr.contains(SIGN_IN_LINK));
+    assert_eq!(
+        *service.opened.borrow(),
+        vec![vec![SIGN_IN_LINK.to_owned()]]
+    );
 }
 
 #[test]

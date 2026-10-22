@@ -153,6 +153,24 @@ export function readSignInLink(text: string): {
   return parsed.data.createSignInLink;
 }
 
+/**
+ * What setup says about the owner's enrollment link. The link is a credential until used, so it is printed only when
+ * it was not opened: with `--no-open`, or when no browser opener started.
+ */
+export function enrollmentMessage(link: {
+  readonly url: string;
+  readonly expiresAt: string;
+  readonly noOpen: boolean;
+  readonly opened: boolean;
+}): string {
+  const about = `it works once, until ${link.expiresAt}, and signs that browser in as the owner. Add a passkey there; to sign in elsewhere later, run \`shelfkit open\` or make a link on a signed-in device.`;
+  if (link.opened) {
+    return `    opened the owner's sign-in link in your browser; ${about}`;
+  }
+  const why = link.noOpen ? "--no-open" : "no browser opened";
+  return `    ${why}: open this link yourself, and let nobody else see it; ${about}\n\n    ${link.url}\n`;
+}
+
 /** The URL GitHub sends a browser back to after signing in on a deployment at `origin`. */
 export function callbackUrl(origin: string): string {
   return new URL("/auth/github/callback", origin).toString();

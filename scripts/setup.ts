@@ -42,7 +42,8 @@
  *
  * Options: `--dry-run` (say what would happen), `--keychain` (store a new owner key with `shelfkit login`; the binary
  * is `--shelfkit <path>`, else `shelfkit` on PATH, else `target/debug/shelfkit`), `--rotate-owner-key` (replace it),
- * `--rotate-session-secret` (sign every browser out), `--no-open` (print the enrollment link without opening it), and
+ * `--rotate-session-secret` (sign every browser out), `--no-open` (print the enrollment link without opening it),
+ * `--no-github-sign-in` (turn GitHub sign-in off: delete its secrets; a run with neither flag leaves it as it is), and
  * with `--github-sign-in`: `--github-owner <login>` (the owner's GitHub account, replacing the one recorded),
  * `--github-org <org>` (create the GitHub App under an organization), `--recreate-github-app` (make a new app).
  *
@@ -67,6 +68,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   callbackUrl,
   deployCommand,
+  enrollmentMessage,
   deploymentOrigins,
   isAddressInfo,
   loopbackHandler,
@@ -113,6 +115,7 @@ const rotate = args.includes("--rotate-owner-key");
 const rotateSession = args.includes("--rotate-session-secret");
 const recreateApp = args.includes("--recreate-github-app");
 const githubSignIn = args.includes("--github-sign-in");
+const noGithubSignIn = args.includes("--no-github-sign-in");
 const noOpen = args.includes("--no-open");
 
 /** The value after `flag`, when it was given. */
@@ -401,7 +404,7 @@ function isConversion(value: unknown): value is {
 }
 
 /** Open a URL in the default browser, if this machine has one; the URL is printed either way. */
-function openBrowser(url: string): void {
+async function openBrowser(url: string): Promise<boolean> {
   let command = "xdg-open";
   let rest = [url];
   if (process.platform === "darwin") {
@@ -415,12 +418,12 @@ function openBrowser(url: string): void {
       detached: true,
       stdio: "ignore",
     });
-    child.on("error", () => {
-      // No browser opener: the printed URL is the way in.
-    });
     child.unref();
+    // `spawn` once the program started; `once` rejects on `error`, when there is no such program.
+    await once(child, "spawn");
+    return true;
   } catch {
-    // As above.
+    return false;
   }
 }
 
@@ -461,7 +464,7 @@ async function createGitHubApp(
   console.log(
     `    open ${page} and click "Create GitHub App" on github.com (waiting up to 15 minutes)`
   );
-  openBrowser(page);
+  void openBrowser(page);
   try {
     await once(server, "close", {
       signal: AbortSignal.timeout(GITHUB_APP_WAIT_MS),
@@ -581,13 +584,32 @@ async function enrollOwner(url: string, ownerKey: string): Promise<void> {
     method: "POST",
   });
   const link = readSignInLink(await answer.text());
-  if (noOpen) {
-    console.log("    --no-open: not opening it");
-  } else {
-    openBrowser(link.url);
+  const opened = noOpen ? false : await openBrowser(link.url);
+  console.log(enrollmentMessage({ ...link, noOpen, opened }));
+}
+
+/**
+ * Turn GitHub sign-in off: delete the secrets that enable it. Every GitHub session, the owner's included, ends at its
+ * next request, and GitHub accounts' grants hold nothing. The GitHub App itself stays on github.com; delete it there.
+ */
+function removeGitHubSignIn(existing: ReadonlySet<string>): void {
+  step("GitHub sign-in: turning it off");
+  const present = [CLIENT_ID, CLIENT_SECRET, OWNER_GITHUB].filter((name) =>
+    existing.has(name)
+  );
+  if (present.length === 0) {
+    console.log("    it was off already");
+    return;
+  }
+  for (const name of present) {
+    // An empty standard input makes Wrangler take its non-interactive answer to "are you sure": yes.
+    must(
+      wrangler(["secret", "delete", name], { input: "", quiet: true }),
+      `deleting the secret ${name}`
+    );
   }
   console.log(
-    `    ${noOpen ? "open" : "opened"} this link; it works once, until ${link.expiresAt}, and signs that browser in as the owner. Add a passkey there; to sign in elsewhere later, run \`shelfkit open\` or make a link on a signed-in device:\n\n    ${link.url}\n`
+    `    deleted ${present.join(", ")}; delete the GitHub App on github.com too (Settings, Developer settings, GitHub Apps)`
   );
 }
 
@@ -600,6 +622,11 @@ function putSecret(name: string, value: string): void {
 }
 
 async function main(): Promise<void> {
+  if (githubSignIn && noGithubSignIn) {
+    throw new Error(
+      "--github-sign-in and --no-github-sign-in contradict each other"
+    );
+  }
   const directory = mkdtempSync(path.join(tmpdir(), "shelfkit-setup-"));
   try {
     step("Wrangler's account");
@@ -665,6 +692,9 @@ async function main(): Promise<void> {
 
     if (githubSignIn) {
       await ensureGitHubApp(existing, targets);
+    }
+    if (noGithubSignIn) {
+      removeGitHubSignIn(existing);
     }
 
     if (ownerKey === undefined) {
