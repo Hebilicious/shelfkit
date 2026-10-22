@@ -421,6 +421,11 @@ type Mutation {
   Use a one-time link: sign in with a sign-in link, or accept an invite. The browser is signed in by the cookie this sets.
   """
   redeemLink(
+    """
+    Sign in as the link's account even though the browser is signed in as another one. Without it, that is refused (SWITCH_REQUIRED).
+    """
+    switchAccount: Boolean = false
+
     """The link's token: the part of its URL after `#`."""
     token: String!
   ): LinkRedemption!
@@ -597,6 +602,11 @@ type Query {
   The shelves the viewer can reach: every shelf for the owner, a key's own shelf, or the shelves that granted a signed-in person access.
   """
   shelves: [Shelf!]!
+
+  """
+  Whom a sign-in link opens, without using it, and whether opening it would switch this browser from another account; null when it cannot be used.
+  """
+  signInLink(token: String!): SignInLinkPreview
   signInMethods: SignInMethods!
   viewer: Viewer!
 }
@@ -900,6 +910,16 @@ A one-time link that signs a browser in: shown once, used once, before `expiresA
 type SignInLink {
   expiresAt: DateTime!
   url: String!
+}
+
+type SignInLinkPreview {
+  """The account the link signs in as."""
+  name: String!
+
+  """
+  Whether the browser is signed in as another account, which the link would replace.
+  """
+  switching: Boolean!
 }
 
 """How a browser may sign in to this deployment."""

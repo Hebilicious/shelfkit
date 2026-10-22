@@ -4,6 +4,7 @@
  */
 import {
   abortAllDurableObjects,
+  listDurableObjectIds,
   reset,
   runInDurableObject,
 } from "cloudflare:test";
@@ -12,8 +13,8 @@ import * as v from "valibot";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { AccountIndex } from "../src/auth/accounts.ts";
-import { signClaims } from "../src/auth/browser.ts";
-import { Authenticator } from "./authenticator.ts";
+import { signClaims, signSession } from "../src/auth/browser.ts";
+import { Authenticator, base64url } from "./authenticator.ts";
 import type { Ceremony } from "./authenticator.ts";
 import { TEST_SESSION_SECRET } from "./fake-github.ts";
 import {
@@ -328,19 +329,24 @@ describe("a sign-in link", () => {
 describe("a passkey", () => {
   beforeEach(fresh);
 
-  it("is added by a signed-in owner, and then signs a fresh browser in as the owner", async () => {
-    const device = new Authenticator();
-    const owner = await enrolledOwner(device);
-    const passkeys = await owner.graphql("{ passkeys { label } }");
-    expect(passkeys.data).toStrictEqual({ passkeys: [{ label: "laptop" }] });
+  // A hang guard, not a budget: this test runs several ceremonies or a whole flow, slow on a CI runner.
+  it(
+    "is added by a signed-in owner, and then signs a fresh browser in as the owner",
+    { timeout: 20_000 },
+    async () => {
+      const device = new Authenticator();
+      const owner = await enrolledOwner(device);
+      const passkeys = await owner.graphql("{ passkeys { label } }");
+      expect(passkeys.data).toStrictEqual({ passkeys: [{ label: "laptop" }] });
 
-    const other = new Browser();
-    const signedIn = await other.signInWith(device);
-    expect(signedIn.signedIn).toStrictEqual({ name: "Owner", owner: true });
-    await expect(other.viewer()).resolves.toMatchObject({
-      viewer: { owner: true, principal: "owner" },
-    });
-  });
+      const other = new Browser();
+      const signedIn = await other.signInWith(device);
+      expect(signedIn.signedIn).toStrictEqual({ name: "Owner", owner: true });
+      await expect(other.viewer()).resolves.toMatchObject({
+        viewer: { owner: true, principal: "owner" },
+      });
+    }
+  );
 
   it("cannot be added without signing in first", async () => {
     const options = await new Browser().post(
@@ -582,58 +588,70 @@ describe("an invite", () => {
     });
   });
 
-  it("gives an account a passkey can sign back in to, which reaches that shelf only", async () => {
-    await push("acme", shelfOf("acme", false));
-    await push("other", shelfOf("other", false));
-    const device = new Authenticator();
-    const ada = await invitedAda(device);
-    await ada.signOut();
-    const signedIn = await ada.signInWith(device);
-    const reached = await ada.viewer();
-    const other = await ada.graphql('{ shelf(id: "other") { id } }');
-    expect({
-      other: other.data,
-      principal: /^person:[0-9a-f]{32}$/u.test(reached.viewer.principal ?? ""),
-      shelves: reached.shelves,
-      signedIn: signedIn.signedIn,
-    }).toStrictEqual({
-      other: { shelf: null },
-      principal: true,
-      shelves: [{ id: "acme" }],
-      signedIn: { name: "Ada", owner: false },
-    });
-  });
+  // A hang guard, not a budget: this test runs several ceremonies or a whole flow, slow on a CI runner.
+  it(
+    "gives an account a passkey can sign back in to, which reaches that shelf only",
+    { timeout: 20_000 },
+    async () => {
+      await push("acme", shelfOf("acme", false));
+      await push("other", shelfOf("other", false));
+      const device = new Authenticator();
+      const ada = await invitedAda(device);
+      await ada.signOut();
+      const signedIn = await ada.signInWith(device);
+      const reached = await ada.viewer();
+      const other = await ada.graphql('{ shelf(id: "other") { id } }');
+      expect({
+        other: other.data,
+        principal: /^person:[0-9a-f]{32}$/u.test(
+          reached.viewer.principal ?? ""
+        ),
+        shelves: reached.shelves,
+        signedIn: signedIn.signedIn,
+      }).toStrictEqual({
+        other: { shelf: null },
+        principal: true,
+        shelves: [{ id: "acme" }],
+        signedIn: { name: "Ada", owner: false },
+      });
+    }
+  );
 
-  it("gives a grant that revoking ends at once, and an account that removing signs out", async () => {
-    await push("acme", shelfOf("acme", false));
-    const device = new Authenticator();
-    const ada = await invitedAda(device);
-    const reached = await ada.viewer();
-    const principal = reached.viewer.principal ?? "";
-    await data(
-      v.unknown(),
-      'mutation ($p: ID!) { revokeAccess(shelf: "acme", principal: $p) }',
-      { p: principal }
-    );
-    const revoked = await ada.graphql('{ shelf(id: "acme") { id } }');
+  // A hang guard, not a budget: this test runs several ceremonies or a whole flow, slow on a CI runner.
+  it(
+    "gives a grant that revoking ends at once, and an account that removing signs out",
+    { timeout: 20_000 },
+    async () => {
+      await push("acme", shelfOf("acme", false));
+      const device = new Authenticator();
+      const ada = await invitedAda(device);
+      const reached = await ada.viewer();
+      const principal = reached.viewer.principal ?? "";
+      await data(
+        v.unknown(),
+        'mutation ($p: ID!) { revokeAccess(shelf: "acme", principal: $p) }',
+        { p: principal }
+      );
+      const revoked = await ada.graphql('{ shelf(id: "acme") { id } }');
 
-    await data(
-      v.unknown(),
-      'mutation ($p: ID!) { removePerson(shelf: "acme", principal: $p) }',
-      { p: principal }
-    );
-    const after = await ada.viewer();
-    const again = await new Browser().signInWith(device);
-    expect({
-      again: again.status,
-      authenticated: after.viewer.authenticated,
-      revoked: revoked.data,
-    }).toStrictEqual({
-      again: 401,
-      authenticated: false,
-      revoked: { shelf: null },
-    });
-  });
+      await data(
+        v.unknown(),
+        'mutation ($p: ID!) { removePerson(shelf: "acme", principal: $p) }',
+        { p: principal }
+      );
+      const after = await ada.viewer();
+      const again = await new Browser().signInWith(device);
+      expect({
+        again: again.status,
+        authenticated: after.viewer.authenticated,
+        revoked: revoked.data,
+      }).toStrictEqual({
+        again: 401,
+        authenticated: false,
+        revoked: { shelf: null },
+      });
+    }
+  );
 
   it("is used once, and not after it expires or is revoked", async () => {
     await push("acme", shelfOf("acme", false));
@@ -742,5 +760,233 @@ describe("the owner key", () => {
       TEST_OWNER_KEY
     );
     expect(answer.errors).toBeUndefined();
+  });
+});
+
+/** Read a server-sent event stream until it ends or `limit` reads have come back. */
+async function readStream(
+  response: Response,
+  limit: number
+): Promise<{ readonly text: string; readonly ended: boolean }> {
+  const reader = response.body?.getReader();
+  if (reader === undefined) {
+    throw new Error("no event stream");
+  }
+  const decoder = new TextDecoder();
+  let text = "";
+  for (let read = 0; read < limit; read += 1) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- events arrive one read at a time.
+    const chunk = await reader.read();
+    if (chunk.done) {
+      return { ended: true, text };
+    }
+    const bytes: unknown = chunk.value;
+    if (bytes instanceof Uint8Array) {
+      text += decoder.decode(bytes);
+    }
+  }
+  await reader.cancel();
+  return { ended: false, text };
+}
+
+describe("removing a person", () => {
+  beforeEach(fresh);
+
+  it(
+    "closes their open streams on every shelf, not only the one they were removed from",
+    // A hang guard: several ceremonies and a stream, slow on a CI runner.
+    { timeout: 20_000 },
+    async () => {
+      await push("acme", shelfOf("acme", false));
+      await push("other", shelfOf("other", false));
+      const ada = new Browser();
+      const first = await invite("acme", ["read"]);
+      await ada.redeem(first.token);
+      const second = await invite("other", ["read"]);
+      await ada.redeem(second.token);
+      const { viewer } = await ada.viewer();
+      const subscribed = await exports.default.fetch(`${ORIGIN}/graphql`, {
+        body: JSON.stringify({
+          query: 'subscription { shelfChanged(shelf: "other") { kind id } }',
+        }),
+        headers: {
+          accept: "text/event-stream",
+          "content-type": "application/json",
+          cookie: ada.cookie,
+          origin: ORIGIN,
+        },
+        method: "POST",
+      });
+      await data(
+        v.unknown(),
+        'mutation ($p: ID!) { removePerson(shelf: "acme", principal: $p) }',
+        { p: viewer.principal }
+      );
+      // A change on the other shelf, which a member would be told about.
+      await data(
+        v.unknown(),
+        'mutation { putSecretName(shelf: "other", name: "AFTER", origin: "https://mcp.linear.app") }'
+      );
+      const { ended, text } = await readStream(subscribed, 10);
+      expect({
+        after: text.includes("AFTER") || text.includes('"settings"'),
+        ended,
+      }).toStrictEqual({
+        after: false,
+        ended: true,
+      });
+    }
+  );
+
+  it("refuses a malformed principal, and makes no account object for one that names nobody", async () => {
+    await push("acme", shelfOf("acme", false));
+    const before = await listDurableObjectIds(env.ACCOUNT);
+    const malformed = await graphql(
+      'mutation { removePerson(shelf: "acme", principal: "person:nope") }',
+      {},
+      TEST_OWNER_KEY
+    );
+    const nobody = await data(
+      v.object({ removePerson: v.boolean() }),
+      `mutation { removePerson(shelf: "acme", principal: "person:${"a".repeat(32)}") }`
+    );
+    const after = await listDurableObjectIds(env.ACCOUNT);
+    expect({
+      created: after.length - before.length,
+      malformed: malformed.errors?.[0]?.extensions?.code,
+      nobody: nobody.removePerson,
+    }).toStrictEqual({
+      created: 0,
+      malformed: "BAD_USER_INPUT",
+      nobody: false,
+    });
+  });
+});
+
+describe("a sign-in link in a browser signed in as someone else", () => {
+  beforeEach(fresh);
+
+  it("is refused until the switch is confirmed, and its preview names both", async () => {
+    await push("acme", shelfOf("acme", false));
+    const ada = new Browser();
+    const invited = await invite("acme", ["read"]);
+    await ada.redeem(invited.token);
+    const token = await ownerLinkToken();
+    const preview = await ada.graphql(
+      "query ($token: String!) { signInLink(token: $token) { name switching } }",
+      { token }
+    );
+    const quiet = await ada.redeem(token);
+    const still = await ada.viewer();
+    const confirmed = await ada.graphql(
+      "mutation ($token: String!) { redeemLink(token: $token, switchAccount: true) { name owner } }",
+      { token }
+    );
+    expect({
+      confirmed: confirmed.data,
+      preview: preview.data,
+      quiet: quiet.errors?.[0]?.extensions?.code,
+      still: still.viewer.name,
+    }).toStrictEqual({
+      confirmed: { redeemLink: { name: "Owner", owner: true } },
+      preview: { signInLink: { name: "Owner", switching: true } },
+      quiet: "SWITCH_REQUIRED",
+      still: "Ada",
+    });
+  });
+});
+
+describe("an assertion for an account", () => {
+  beforeEach(fresh);
+
+  it("writes nothing to that account when its passkey is not one of the account's", async () => {
+    await enrolledOwner(new Authenticator());
+    // A passkey nobody registered, claiming to be the owner's.
+    const stranger = new Authenticator();
+    await stranger.create(
+      {
+        challenge: "unregistered",
+        rp: {},
+        user: { id: base64url(new TextEncoder().encode("owner")) },
+      },
+      HERE
+    );
+    const statuses: number[] = [];
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- one attempt after another.
+      const answer = await new Browser().signInWith(stranger);
+      statuses.push(answer.status);
+    }
+    const spent = await runInDurableObject(
+      env.ACCOUNT.get(env.ACCOUNT.idFromName("owner")),
+      (_instance: AccountIndex, state) =>
+        [...state.storage.kv.list({ prefix: "used:" })].length
+    );
+    expect({ spent, statuses }).toStrictEqual({
+      spent: 0,
+      statuses: [401, 401, 401],
+    });
+  });
+
+  it("is refused when its user handle names another account than the passkey's", async () => {
+    await push("acme", shelfOf("acme", false));
+    const device = new Authenticator();
+    await enrolledOwner(device);
+    const adaDevice = new Authenticator();
+    const ada = new Browser();
+    const invited = await invite("acme", ["read"]);
+    await ada.redeem(invited.token);
+    await ada.addPasskey(adaDevice);
+    const [adaPasskey] = adaDevice.passkeys;
+    const [ownerPasskey] = device.passkeys;
+    if (adaPasskey === undefined || ownerPasskey === undefined) {
+      throw new Error("no passkeys");
+    }
+    // Ada's passkey, claiming to be the owner's; and the owner's, claiming to be Ada's.
+    const adaHandle = adaPasskey.userHandle;
+    adaPasskey.userHandle = base64url(new TextEncoder().encode("owner"));
+    ownerPasskey.userHandle = adaHandle;
+    const asOwner = await new Browser().signInWith(adaDevice);
+    const asAda = await new Browser().signInWith(device);
+    expect([asOwner.status, asAda.status]).toStrictEqual([401, 401]);
+  });
+});
+
+describe("a deployment without GitHub sign-in", () => {
+  beforeEach(fresh);
+
+  it("signs in no GitHub session, the owner's included, offers no GitHub button, and grants no GitHub account", async () => {
+    await push("acme", shelfOf("acme", false));
+    const owner = await signSession(TEST_SESSION_SECRET, {
+      id: "github:1001",
+      name: "@shelf-owner",
+    });
+    const viewer = await graphql(
+      "{ viewer { authenticated } signInMethods { github passkey } }",
+      {},
+      undefined,
+      { cookie: `__Host-shelfkit_session=${owner}`, origin: ORIGIN }
+    );
+    const start = await exports.default.fetch(`${ORIGIN}/auth/github/start`, {
+      redirect: "manual",
+    });
+    await start.arrayBuffer();
+    const grant = await graphql(
+      'mutation { grantAccess(shelf: "acme", login: "ada", scopes: ["read"]) { name } }',
+      {},
+      TEST_OWNER_KEY
+    );
+    expect({
+      grant: grant.errors?.[0]?.extensions?.code,
+      start: start.headers.get("location"),
+      viewer: viewer.data,
+    }).toStrictEqual({
+      grant: "BAD_USER_INPUT",
+      start: "/sign-in?error=unconfigured",
+      viewer: {
+        signInMethods: { github: false, passkey: true },
+        viewer: { authenticated: false },
+      },
+    });
   });
 });

@@ -13,6 +13,7 @@ import { ShelfIdSchema } from "@shelfkit/schema";
 import * as v from "valibot";
 
 import { readCookie, SESSION_COOKIE, verifySession } from "./browser.ts";
+import { githubSignInEnabled } from "./github.ts";
 import { parseSecret, sameHash, secretHash } from "./keys.ts";
 import { accountStub } from "./principals.ts";
 import { OWNER_PRINCIPAL } from "./session.ts";
@@ -165,6 +166,10 @@ export async function sessionForCookie(
     return null;
   }
   const { person } = claims;
+  // A GitHub sign-in, the owner's included, lasts only while the deployment signs people in with GitHub.
+  if (person.id.startsWith("github:") && !githubSignInEnabled(env)) {
+    return null;
+  }
   if (person.id.startsWith("person:")) {
     const current = await accountStub(env, person.id).person();
     return current === null ? null : { kind: "person", person: current };

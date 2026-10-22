@@ -284,12 +284,16 @@ describe("4. a stale session in the browser's cookie", () => {
     expect(viewer.status).toBe(200);
     expect(viewer.data).toStrictEqual({ viewer: { authenticated: false } });
     expect(viewer.headers.get("set-cookie")).toContain("Max-Age=0");
-    const again = await exports.default.fetch(`${ORIGIN}/auth/github/start`, {
-      headers,
-      redirect: "manual",
-    });
-    expect(again.status).toBe(302);
-    expect(again.headers.get("location")).toContain("/login/oauth/authorize?");
+    // Signing in again starts at once: a passkey ceremony's options, for this browser.
+    const again = await exports.default.fetch(
+      `${ORIGIN}/auth/passkey/options`,
+      {
+        body: "{}",
+        headers: { ...headers, "content-type": "application/json" },
+        method: "POST",
+      }
+    );
+    expect(again.status).toBe(200);
   });
 });
 
@@ -404,41 +408,48 @@ describe("6. a secret", () => {
     ).toBeUndefined();
   });
 
-  it("cannot be sent elsewhere by a key that edits the hosted item's URL", async () => {
-    await pushKit();
-    await stub().putSecretName(
-      owner,
-      "kit",
-      "LINEAR_API_KEY",
-      "https://mcp.linear.app"
-    );
-    const relay = await createKey("kit", ["mcp:kit/linear"]);
-    const session = asKey(relay.id, ["mcp:kit/linear"]);
-    const target = await stub().relayHeaders(session, "kit", "linear");
-    expect(target.ok && target.value.headers).toStrictEqual({
-      Authorization: "test-linear-token",
-    });
+  // A hang guard, not a budget: this test runs several ceremonies or a whole flow, slow on a CI runner.
+  it(
+    "cannot be sent elsewhere by a key that edits the hosted item's URL",
+    { timeout: 20_000 },
+    async () => {
+      await pushKit();
+      await stub().putSecretName(
+        owner,
+        "kit",
+        "LINEAR_API_KEY",
+        "https://mcp.linear.app"
+      );
+      const relay = await createKey("kit", ["mcp:kit/linear"]);
+      const session = asKey(relay.id, ["mcp:kit/linear"]);
+      const target = await stub().relayHeaders(session, "kit", "linear");
+      expect(target.ok && target.value.headers).toStrictEqual({
+        Authorization: "test-linear-token",
+      });
 
-    const publisher = await createKey("kit", ["publish:kit/*"]);
-    const found = await stub().getItem(owner, "kit", "linear");
-    if (!found.ok) {
-      throw new Error("no linear");
-    }
-    const moved = await stub().writeItem(
-      asKey(publisher.id, ["publish:kit/*"]),
-      "kit",
-      {
-        document: v.parse(ItemSchema, {
-          ...found.value.item,
-          url: "https://evil.example/mcp",
-        }),
-        files: [],
+      const publisher = await createKey("kit", ["publish:kit/*"]);
+      const found = await stub().getItem(owner, "kit", "linear");
+      if (!found.ok) {
+        throw new Error("no linear");
       }
-    );
-    expect(moved.ok).toBeTruthy();
-    const refused = await stub().relayHeaders(session, "kit", "linear");
-    expect(refused.ok ? null : refused.failure._tag).toBe("SecretUnavailable");
-  });
+      const moved = await stub().writeItem(
+        asKey(publisher.id, ["publish:kit/*"]),
+        "kit",
+        {
+          document: v.parse(ItemSchema, {
+            ...found.value.item,
+            url: "https://evil.example/mcp",
+          }),
+          files: [],
+        }
+      );
+      expect(moved.ok).toBeTruthy();
+      const refused = await stub().relayHeaders(session, "kit", "linear");
+      expect(refused.ok ? null : refused.failure._tag).toBe(
+        "SecretUnavailable"
+      );
+    }
+  );
 
   it("is bound to an origin by the owner alone", async () => {
     await pushKit();

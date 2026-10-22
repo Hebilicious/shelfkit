@@ -51,6 +51,7 @@ import { DurableObject } from "cloudflare:workers";
 import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import * as v from "valibot";
 
+import { githubSignInEnabled } from "./auth/github.ts";
 import { grantMarker, SHELF_MARKERS } from "./auth/index.ts";
 import {
   displayPrefix,
@@ -59,6 +60,7 @@ import {
   secretHash,
 } from "./auth/keys.ts";
 import { INVITE_SECONDS, linkHash, newInviteToken } from "./auth/links.ts";
+import { accountStub } from "./auth/principals.ts";
 import { parseScope } from "./auth/scopes.ts";
 import {
   access,
@@ -345,10 +347,13 @@ export class ShelfIndex extends DurableObject<Env> {
   private readonly db: ShelfDatabase;
   private loaded: Loaded | undefined;
   private readonly plans = new Map<string, Plan | CompileFailed>();
-  /** Each open event stream, with the session that opened it, which is checked again before every event. */
+  /**
+   * Each open event stream, with the session that opened it, which is checked again before every event, and the
+   * stream's delivery so far, so its events go out in order even when a check has to wait.
+   */
   private readonly subscribers = new Map<
     WritableStreamDefaultWriter<Uint8Array>,
-    Session
+    { readonly session: Session; delivered: Promise<void> }
   >();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -416,6 +421,13 @@ export class ShelfIndex extends DurableObject<Env> {
     const shelf = this.shelfId();
     if (session.kind !== "person") {
       return session;
+    }
+    // A GitHub account's grant holds only while the deployment signs people in with GitHub.
+    if (
+      session.person.id.startsWith("github:") &&
+      !githubSignInEnabled(this.env)
+    ) {
+      return { kind: "anonymous" };
     }
     const grant =
       shelf === null
@@ -613,6 +625,12 @@ export class ShelfIndex extends DurableObject<Env> {
       return { errors: ["only the owner grants access"], ok: false };
     }
     const errors = scopeErrors(shelf, input.scopes);
+    if (
+      input.person.id.startsWith("github:") &&
+      !githubSignInEnabled(this.env)
+    ) {
+      errors.push("GitHub sign-in is not enabled on this deployment");
+    }
     if (errors.length > 0) {
       return { errors, ok: false };
     }
@@ -3362,7 +3380,7 @@ export class ShelfIndex extends DurableObject<Env> {
       Uint8Array
     >();
     const writer = writable.getWriter();
-    this.subscribers.set(writer, session);
+    this.subscribers.set(writer, { delivered: Promise.resolve(), session });
     void this.send(writer, encoder.encode(": connected\n\n"));
     void this.forget(writer);
     return readable;
@@ -3398,16 +3416,55 @@ export class ShelfIndex extends DurableObject<Env> {
    */
   private broadcast(event: ShelfEvent): void {
     const bytes = encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
-    for (const [writer, session] of this.subscribers) {
-      const granted = this.stillGranted(session);
-      if (granted === null || !granted.read) {
-        this.subscribers.delete(writer);
-        void closeQuietly(writer);
-        continue;
-      }
-      if (mayReceive(granted, event)) {
-        void this.send(writer, bytes);
-      }
+    for (const [writer, subscriber] of this.subscribers) {
+      subscriber.delivered = this.after(
+        subscriber.delivered,
+        writer,
+        subscriber.session,
+        event,
+        bytes
+      );
+    }
+  }
+
+  /** Deliver an event once the stream's earlier events have gone. */
+  private async after(
+    earlier: Promise<void>,
+    writer: WritableStreamDefaultWriter<Uint8Array>,
+    session: Session,
+    event: ShelfEvent,
+    bytes: Uint8Array
+  ): Promise<void> {
+    await earlier;
+    await this.deliver(writer, session, event, bytes);
+  }
+
+  /**
+   * Send one event to one stream, or close the stream when its session may no longer read the shelf. An invited
+   * person's account is asked first: once the owner removes them, every stream they hold closes at its next event,
+   * on every shelf, whatever grant it still names here.
+   */
+  private async deliver(
+    writer: WritableStreamDefaultWriter<Uint8Array>,
+    session: Session,
+    event: ShelfEvent,
+    bytes: Uint8Array
+  ): Promise<void> {
+    if (!this.subscribers.has(writer)) {
+      return;
+    }
+    const removed =
+      session.kind === "person" &&
+      session.person.id.startsWith("person:") &&
+      (await accountStub(this.env, session.person.id).person()) === null;
+    const granted = removed ? null : this.stillGranted(session);
+    if (granted === null || !granted.read) {
+      this.subscribers.delete(writer);
+      await closeQuietly(writer);
+      return;
+    }
+    if (mayReceive(granted, event)) {
+      await this.send(writer, bytes);
     }
   }
 

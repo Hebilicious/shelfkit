@@ -4,10 +4,19 @@
  * objects. See `docs/PRD.md` section 10.3.
  */
 import { GraphQLError } from "graphql";
+import * as v from "valibot";
 
-import { sessionCookie, signSession } from "../auth/browser.ts";
+import {
+  PrincipalSchema,
+  sessionCookie,
+  signSession,
+} from "../auth/browser.ts";
 import { githubSignInEnabled } from "../auth/github.ts";
-import { existingShelf, OWNER_PRINCIPAL } from "../auth/index.ts";
+import {
+  existingShelf,
+  grantedShelves,
+  OWNER_PRINCIPAL,
+} from "../auth/index.ts";
 import type { Person } from "../auth/index.ts";
 import {
   createSignInLink,
@@ -161,7 +170,8 @@ export interface Redeemed {
  */
 export async function redeemLink(
   context: GraphQLContext,
-  token: string
+  token: string,
+  switchAccount: boolean
 ): Promise<Redeemed> {
   const secret = sessionSecret(context);
   const parsed = parseLink(token);
@@ -172,6 +182,15 @@ export async function redeemLink(
   if (parsed.kind === "sign-in") {
     if (!(await accountExists(context.env, parsed.principal))) {
       throw refusedLink();
+    }
+    // A link never quietly replaces who this browser is signed in as: someone could send theirs to the owner, who
+    // would then work, and save a passkey, in the sender's account. Switching takes saying so.
+    const current = signedInPrincipal(context);
+    if (current !== null && current !== parsed.principal && !switchAccount) {
+      throw new GraphQLError(
+        "this link signs the browser in as another account than the one it is signed in as: confirm the switch",
+        { extensions: { code: "SWITCH_REQUIRED" } }
+      );
     }
     const person = await accountStub(context.env, parsed.principal).redeemLink(
       hash
@@ -232,6 +251,43 @@ export async function redeemLink(
   };
 }
 
+/** The principal the browser is signed in as, by its cookie; `null` for none, or for a program's key. */
+function signedInPrincipal(context: GraphQLContext): string | null {
+  const { session } = context;
+  if (session.kind === "owner") {
+    return session.person === undefined ? null : OWNER_PRINCIPAL;
+  }
+  return session.kind === "person" ? session.person.id : null;
+}
+
+/**
+ * Whom a sign-in link would sign the browser in as, without using it, and whom it is signed in as now: for the page
+ * that asks before switching. `null` when the link cannot be used.
+ */
+export async function previewSignInLink(
+  context: GraphQLContext,
+  token: string
+): Promise<{ readonly name: string; readonly switching: boolean } | null> {
+  const parsed = parseLink(token);
+  if (
+    parsed.kind !== "sign-in" ||
+    !(await accountExists(context.env, parsed.principal))
+  ) {
+    return null;
+  }
+  const person = await accountStub(context.env, parsed.principal).linkPerson(
+    await linkHash(token)
+  );
+  if (person === null) {
+    return null;
+  }
+  const current = signedInPrincipal(context);
+  return {
+    name: person.name,
+    switching: current !== null && current !== parsed.principal,
+  };
+}
+
 /** A new invited person's account: its marker, then its object. */
 async function newPerson(env: Env, name: string): Promise<Person> {
   const principal = newPersonPrincipal();
@@ -255,25 +311,41 @@ async function removeAccount(env: Env, principal: string): Promise<boolean> {
 }
 
 /**
- * Remove someone: their grant on this shelf, and, for an invited person, their account, so they can no longer sign
- * in anywhere. Their grants on other shelves stay listed there, and grant nothing to an account that is gone. The
- * owner only.
+ * Remove someone: their grant on this shelf and on every other shelf their grant markers name, and, for an invited
+ * person, their account, so they can sign in nowhere and every stream they hold closes. The owner only. A principal
+ * that is malformed, or names no account, changes nothing and makes no account object.
  */
 export async function removePerson(
   context: GraphQLContext,
   shelf: string,
   principal: string
 ): Promise<boolean> {
-  if (context.session.kind !== "owner") {
+  const { session } = context;
+  if (session.kind !== "owner") {
     throw forbidden("only the owner removes people");
   }
-  const target = await existingShelf(context.env, shelf);
-  const revoked =
-    target === null
-      ? false
-      : await target.revokeAccess(context.session, principal);
-  const removed = await removeAccount(context.env, principal);
-  return revoked || removed;
+  if (!v.is(PrincipalSchema, principal) || principal === OWNER_PRINCIPAL) {
+    throw new GraphQLError(`\`${principal}\` names nobody who can be removed`, {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  const shelves = new Set([
+    shelf,
+    ...(await grantedShelves(context.env, principal)),
+  ]);
+  const revoked = await Promise.all(
+    [...shelves].map(async (id) => {
+      const target = await existingShelf(context.env, id);
+      return target === null
+        ? false
+        : await target.revokeAccess(session, principal);
+    })
+  );
+  const exists =
+    principal.startsWith("person:") &&
+    (await accountExists(context.env, principal));
+  const removed = exists ? await removeAccount(context.env, principal) : false;
+  return removed || revoked.some(Boolean);
 }
 
 /** A new invite on a shelf, with its link. The owner only. */

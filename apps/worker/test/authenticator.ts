@@ -113,7 +113,7 @@ export interface Ceremony {
 interface Passkey {
   readonly id: Uint8Array<ArrayBuffer>;
   readonly keys: CryptoKeyPair;
-  readonly userHandle: string;
+  userHandle: string;
   counter: number;
 }
 

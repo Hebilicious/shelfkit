@@ -259,11 +259,11 @@ export class AccountIndex extends DurableObject<Env> {
     if (person === null) {
       return { ok: false, reason: "removed" };
     }
+    // Nothing is written for an assertion that does not check out: an unknown passkey, or a bad signature, leaves
+    // this object as it was, so a stranger with free challenges cannot fill it.
     if (this.kv.get(`used:${challenge}`) !== undefined) {
       return { ok: false, reason: "challenge" };
     }
-    this.prune();
-    this.kv.put(`used:${challenge}`, { expiresAt: challengeExpiresAt });
     const stored = v.safeParse(
       CredentialSchema,
       this.kv.get(`credential:${response.id}`)
@@ -297,6 +297,12 @@ export class AccountIndex extends DurableObject<Env> {
     if (!verified.verified) {
       return { ok: false, reason: "verification" };
     }
+    // Spent now, in one synchronous step with the check: of two assertions racing with one challenge, one wins.
+    if (this.kv.get(`used:${challenge}`) !== undefined) {
+      return { ok: false, reason: "challenge" };
+    }
+    this.prune();
+    this.kv.put(`used:${challenge}`, { expiresAt: challengeExpiresAt });
     // The counter is read again after the await: another assertion may have moved it meanwhile.
     const current = v.safeParse(
       CredentialSchema,
@@ -356,6 +362,15 @@ export class AccountIndex extends DurableObject<Env> {
     this.prune();
     this.kv.put(`link:${hash}`, { expiresAt });
     return true;
+  }
+
+  /** Whom a sign-in link opens, without using it: for the page that asks before switching accounts. */
+  linkPerson(hash: string): Person | null {
+    const stored = v.safeParse(ExpirySchema, this.kv.get(`link:${hash}`));
+    if (!stored.success || stored.output.expiresAt <= seconds()) {
+      return null;
+    }
+    return this.person();
   }
 
   /** Use a sign-in link: once, before it expires. The account's person, or `null`. */

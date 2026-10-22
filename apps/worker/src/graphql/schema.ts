@@ -1371,6 +1371,22 @@ export function buildSchema(): GraphQLSchema {
       }),
     });
 
+  const SignInLinkPreview = builder
+    .objectRef<{ readonly name: string; readonly switching: boolean }>(
+      "SignInLinkPreview"
+    )
+    .implement({
+      fields: (t) => ({
+        name: t.exposeString("name", {
+          description: "The account the link signs in as.",
+        }),
+        switching: t.exposeBoolean("switching", {
+          description:
+            "Whether the browser is signed in as another account, which the link would replace.",
+        }),
+      }),
+    });
+
   const LinkRedemption = builder
     .objectRef<{
       readonly name: string;
@@ -2184,6 +2200,15 @@ export function buildSchema(): GraphQLSchema {
         },
         type: [Shelf],
       }),
+      signInLink: t.field({
+        args: { token: t.arg.string({ required: true }) },
+        description:
+          "Whom a sign-in link opens, without using it, and whether opening it would switch this browser from another account; null when it cannot be used.",
+        nullable: true,
+        resolve: async (_root, args, context) =>
+          await people.previewSignInLink(context, args.token),
+        type: SignInLinkPreview,
+      }),
       signInMethods: t.field({
         resolve: (_root, _args, context) => people.signInMethods(context),
         type: SignInMethods,
@@ -2550,6 +2575,11 @@ export function buildSchema(): GraphQLSchema {
       }),
       redeemLink: t.field({
         args: {
+          switchAccount: t.arg.boolean({
+            defaultValue: false,
+            description:
+              "Sign in as the link's account even though the browser is signed in as another one. Without it, that is refused (SWITCH_REQUIRED).",
+          }),
           token: t.arg.string({
             description: "The link's token: the part of its URL after `#`.",
             required: true,
@@ -2558,7 +2588,11 @@ export function buildSchema(): GraphQLSchema {
         description:
           "Use a one-time link: sign in with a sign-in link, or accept an invite. The browser is signed in by the cookie this sets.",
         resolve: async (_root, args, context) =>
-          await people.redeemLink(context, args.token),
+          await people.redeemLink(
+            context,
+            args.token,
+            args.switchAccount ?? false
+          ),
         type: LinkRedemption,
       }),
       removePasskey: t.boolean({
