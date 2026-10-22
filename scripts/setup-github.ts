@@ -98,6 +98,61 @@ export function isAddressInfo(value: unknown): value is AddressInfo {
   return typeof value === "object" && value !== null && "port" in value;
 }
 
+/** The GraphQL operation that makes a one-time sign-in link for the owner, with the owner key. */
+export const SIGN_IN_LINK = "mutation { createSignInLink { url expiresAt } }";
+
+// BOUNDARY: the Worker's answer is unknown until this guard has found the link and its expiry.
+function isSignInLinkAnswer(value: unknown): value is {
+  readonly data: {
+    readonly createSignInLink: {
+      readonly url: string;
+      readonly expiresAt: string;
+    };
+  };
+} {
+  if (typeof value !== "object" || value === null || !("data" in value)) {
+    return false;
+  }
+  const { data } = value;
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    !("createSignInLink" in data)
+  ) {
+    return false;
+  }
+  const link = data.createSignInLink;
+  return (
+    typeof link === "object" &&
+    link !== null &&
+    "url" in link &&
+    typeof link.url === "string" &&
+    "expiresAt" in link &&
+    typeof link.expiresAt === "string"
+  );
+}
+
+/** The link in the Worker's answer to `SIGN_IN_LINK`, or why there is none. */
+export function readSignInLink(text: string): {
+  readonly url: string;
+  readonly expiresAt: string;
+} {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(
+      "the deployment answered the sign-in link request with no JSON"
+    );
+  }
+  if (!isSignInLinkAnswer(parsed)) {
+    throw new Error(
+      `the deployment made no sign-in link: ${text.slice(0, 200)}. Run \`shelfkit open\` once the deployment answers`
+    );
+  }
+  return parsed.data.createSignInLink;
+}
+
 /** The URL GitHub sends a browser back to after signing in on a deployment at `origin`. */
 export function callbackUrl(origin: string): string {
   return new URL("/auth/github/callback", origin).toString();

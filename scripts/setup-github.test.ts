@@ -14,6 +14,7 @@ import {
   loopbackHandler,
   OWNER_LOOKUP,
   readSecretListing,
+  readSignInLink,
 } from "./setup-github.ts";
 
 describe("the owner's account", () => {
@@ -238,5 +239,21 @@ describe("the loopback page", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe("the owner's enrollment link", () => {
+  it("is read from the deployment's answer, and its absence stops setup with what the deployment said", () => {
+    expect(
+      readSignInLink(
+        '{"data":{"createSignInLink":{"url":"https://shelf.example/link#ssl_owner_x","expiresAt":"2026-10-22T12:15:00.000Z"}}}'
+      )
+    ).toStrictEqual({
+      expiresAt: "2026-10-22T12:15:00.000Z",
+      url: "https://shelf.example/link#ssl_owner_x",
+    });
+    expect(() =>
+      readSignInLink('{"errors":[{"message":"this needs the owner key"}]}')
+    ).toThrow(/made no sign-in link/u);
   });
 });

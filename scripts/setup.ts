@@ -9,26 +9,32 @@
  *    version cannot be overwritten or deleted at the storage layer either;
  * 2. the queue `shelfkit-jobs` and its dead-letter queue `shelfkit-jobs-dlq`;
  * 3. the owner key, unless the Worker already has one: 32 random bytes, of which the Worker keeps only the SHA-256 as
- *    the secret `OWNER_KEY_HASH`. Programs use it; people sign in with GitHub;
+ *    the secret `OWNER_KEY_HASH`. Programs use it: the CLI, agents, CI. People sign in with passkeys;
  * 4. the session secret `SESSION_SECRET`, unless the Worker has one: the HMAC key of the browser's session cookie;
- * 5. the owner's GitHub account, `OWNER_GITHUB_ID`, unless the Worker has one: by default the account
- *    `gh api --hostname github.com user` reports on this machine, by numeric id, since a login can change hands and an
- *    id cannot. Setup prints the login and id before it records them;
- * 6. the deploy, which creates the Durable Object namespace and applies its migrations (`wrangler.jsonc`);
- * 7. the new secrets of steps 3 to 5, each set with `wrangler secret put` on its standard input. No secret is ever
- *    written to a file, and until they are set the Worker authenticates nobody;
- * 8. a check that `/health` answers;
- * 9. the deployment's own GitHub App, for "Sign in with GitHub", unless the Worker has `GITHUB_CLIENT_ID` and
- *    `GITHUB_CLIENT_SECRET`. It is made with GitHub's app-manifest flow: a page served on this machine's loopback
- *    posts the manifest to github.com, you click "Create GitHub App", and GitHub sends the browser back to that page
- *    with a code that setup converts into the app's client id and secret, set as Worker secrets on standard input.
- *    The app asks for no permissions, and its callbacks are the deployment's `https:` origins among Wrangler's deploy targets (`deploymentOrigins`); its
- *    private key and webhook secret are never kept. It is public so that accounts the owner grants access can
- *    authorize it; installing it grants nothing.
+ * 5. the deploy, which creates the Durable Object namespaces and applies their migrations (`wrangler.jsonc`);
+ * 6. the new secrets, each set with `wrangler secret put` on its standard input. No secret is ever written to a file,
+ *    and until they are set the Worker authenticates nobody;
+ * 7. a check that `/health` answers;
+ * 8. the owner's enrollment: with a new owner key, setup makes a one-time sign-in link and opens it in the browser
+ *    (printing it too). The page signs the browser in as the owner and offers to add a passkey there. With an owner
+ *    key kept from an earlier run, setup cannot make one, and says to run `shelfkit open`, which uses the key in the
+ *    keychain.
  *
- * If Wrangler cannot list the Worker's secrets for any reason but the Worker not existing (`Worker "<name>" not found.`),
- * setup stops rather than
- * take that for "no secrets" and replace them.
+ * With `--github-sign-in`, people may also sign in with GitHub, and setup adds two steps:
+ *
+ * - before the deploy, the owner's GitHub account, `OWNER_GITHUB_ID`, unless the Worker has one: by default the account
+ *   `gh api --hostname github.com user` reports on this machine, by numeric id, since a login can change hands and an
+ *   id cannot. Setup prints the login and id before it records them;
+ * - after `/health`, the deployment's own GitHub App, unless the Worker has `GITHUB_CLIENT_ID` and
+ *   `GITHUB_CLIENT_SECRET`. It is made with GitHub's app-manifest flow: a page served on this machine's loopback posts
+ *   the manifest to github.com, you click "Create GitHub App", and GitHub sends the browser back to that page with a
+ *   code that setup converts into the app's client id and secret, set as Worker secrets on standard input. The app
+ *   asks for no permissions, and its callbacks are the deployment's `https:` origins among Wrangler's deploy targets
+ *   (`deploymentOrigins`); its private key and webhook secret are never kept. It is public so that accounts the owner
+ *   grants access can authorize it; installing it grants nothing.
+ *
+ * If Wrangler cannot list the Worker's secrets for any reason but the Worker not existing (`Worker "<name>" not
+ * found.`), setup stops rather than take that for "no secrets" and replace them.
  *
  * A new owner key is shown once, here, and stored nowhere else. With `--keychain`, it is handed to `shelfkit login`
  * instead, which keeps it in the OS keychain, and it is never printed. Pass the account as `CLOUDFLARE_ACCOUNT_ID` when
@@ -36,9 +42,9 @@
  *
  * Options: `--dry-run` (say what would happen), `--keychain` (store a new owner key with `shelfkit login`; the binary
  * is `--shelfkit <path>`, else `shelfkit` on PATH, else `target/debug/shelfkit`), `--rotate-owner-key` (replace it),
- * `--github-owner <login>` (the owner's GitHub account, replacing the one recorded), `--github-org <org>` (create the
- * GitHub App under an organization), `--recreate-github-app` (make a new app and replace its secrets),
- * `--rotate-session-secret` (sign every browser out).
+ * `--rotate-session-secret` (sign every browser out), `--no-open` (print the enrollment link without opening it), and
+ * with `--github-sign-in`: `--github-owner <login>` (the owner's GitHub account, replacing the one recorded),
+ * `--github-org <org>` (create the GitHub App under an organization), `--recreate-github-app` (make a new app).
  *
  * This is a moon task, not `pnpm setup`: `pnpm setup` is pnpm's own built-in command, and the repository has no npm
  * scripts.
@@ -66,6 +72,8 @@ import {
   loopbackHandler,
   OWNER_LOOKUP,
   readSecretListing,
+  readSignInLink,
+  SIGN_IN_LINK,
 } from "./setup-github.ts";
 
 const repository = path.resolve(import.meta.dirname, "..");
@@ -104,6 +112,8 @@ const keychain = args.includes("--keychain");
 const rotate = args.includes("--rotate-owner-key");
 const rotateSession = args.includes("--rotate-session-secret");
 const recreateApp = args.includes("--recreate-github-app");
+const githubSignIn = args.includes("--github-sign-in");
+const noOpen = args.includes("--no-open");
 
 /** The value after `flag`, when it was given. */
 function option(flag: string): string | undefined {
@@ -556,6 +566,31 @@ function setSecrets(secrets: Readonly<Record<string, string>>): void {
   }
 }
 
+/**
+ * Sign the owner's browser in: a one-time link, made with the new owner key, opened in the browser and printed. The
+ * page it opens offers to add a passkey on that device.
+ */
+async function enrollOwner(url: string, ownerKey: string): Promise<void> {
+  step("Owner's browser: a one-time sign-in link, to add a passkey");
+  const answer = await fetch(`${url}/graphql`, {
+    body: JSON.stringify({ query: SIGN_IN_LINK }),
+    headers: {
+      authorization: `Bearer ${ownerKey}`,
+      "content-type": "application/json",
+    },
+    method: "POST",
+  });
+  const link = readSignInLink(await answer.text());
+  if (noOpen) {
+    console.log("    --no-open: not opening it");
+  } else {
+    openBrowser(link.url);
+  }
+  console.log(
+    `    ${noOpen ? "open" : "opened"} this link; it works once, until ${link.expiresAt}, and signs that browser in as the owner. Add a passkey there; to sign in elsewhere later, run \`shelfkit open\` or make a link on a signed-in device:\n\n    ${link.url}\n`
+  );
+}
+
 /** `wrangler secret put`, with the value on its standard input, so it is neither printed nor written to disk. */
 function putSecret(name: string, value: string): void {
   must(
@@ -604,14 +639,13 @@ async function main(): Promise<void> {
         .digest("hex");
     }
 
-    Object.assign(
-      secrets,
-      sessionSecret(existing),
-      await ownerGitHub(existing)
-    );
+    Object.assign(secrets, sessionSecret(existing));
+    if (githubSignIn) {
+      Object.assign(secrets, await ownerGitHub(existing));
+    }
 
     const targets = deploy(directory);
-    if (dryRun) {
+    if (dryRun && githubSignIn) {
       await ensureGitHubApp(existing, []);
     }
     const [url] = targets;
@@ -629,18 +663,26 @@ async function main(): Promise<void> {
       throw new Error(`${url}/health did not answer`);
     }
 
-    await ensureGitHubApp(existing, targets);
+    if (githubSignIn) {
+      await ensureGitHubApp(existing, targets);
+    }
 
-    if (ownerKey !== undefined) {
+    if (ownerKey === undefined) {
+      step("Owner's browser");
+      console.log(
+        `    the owner key was kept from an earlier run, so setup cannot sign a browser in: run \`shelfkit open ${url}\`, which uses the key in your keychain`
+      );
+    } else {
       if (keychain) {
         storeInKeychain(url, ownerKey);
       } else {
         console.log(
-          `\nThe owner key, shown this once and stored nowhere (keep it in a password manager, or run \`shelfkit login ${url}\` and paste it):\n\n    ${ownerKey}\n`
+          `\nThe owner key, for programs, shown this once and stored nowhere (keep it in a password manager, or run \`shelfkit login ${url}\` and paste it):\n\n    ${ownerKey}\n`
         );
       }
+      await enrollOwner(url, ownerKey);
     }
-    console.log(`\nDone: ${url}. Open ${url}/sign-in and sign in with GitHub.`);
+    console.log(`\nDone: ${url}`);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
