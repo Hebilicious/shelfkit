@@ -119,3 +119,30 @@ test("the last passkey is removed only after saying what that means", async ({
     cy.getByText("To sign in again, open a sign-in link.")
   ).toBeVisible();
 });
+
+test("a sign-in link opened in a browser signed in as someone else asks before switching, naming both", async ({
+  browser,
+  page,
+}) => {
+  await signIn(page);
+  await page.goto(`/shelves/${SHELF}/settings`);
+  const form = page.getByRole("form", { name: "Invite someone" });
+  await form.getByLabel("Their name").fill("Dee");
+  await form.getByLabel("Read the shelf").check();
+  await form.getByRole("button", { name: "Create invite" }).click();
+  const url = (await page.getByTestId("invite-url").textContent()) ?? "";
+
+  const deeContext = await browser.newContext();
+  const dee = await deeContext.newPage();
+  await passkeyDevice(dee);
+  await enrollWithLink(dee, url, "Dee");
+  // The owner's link, sent to Dee: it would put Dee's browser in the owner's account.
+  await dee.goto(await ownerSignInLink(dee.request));
+  await expect(dee.getByTestId("switch")).toContainText("signed in as Dee");
+  await expect(dee.getByTestId("switch")).toContainText("as Owner instead");
+  await expect(dee.getByTestId("add-passkey")).toHaveCount(0);
+  await expect(dee.getByTestId("viewer")).toHaveText("Dee");
+  await dee.getByRole("button", { name: "Switch to Owner" }).click();
+  await expect(dee.getByTestId("viewer")).toHaveText("Owner");
+  await expect(dee.getByTestId("add-passkey")).toBeVisible();
+});

@@ -41,12 +41,21 @@ export const SignInMethodsQuery = graphql(`
 // One-time links: sign-in links and invites, opened at /link.
 
 export const RedeemLinkMutation = graphql(`
-  mutation RedeemLink($token: String!) {
-    redeemLink(token: $token) {
+  mutation RedeemLink($token: String!, $switchAccount: Boolean) {
+    redeemLink(token: $token, switchAccount: $switchAccount) {
       name
       owner
       shelf
       offerPasskey
+    }
+  }
+`);
+
+export const SignInLinkQuery = graphql(`
+  query SignInLink($token: String!) {
+    signInLink(token: $token) {
+      name
+      switching
     }
   }
 `);

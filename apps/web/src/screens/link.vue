@@ -4,8 +4,8 @@ import { useRouter } from "vue-router";
 
 import { execute, messageOf } from "../api/graphql.ts";
 import type { ResultOf } from "../api/graphql.ts";
-import { InviteQuery, RedeemLinkMutation } from "../api/operations.ts";
-import { loadSession, viewer } from "../composables/session.ts";
+import { InviteQuery, RedeemLinkMutation, SignInLinkQuery } from "../api/operations.ts";
+import { loadSession, viewer, viewerName } from "../composables/session.ts";
 import { addPasskey, deviceLabel, passkeysAvailable } from "../lib/passkeys.ts";
 
 type Invite = NonNullable<ResultOf<typeof InviteQuery>["invite"]>;
@@ -23,13 +23,20 @@ const label = ref(deviceLabel());
 const canUsePasskeys = passkeysAvailable();
 
 const isInvite = computed(() => token.value.startsWith("ssi_"));
+/**
+ * Whom a sign-in link opens, when this browser is signed in as someone else: the link waits for a click naming both,
+ * so a link someone sent cannot quietly put this browser in their account.
+ */
+const switchTo = ref<string | null>(null);
+const currentName = computed(() => (viewer.value === null ? "" : viewerName(viewer.value)));
 
-async function redeem(): Promise<void> {
+async function redeem(switchAccount = false): Promise<void> {
   busy.value = true;
   problem.value = null;
   try {
-    const data = await execute(RedeemLinkMutation, { token: token.value });
+    const data = await execute(RedeemLinkMutation, { switchAccount, token: token.value });
     redeemed.value = data.redeemLink;
+    switchTo.value = null;
     token.value = "";
     await loadSession();
   } catch (error) {
@@ -48,7 +55,19 @@ onMounted(async () => {
     return;
   }
   if (!isInvite.value) {
-    await redeem();
+    await loadSession();
+    try {
+      const data = await execute(SignInLinkQuery, { token: token.value });
+      if (data.signInLink === null) {
+        problem.value = "This link was already used or has expired: make a new one.";
+      } else if (data.signInLink.switching) {
+        switchTo.value = data.signInLink.name;
+      } else {
+        await redeem();
+      }
+    } catch (error) {
+      problem.value = messageOf(error);
+    }
     return;
   }
   try {
@@ -89,6 +108,18 @@ async function goOn(): Promise<void> {
     <section class="panel stack">
       <h1>{{ isInvite || redeemed?.shelf ? "Invitation" : "Sign-in link" }}</h1>
       <p v-if="problem !== null" class="error-text" role="alert">{{ problem }}</p>
+      <template v-if="redeemed === null && switchTo !== null">
+        <p data-testid="switch">
+          This browser is signed in as <strong>{{ currentName }}</strong>. The link signs it in as
+          <strong>{{ switchTo }}</strong> instead. Only go on if you asked for this link.
+        </p>
+        <div class="row">
+          <button class="primary" type="button" :disabled="busy" @click="redeem(true)">
+            Switch to {{ switchTo }}
+          </button>
+          <button class="quiet" type="button" @click="goOn">Stay {{ currentName }}</button>
+        </div>
+      </template>
       <template v-if="redeemed === null && invite !== null">
         <p data-testid="invite">
           <strong>{{ invite.name }}</strong>, you are invited to the shelf <strong>{{ invite.shelfName }}</strong>
@@ -99,12 +130,14 @@ async function goOn(): Promise<void> {
           for.
         </p>
         <div class="row">
-          <button class="primary" type="button" :disabled="busy || viewer?.owner" @click="redeem">
+          <button class="primary" type="button" :disabled="busy || viewer?.owner" @click="redeem()">
             Accept the invitation
           </button>
         </div>
       </template>
-      <p v-else-if="redeemed === null && problem === null" class="muted">Opening the link…</p>
+      <p v-else-if="redeemed === null && problem === null && switchTo === null" class="muted">
+        Opening the link…
+      </p>
       <template v-if="redeemed !== null">
         <p data-testid="signed-in">
           You are signed in as <strong>{{ redeemed.name }}</strong><template v-if="redeemed.shelf">, with access to <code>{{ redeemed.shelf }}</code></template>.
