@@ -518,7 +518,8 @@ How the two stay in step:
 
 - **A write the Worker makes** is committed first and indexed second, one write at a time per shelf. A push whose branch has moved since the commit the shelf is indexed at is refused by the repository, and the write is a conflict.
 - **A push from a Git client** goes through `/git/{shelf}.git` (§10.3). Once the repository has accepted it, the Worker queues an index of the new head. A head the engine cannot load is recorded on the shelf with its errors, and the index stays at the last commit that loaded, so a broken push never half-loads a shelf; until a later push fixes it, writes from the Worker are conflicts.
-- **The hourly cron** queues the same index for every shelf, which catches a push made around the Worker, and gives a shelf indexed before its deployment had Artifacts its first commit.
+- **A push made around the Worker**, with an Artifacts token from the dashboard, is indexed the moment the next write meets it: the push is refused because the branch moved, the shelf's object indexes the head there and then, and an edit is made again on top of it. Nothing polls. Real-time `pushed` events exist only per repository, and subscribing each new shelf's repository would give the Worker a Cloudflare API token of its own; the operator is the only one who can push around it.
+- **A shelf indexed before its deployment had Artifacts** gets its first commit with its first write, or the first time a Git client reads it.
 
 Consequences of Artifacts to accept:
 
@@ -625,7 +626,7 @@ pnpm shelfkit setup      # create resources, write secrets, migrate, deploy
 
 Setup ends by opening the owner's enrollment link in the browser, which signs the owner in and adds a passkey there. With `--github-sign-in` it first creates the deployment's GitHub App: a page on the operator's loopback posts the app's manifest to github.com, the operator clicks "Create GitHub App", and setup stores the app's client id and secret as Worker secrets and discards its private key. A GitHub OAuth App created by hand, with the same two secrets, works the same way.
 
-Setup also reports the Artifacts namespace the Worker binds (`shelfkit` by default). The binding creates it, without a jurisdiction, with the first shelf's repository. To keep repositories in the EU or the US, create the namespace with that jurisdiction in the dashboard before the first push: Wrangler cannot create a namespace, and a namespace's jurisdiction cannot change.
+Setup also creates the Artifacts namespace the Worker binds (`shelfkit` by default), in the jurisdiction `--artifacts-jurisdiction eu|us` names, or unrestricted without it. Wrangler has no command for it, so setup calls Artifacts' REST API with the token of the Wrangler login it runs as, and makes no token of its own. A namespace's jurisdiction cannot change, so setup stops when the namespace exists in another one.
 
 The one place Wrangler is weak is Durable Object migration ergonomics, where a first deploy and a class change both need care. ShelfKit handles that by generating the migration entries from the shelf model rather than expecting an operator to hand-write them, and by checking migration state in CI.
 
