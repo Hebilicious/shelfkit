@@ -1,20 +1,25 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import { RouterLink, useRouter } from "vue-router";
+import { computed, ref, watch } from "vue";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 
+import KindGuide from "../components/kind-guide.vue";
 import QueryState from "../components/query-state.vue";
 import { useListNav } from "../composables/list-nav.ts";
 import { useShelfId } from "../composables/shelf-context.ts";
 import { prefetchItem, tagCounts, useProfiles, useShelfIndex } from "../data/shelf.ts";
 import type { IndexItem, ItemKind } from "../data/shelf.ts";
 import { search } from "../lib/search.ts";
-import { KIND_ORDER, KINDS, scanLabel } from "../lib/vocabulary.ts";
+import { KIND_GUIDES, KIND_ORDER, KINDS, kindOfSlug, scanLabel } from "../lib/vocabulary.ts";
+import { param } from "../navigation.ts";
 
 const shelf = useShelfId();
+const route = useRoute();
 const router = useRouter();
 
+/** The kind this page shows, from its address; `null` on Everything. */
+const kind = computed<ItemKind | null>(() => kindOfSlug(param(route.params.kind)));
+
 const typed = ref("");
-const kinds = ref<ItemKind[]>([]);
 const tags = ref<string[]>([]);
 const selected = ref<string[]>([]);
 const target = ref("");
@@ -22,27 +27,38 @@ const target = ref("");
 const index = useShelfIndex(shelf);
 const profiles = useProfiles(shelf);
 
-const items = computed<readonly IndexItem[]>(() => index.data.value?.items ?? []);
+/** The items of this page's kind, grouped by kind in the sidebar's order on Everything. */
+const items = computed<readonly IndexItem[]>(() => {
+  const all = index.data.value?.items ?? [];
+  const current = kind.value;
+  if (current !== null) {
+    return all.filter((item) => item.kind === current);
+  }
+  return KIND_ORDER.flatMap((entry) => all.filter((item) => item.kind === entry));
+});
 
-/** The kinds this shelf holds, in the filter order, with how many of each. */
-const kindCounts = computed(() =>
-  KIND_ORDER.map((kind) => ({
-    count: items.value.filter((item) => item.kind === kind).length,
-    kind,
-  })).filter((entry) => entry.count > 0),
-);
-
+const shelfTotal = computed(() => index.data.value?.items.length ?? 0);
 const allTags = computed(() => tagCounts(items.value));
+
+// A tag picked on one kind's page means nothing on another's.
+watch(kind, () => {
+  tags.value = [];
+  selected.value = [];
+});
 
 /** Filtering and search both run on the items in memory, so the list follows every keystroke. */
 const rows = computed(() => {
-  const filtered = items.value.filter(
-    (item) =>
-      (kinds.value.length === 0 || kinds.value.includes(item.kind)) &&
-      tags.value.every((tag) => item.tags.includes(tag)),
-  );
+  const filtered = items.value.filter((item) => tags.value.every((tag) => item.tags.includes(tag)));
   return search(filtered, typed.value);
 });
+
+/** On Everything without a search, a heading starts each kind's run of rows. */
+function startsGroup(at: number): boolean {
+  if (kind.value !== null || typed.value.trim() !== "") {
+    return false;
+  }
+  return at === 0 || rows.value[at - 1]?.item.kind !== rows.value[at]?.item.kind;
+}
 
 function toggleIn<T>(list: readonly T[], value: T): T[] {
   return list.includes(value) ? list.filter((entry) => entry !== value) : [...list, value];
@@ -96,53 +112,45 @@ const SCAN_TONE = { clean: "info", disputed: "warn", flagged: "danger", unscanne
 
 <template>
   <main class="page">
-    <header class="stack">
-      <h1>{{ index.data.value?.name ?? shelf }}</h1>
-      <p v-if="index.data.value?.description" class="muted">{{ index.data.value.description }}</p>
-    </header>
-    <ol aria-label="How a shelf works" class="steps panel">
-      <li>
-        <strong>Collect</strong>
-        <span class="small muted">
-          Prompts, skills, instructions and MCP servers your coding agents should have, kept here.
-        </span>
-      </li>
-      <li>
-        <strong>Pick</strong>
-        <span class="small muted">
-          A <RouterLink :to='{ name: "profiles", params: { shelf } }'>profile</RouterLink> is the set one kind of
-          project gets.
-        </span>
-      </li>
-      <li>
-        <strong>Install</strong>
-        <span class="small muted">
-          ShelfKit writes the profile into a repository's <code>apm.yml</code>, and <code>apm install</code> sets
-          up Claude, Codex, Copilot or Cursor with it.
-        </span>
-      </li>
-    </ol>
+    <KindGuide v-if="kind !== null" :kind="kind" :shelf="shelf" />
+    <template v-else>
+      <header class="stack">
+        <h1>{{ index.data.value?.name ?? shelf }}</h1>
+        <p v-if="index.data.value?.description" class="muted">{{ index.data.value.description }}</p>
+      </header>
+      <ol aria-label="How a shelf works" class="steps panel">
+        <li>
+          <strong>Collect</strong>
+          <span class="small muted">
+            Prompts, skills, instructions and MCP servers your coding agents should have, kept here.
+          </span>
+        </li>
+        <li>
+          <strong>Pick</strong>
+          <span class="small muted">
+            A <RouterLink :to='{ name: "profiles", params: { shelf } }'>profile</RouterLink> is the set one kind of
+            project gets.
+          </span>
+        </li>
+        <li>
+          <strong>Install</strong>
+          <span class="small muted">
+            ShelfKit writes the profile into a repository's <code>apm.yml</code>, and <code>apm install</code> sets
+            up Claude, Codex, Copilot or Cursor with it.
+          </span>
+        </li>
+      </ol>
+    </template>
     <div class="stack">
       <input
         v-model="typed"
         aria-label="Search the shelf"
         data-search
-        placeholder="Search titles, descriptions, tags and text…  ( / )"
+        :placeholder='kind === null
+          ? "Search the shelf…  ( / )"
+          : `Search ${KINDS[kind].plural.toLowerCase()}…  ( / )`'
         type="search"
       />
-      <div v-if="kindCounts.length > 1" aria-label="Kinds" class="row" role="group">
-        <button
-          v-for="entry in kindCounts"
-          :key="entry.kind"
-          class="chip"
-          type="button"
-          :aria-pressed="kinds.includes(entry.kind)"
-          :title="KINDS[entry.kind].about"
-          @click="kinds = toggleIn(kinds, entry.kind)"
-        >
-          {{ KINDS[entry.kind].plural }} <span class="muted">{{ entry.count }}</span>
-        </button>
-      </div>
       <div v-if="allTags.length > 0" aria-label="Tags" class="row" role="group">
         <button
           v-for="entry in allTags"
@@ -177,9 +185,11 @@ const SCAN_TONE = { clean: "info", disputed: "warn", flagged: "danger", unscanne
       :loading="index.loading.value"
       :error="index.error.value"
       :empty="rows.length === 0"
-      :empty-text='items.length === 0
-        ? "This shelf is empty. Import items, or push a shelf with shelfkit push."
-        : "Nothing matches."'
+      :empty-text='items.length > 0
+        ? "Nothing matches."
+        : kind !== null
+          ? `This shelf has no ${KINDS[kind].plural.toLowerCase()} yet. Import some, or add them to the shelf repository and push it.`
+          : "This shelf is empty. Import items, or push a shelf with shelfkit push."'
     />
     <ul v-if="rows.length > 0" class="list panel inventory" data-testid="inventory">
       <li class="inventory__head row small muted">
@@ -193,42 +203,58 @@ const SCAN_TONE = { clean: "info", disputed: "warn", flagged: "danger", unscanne
             rows.length === items.length
               ? `${items.length} items`
               : `${rows.length} of ${items.length} items`
-          }}</span>
+          }}<template v-if="kind !== null && shelfTotal !== items.length"> of {{ shelfTotal }} on the shelf</template></span>
         <span class="spacer"></span>
         <span><kbd>x</kbd> selects the highlighted item</span>
       </li>
-      <li v-for="(row, at) in rows" :key="row.item.id">
-        <div class="list-row" data-list-row :aria-current='at === cursor ? "true" : undefined'>
-          <input
-            type="checkbox"
-            :checked="selected.includes(row.item.id)"
-            :aria-label="`Select ${row.item.title}`"
-            @change="toggleSelected(row.item.id)"
-          />
-          <span class="badge kind" :title="KINDS[row.item.kind].about">{{ KINDS[row.item.kind].label }}</span>
-          <div class="inventory__text">
-            <RouterLink
-              class="inventory__title ellipsis"
-              :to="itemRoute(row.item)"
-              @click="cursor = at"
-              @focus="prefetchItem(shelf, row.item.id)"
-              @pointerenter="prefetchItem(shelf, row.item.id)"
-            >
-              {{ row.item.title }}
-            </RouterLink>
-            <span class="small muted ellipsis">{{ row.snippet ?? row.item.description }}</span>
-          </div>
-          <span class="spacer"></span>
-          <span v-for="entry in row.item.tags" :key="entry" class="chip">#{{ entry }}</span>
-          <span
-            v-if="scanLabel(row.item.scanStatus) !== null"
-            class="badge"
-            :class="SCAN_TONE[row.item.scanStatus]"
+      <template v-for="(row, at) in rows" :key="row.item.id">
+        <li v-if="startsGroup(at)" class="inventory__group">
+          <RouterLink
+            :to='row.item.kind === "prompt"
+              ? { name: "prompts", params: { shelf } }
+              : { name: "kind", params: { shelf, kind: KIND_GUIDES[row.item.kind].slug } }'
           >
-            {{ scanLabel(row.item.scanStatus) }}
-          </span>
-        </div>
-      </li>
+            {{ KINDS[row.item.kind].plural }}
+          </RouterLink>
+          <span class="small muted">{{ KINDS[row.item.kind].about }}</span>
+        </li>
+        <li>
+          <div class="list-row" data-list-row :aria-current='at === cursor ? "true" : undefined'>
+            <input
+              type="checkbox"
+              :checked="selected.includes(row.item.id)"
+              :aria-label="`Select ${row.item.title}`"
+              @change="toggleSelected(row.item.id)"
+            />
+            <span
+              v-if='kind === null && typed.trim() !== ""'
+              class="badge kind"
+              :title="KINDS[row.item.kind].about"
+            >{{ KINDS[row.item.kind].label }}</span>
+            <div class="inventory__text">
+              <RouterLink
+                class="inventory__title ellipsis"
+                :to="itemRoute(row.item)"
+                @click="cursor = at"
+                @focus="prefetchItem(shelf, row.item.id)"
+                @pointerenter="prefetchItem(shelf, row.item.id)"
+              >
+                {{ row.item.title }}
+              </RouterLink>
+              <span class="small muted ellipsis">{{ row.snippet ?? row.item.description }}</span>
+            </div>
+            <span class="spacer"></span>
+            <span v-for="entry in row.item.tags" :key="entry" class="chip">#{{ entry }}</span>
+            <span
+              v-if="scanLabel(row.item.scanStatus) !== null"
+              class="badge"
+              :class="SCAN_TONE[row.item.scanStatus]"
+            >
+              {{ scanLabel(row.item.scanStatus) }}
+            </span>
+          </div>
+        </li>
+      </template>
     </ul>
   </main>
 </template>
@@ -262,6 +288,20 @@ const SCAN_TONE = { clean: "info", disputed: "warn", flagged: "danger", unscanne
 
 .inventory {
   padding: 0;
+}
+
+.inventory__group {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-size-2);
+  padding: var(--spacing-size-3) var(--spacing-size-3) var(--spacing-size-1);
+  border-bottom: var(--hairline);
+}
+
+.inventory__group a {
+  color: var(--text-primary);
+  font-weight: var(--typography-weight-sans-bold);
+  text-decoration: none;
 }
 
 .inventory__head {

@@ -7,6 +7,7 @@
  */
 import { createRouter, createWebHistory } from "vue-router";
 
+import { KIND_GUIDES, KIND_ORDER } from "./lib/vocabulary.ts";
 import ActivityScreen from "./screens/activity.vue";
 import CompileScreen from "./screens/compile.vue";
 import ComposeScreen from "./screens/compose.vue";
@@ -19,9 +20,15 @@ import ProfilesScreen from "./screens/profiles.vue";
 import PromptsScreen from "./screens/prompts.vue";
 import SettingsScreen from "./screens/settings.vue";
 import ShareScreen from "./screens/share.vue";
+import ShelfContentScreen from "./screens/shelf-content.vue";
 import ShelfLayoutScreen from "./screens/shelf-layout.vue";
 import ShelfScreen from "./screens/shelf.vue";
 import SignInScreen from "./screens/sign-in.vue";
+
+/** The kinds' own addresses, except the prompts', which have their own screen. */
+const KIND_SLUGS = KIND_ORDER.filter((kind) => kind !== "prompt").map(
+  (kind) => KIND_GUIDES[kind].slug
+);
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -49,19 +56,31 @@ export const router = createRouter({
     {
       children: [
         {
-          component: ShelfScreen,
-          name: "shelf",
+          // What the shelf holds, beside the sidebar of kinds: everything, one kind, the prompts, one item.
+          children: [
+            {
+              component: ShelfScreen,
+              name: "shelf",
+              path: "",
+            },
+            {
+              component: ShelfScreen,
+              name: "kind",
+              path: `:kind(${KIND_SLUGS.join("|")})`,
+            },
+            {
+              component: PromptsScreen,
+              name: "prompts",
+              path: "prompts/:id?",
+            },
+            {
+              component: ItemScreen,
+              name: "item",
+              path: "items/:id",
+            },
+          ],
+          component: ShelfContentScreen,
           path: "",
-        },
-        {
-          component: PromptsScreen,
-          name: "prompts",
-          path: "prompts/:id?",
-        },
-        {
-          component: ItemScreen,
-          name: "item",
-          path: "items/:id",
         },
         {
           component: ProfilesScreen,

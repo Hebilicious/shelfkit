@@ -13,6 +13,7 @@ import { DeleteItemMutation, SetFavouriteMutation, WriteItemMutation } from "../
 import DiffView from "../components/diff-view.vue";
 import ExternalLink from "../components/external-link.ts";
 import ItemContent from "../components/item-content.vue";
+import KindGuide from "../components/kind-guide.vue";
 import QueryState from "../components/query-state.vue";
 import { useShelfId } from "../composables/shelf-context.ts";
 import { notify, notifyError } from "../composables/toasts.ts";
@@ -22,6 +23,7 @@ import { param } from "../navigation.ts";
 import {
   ago,
   installSentence,
+  KIND_GUIDES,
   KINDS,
   originLabel,
   scanLabel,
@@ -219,7 +221,14 @@ const PROVENANCE_FIELDS = [
     />
     <template v-if="item !== null">
       <header class="stack">
-        <RouterLink class="small" :to='{ name: "shelf", params: { shelf } }'>← Browse</RouterLink>
+        <RouterLink
+          class="small"
+          :to='item.kind === "prompt"
+            ? { name: "prompts", params: { shelf } }
+            : { name: "kind", params: { shelf, kind: KIND_GUIDES[item.kind].slug } }'
+        >
+          ← {{ KINDS[item.kind].plural }}
+        </RouterLink>
         <div class="row">
           <h1>{{ item.title }}</h1>
           <button
@@ -248,10 +257,6 @@ const PROVENANCE_FIELDS = [
           <button v-if="canWrite" class="danger" type="button" @click="remove">Delete</button>
         </div>
         <p v-if="item.description" class="lead">{{ item.description }}</p>
-        <p class="kind-line small">
-          <span class="badge">{{ KINDS[item.kind].label }}</span>
-          <span class="muted">{{ KINDS[item.kind].about }}</span>
-        </p>
         <div class="row small muted">
           <span>{{ originLabel(item.drift.status) }}</span>
           <span>·</span>
@@ -267,6 +272,7 @@ const PROVENANCE_FIELDS = [
           <span v-if="item.targets.length > 0">· only for {{ item.targets.join(", ") }}</span>
         </div>
       </header>
+      <KindGuide compact :kind="item.kind" :shelf="shelf" />
       <ItemContent :body="item.body" :document="item.document" :shelf="shelf" :titles="titles" />
       <div class="tabs" role="tablist">
         <button
@@ -290,7 +296,7 @@ const PROVENANCE_FIELDS = [
           <p v-for="error in install.data.value.errors" :key="error" class="error-text small">{{ error }}</p>
           <details v-for="file in install.data.value.files" :key="file.path" class="panel" open>
             <summary class="mono small">{{ file.path }}</summary>
-            <pre>{{ file.contents }}</pre>
+            <pre class="wrap">{{ file.contents }}</pre>
           </details>
           <details class="panel">
             <summary class="mono small">apm.yml</summary>
@@ -456,11 +462,8 @@ const PROVENANCE_FIELDS = [
   font-size: var(--typography_fluid-sans-text-l);
 }
 
-.kind-line {
-  display: flex;
-  gap: var(--spacing-size-2);
-  align-items: baseline;
-  margin: 0;
+.wrap {
+  white-space: pre-wrap;
 }
 
 .split {

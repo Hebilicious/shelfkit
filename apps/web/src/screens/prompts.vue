@@ -155,6 +155,10 @@ async function created(id: string): Promise<void> {
           <span class="spacer"></span>
           <button class="small" type="button" @click="creating = true">New prompt</button>
         </div>
+        <p class="small muted">
+          Text you give an agent to do one job. Fill in its variables and copy it, or install it as a slash command
+          with a profile.
+        </p>
         <input
           v-model="typed"
           aria-label="Search prompts"

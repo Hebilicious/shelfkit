@@ -94,17 +94,17 @@ export const KINDS: Readonly<Record<ItemKind, KindWords>> = {
   },
 };
 
-/** The kinds in the order the filters list them: the everyday ones first. */
+/** The kinds in the order the sidebar lists them (`KIND_GROUPS`), which every list follows. */
 export const KIND_ORDER: readonly ItemKind[] = [
   "prompt",
-  "skill",
   "instructions",
   "stack",
   "library",
-  "agent",
+  "skill",
   "mcp",
-  "lsp",
+  "agent",
   "hook",
+  "lsp",
   "plugin",
 ];
 
@@ -288,4 +288,104 @@ export function outcomeLabel(outcome: string): string {
       return outcome;
     }
   }
+}
+
+/** What a kind's own page says about it: what it is, what the agent gets, and one example. */
+export interface KindGuide {
+  /** The kind's address under the shelf: `/shelves/<shelf>/<slug>`. */
+  readonly slug: string;
+  readonly what: string;
+  readonly gets: string;
+  readonly example: string;
+}
+
+export const KIND_GUIDES: Readonly<Record<ItemKind, KindGuide>> = {
+  agent: {
+    example:
+      "A registry reviewer that checks a change against the wire contract and reports each problem.",
+    gets: "An agent definition the harness lists beside its own, which you or the main agent can hand a task to.",
+    slug: "agents",
+    what: "A specialised agent with its own role, instructions, and tools.",
+  },
+  hook: {
+    example: "Format the repository after the agent edits a file.",
+    gets: "A command the harness runs on an event, such as after every edit. It runs code, so APM asks before installing it.",
+    slug: "hooks",
+    what: "Something the harness does automatically while the agent works.",
+  },
+  instructions: {
+    example:
+      "“The crates are the product: keep them free of Cloudflare and network dependencies.”",
+    gets: "An instructions file the agent reads at the start of every session, in CLAUDE.md, AGENTS.md, and the other harnesses' equivalents.",
+    slug: "instructions",
+    what: "The rules of one project or team, written for the agent. Unlike library notes and tech stacks, they are not about a particular tool.",
+  },
+  library: {
+    example:
+      "Drizzle ORM: “Migrations are generated, never hand-written. Prefer db.query over db.select.”",
+    gets: "An instructions file with the notes, which the agent reads in every session. ShelfKit suggests the notes for a repository that depends on the library.",
+    slug: "library-notes",
+    what: "What an agent should know to use one library or tool well: the patterns to follow and the mistakes to avoid. Not the library itself; APM and your package manager install that.",
+  },
+  lsp: {
+    example: "rust-analyzer, for types and references in .rs files.",
+    gets: "A language server entry, which the harness starts for code intelligence as the agent edits.",
+    slug: "language-servers",
+    what: "A language server, the same kind an editor runs.",
+  },
+  mcp: {
+    example: "Context7, which looks up current documentation for a library.",
+    gets: "An MCP server configured in each harness, whose tools the agent can call.",
+    slug: "mcp-servers",
+    what: "A server that gives the agent tools: a docs search, a browser, an issue tracker.",
+  },
+  plugin: {
+    example:
+      "Release tools: a set of commands and hooks for cutting a release.",
+    gets: "The plugin package, installed as a dependency.",
+    slug: "plugins",
+    what: "A package of skills, agents, hooks, and commands that ship together.",
+  },
+  prompt: {
+    example: "“Review the staged diff, looking hardest at {{focus}}.”",
+    gets: "Copy it from here with its variables filled in, or install it: harnesses with slash commands offer it as one.",
+    slug: "prompts",
+    what: "Text you give an agent to do one job.",
+  },
+  skill: {
+    example:
+      "Update the compiler's goldens: the steps, the command, and what to check in the diff.",
+    gets: "A skill folder. The agent sees its name and description, and reads the rest only when a task calls for it.",
+    slug: "skills",
+    what: "Know-how for one kind of task, loaded on demand rather than in every session.",
+  },
+  stack: {
+    example:
+      "TypeScript on Cloudflare Workers with a Rust core: where code goes, which runtime rules apply, which other items go with it.",
+    gets: "An instructions file with the conventions, which the agent reads in every session. ShelfKit recognises a repository built on the stack from its files and dependencies, and suggests the stack and the items it recommends.",
+    slug: "tech-stacks",
+    what: "The conventions for a combination of tools a project is built with.",
+  },
+};
+
+/** The shelf's sidebar: kinds grouped by what they do for the agent. */
+export const KIND_GROUPS: readonly {
+  readonly title: string;
+  readonly kinds: readonly ItemKind[];
+}[] = [
+  { kinds: ["prompt"], title: "For you" },
+  {
+    kinds: ["instructions", "stack", "library", "skill"],
+    title: "What the agent knows",
+  },
+  {
+    kinds: ["mcp", "agent", "hook", "lsp", "plugin"],
+    title: "What the agent can use",
+  },
+];
+
+/** The kind a sidebar address names, or `null`. */
+export function kindOfSlug(slug: string): ItemKind | null {
+  const found = KIND_ORDER.find((kind) => KIND_GUIDES[kind].slug === slug);
+  return found ?? null;
 }
