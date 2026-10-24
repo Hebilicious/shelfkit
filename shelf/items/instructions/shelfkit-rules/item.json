@@ -1,0 +1,29 @@
+{
+  "id": "shelfkit-rules",
+  "kind": "instructions",
+  "title": "ShelfKit's rules",
+  "description": "The boundaries every change to ShelfKit keeps.",
+  "tags": ["shelfkit"],
+  "sections": [
+    {
+      "heading": "The crates are the product",
+      "body": "crates/ compiles native for the CLI and to WASM for the Worker and the browser, so they cannot disagree. Keep it free of Cloudflare, network, and async-runtime dependencies."
+    },
+    {
+      "heading": "APM owns install",
+      "body": "`shelfkit compile` writes apm.yml and stops. It never writes a lockfile, never materializes skills into harness directories, and never runs APM unless `install` was asked for. Never parse human-oriented apm output."
+    },
+    {
+      "heading": "The registry is one library",
+      "body": "crates/registry decides every rule; a host does I/O and nothing else. A new rule goes into the library with a case in conformance/cases.json, which both hosts run."
+    },
+    {
+      "heading": "Storage",
+      "body": "One Durable Object per shelf, with its own SQLite. No D1 and no cross-shelf query. Content lives in R2 keyed by sha256; databases hold metadata only."
+    },
+    {
+      "heading": "Keys",
+      "body": "One auth module turns a Bearer key, HTTP Basic, or the browser's cookie into a session. Nothing caches a key's resolution, and a key is never printed or logged."
+    }
+  ]
+}

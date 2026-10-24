@@ -1,0 +1,11 @@
+{
+  "id": "pr-description",
+  "kind": "prompt",
+  "title": "Pull request description",
+  "description": "Write the description of a pull request from the branch's diff.",
+  "tags": ["git", "review"],
+  "asCommand": true,
+  "variables": [
+    { "name": "issue", "description": "The issue it closes, if any" }
+  ]
+}

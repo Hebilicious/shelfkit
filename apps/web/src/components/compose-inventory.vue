@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
-import type { InventoryItem } from "../api/types.ts";
 import { ITEM_DRAG_TYPE } from "../api/types.ts";
 import { useListNav } from "../composables/list-nav.ts";
+import type { IndexItem } from "../data/shelf.ts";
+import { KIND_ORDER, KINDS } from "../lib/vocabulary.ts";
 
 const { items, inProfile } = defineProps<{
-  items: readonly InventoryItem[];
+  items: readonly IndexItem[];
   inProfile: ReadonlySet<string>;
 }>();
 const emit = defineEmits<{ add: [id: string] }>();
@@ -14,7 +15,11 @@ const emit = defineEmits<{ add: [id: string] }>();
 const search = ref("");
 const kind = ref("");
 
-const kinds = computed(() => [...new Set(items.map((item) => item.kind))].toSorted());
+/** The kinds this shelf holds, in the order the rest of the UI lists them. */
+const kinds = computed(() => {
+  const present = new Set(items.map((item) => item.kind));
+  return KIND_ORDER.filter((entry) => present.has(entry));
+});
 
 const shown = computed(() => {
   const words = search.value
@@ -51,20 +56,23 @@ const index = useListNav({
 </script>
 
 <template>
-  <section aria-label="Inventory" class="panel inventory">
-    <h2>Inventory</h2>
+  <section aria-label="Items on this shelf" class="panel inventory">
+    <h2>Items on this shelf</h2>
     <input
       v-model="search"
-      aria-label="Filter the inventory"
+      aria-label="Filter the items on this shelf"
       data-search
       placeholder="Filter items…  ( / )"
       type="search"
     />
     <select v-model="kind" aria-label="Kind">
       <option value="">Every kind</option>
-      <option v-for="entry in kinds" :key="entry" :value="entry">{{ entry }}</option>
+      <option v-for="entry in kinds" :key="entry" :value="entry">{{ KINDS[entry].plural }}</option>
     </select>
-    <p class="small muted">Drag an item into the profile, or press <kbd>+</kbd>. <kbd>j</kbd>/<kbd>k</kbd> then <kbd>Enter</kbd> adds.</p>
+    <p class="small muted">
+      Drag an item into the profile, or press <kbd>+</kbd>. <kbd>j</kbd>/<kbd>k</kbd> then <kbd>Enter</kbd> adds.
+      {{ shown.length }} of {{ items.length }} shown.
+    </p>
     <ul class="list" data-testid="compose-inventory">
       <li v-for="(item, at) in shown" :key="item.id">
         <div
@@ -75,7 +83,7 @@ const index = useListNav({
           :data-item="item.id"
           @dragstart="dragStart($event, item.id)"
         >
-          <span class="badge">{{ item.kind }}</span>
+          <span class="badge" :title="KINDS[item.kind].about">{{ KINDS[item.kind].label }}</span>
           <span class="ellipsis" :title="item.description">{{ item.title }}</span>
           <span class="spacer"></span>
           <span v-if="inProfile.has(item.id)" aria-label="in the profile" class="small muted">✓</span>

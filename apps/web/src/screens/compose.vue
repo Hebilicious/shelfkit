@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import type { Profile } from "@shelfkit/schema";
 import { computed, ref, shallowRef, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import { execute, messageOf } from "../api/graphql.ts";
 import { readBundles, readProfile } from "../api/json.ts";
-import { ComposeQuery, SaveProfileMutation } from "../api/operations.ts";
+import { ProfileEditorQuery, SaveProfileMutation } from "../api/operations.ts";
 import ComposeInventory from "../components/compose-inventory.vue";
 import ComposePreview from "../components/compose-preview.vue";
 import ComposeProfile from "../components/compose-profile.vue";
@@ -15,7 +15,8 @@ import StackTester from "../components/stack-tester.vue";
 import { useShelfId } from "../composables/shelf-context.ts";
 import { notify } from "../composables/toasts.ts";
 import { usePreview } from "../composables/use-preview.ts";
-import { useQuery } from "../composables/use-query.ts";
+import { invalidate, shelfKey, shelfPrefix, useQuery } from "../data/cache.ts";
+import { useProfiles, useShelfIndex } from "../data/shelf.ts";
 import {
   addItems,
   emptyProfile,
@@ -25,28 +26,38 @@ import {
   removeItem,
   restoreItem,
 } from "../lib/profile.ts";
-import { param } from "../router.ts";
+import { param } from "../navigation.ts";
 
 const shelf = useShelfId();
 const route = useRoute();
 const router = useRouter();
 const profileId = computed(() => param(route.params.profile));
 
-const query = useQuery(async () => {
-  const data = await execute(ComposeQuery, { shelf: shelf.value });
-  return data.shelf;
-}, [shelf]);
+// Every item comes from the shelf index, which the other screens share and which holds the whole shelf; the
+// profiles come from the profiles list. Only the bundles and the file list the preview compiles from are the
+// editor's own.
+const index = useShelfIndex(shelf);
+const profilesQuery = useProfiles(shelf);
+const editor = useQuery(
+  () => (shelf.value === "" ? null : shelfKey(shelf.value, "profile-editor")),
+  async () => {
+    const data = await execute(ProfileEditorQuery, { shelf: shelf.value });
+    return data.shelf;
+  },
+  { persist: true },
+);
 
-const inventory = computed(() => query.data.value?.items.nodes.map((node) => node.item) ?? []);
-const bundles = computed(() => readBundles(query.data.value?.bundles ?? []));
+const inventory = computed(() => index.data.value?.items ?? []);
+const allProfiles = computed(() => profilesQuery.data.value?.profiles ?? []);
+const bundles = computed(() => readBundles(editor.data.value?.bundles ?? []));
 const otherProfiles = computed(() =>
-  (query.data.value?.profiles ?? []).filter((profile) => profile.id !== profileId.value),
+  allProfiles.value.filter((profile) => profile.id !== profileId.value),
 );
 const canWrite = computed(() => {
-  const access = query.data.value?.viewerAccess;
+  const access = profilesQuery.data.value?.viewerAccess;
   return access !== undefined && (access.write || access.profiles.includes(profileId.value));
 });
-const entries = computed(() => query.data.value?.files ?? null);
+const entries = computed(() => editor.data.value?.files ?? null);
 
 /** The draft being composed, and the document it started from (the saved profile, or nothing for a new one). */
 const draft = shallowRef<Profile | null>(null);
@@ -64,7 +75,7 @@ function itemsFromQuery(): string[] {
 
 /** Start the draft once the shelf has loaded, and again when the route names another profile. */
 watch(
-  [() => query.data.value !== null, profileId],
+  [() => profilesQuery.data.value !== null, profileId],
   ([loaded, id], [wasLoaded, previousId]) => {
     if (!loaded || (wasLoaded && id === previousId && draft.value !== null)) {
       return;
@@ -73,7 +84,7 @@ watch(
     if (draft.value !== null && draft.value.id === id) {
       return;
     }
-    const existing = (query.data.value?.profiles ?? []).find((profile) => profile.id === id);
+    const existing = allProfiles.value.find((profile) => profile.id === id);
     const document = existing === undefined ? null : readProfile(existing.document);
     saved.value = document;
     const start = document ?? emptyProfile("new-profile", "New profile");
@@ -125,15 +136,16 @@ function remove(id: string): void {
   if (before === null) {
     return;
   }
-  const index = before.items.findIndex((itemRef) => refId(itemRef) === id);
-  const removed = before.items[index];
+  const position = before.items.findIndex((itemRef) => refId(itemRef) === id);
+  const removed = before.items[position];
   if (removed === undefined) {
     return;
   }
   draft.value = removeItem(before, id);
-  notify(`Removed ${id} from the profile.`, async () => {
+  const title = inventory.value.find((item) => item.id === id)?.title ?? id;
+  notify(`Removed “${title}” from the profile.`, async () => {
     if (draft.value !== null) {
-      draft.value = restoreItem(draft.value, removed, index);
+      draft.value = restoreItem(draft.value, removed, position);
     }
     await Promise.resolve();
   });
@@ -173,6 +185,7 @@ async function save(): Promise<void> {
     saved.value = document;
     message.value = "";
     notify(`Saved profile “${document.title}”.`);
+    invalidate(shelfPrefix(shelf.value));
     if (profileId.value !== document.id) {
       await router.replace({
         name: "compose",
@@ -201,46 +214,68 @@ const idTaken = computed(
   () =>
     isNew.value &&
     draft.value !== null &&
-    (query.data.value?.profiles ?? []).some((profile) => profile.id === draft.value?.id),
+    allProfiles.value.some((profile) => profile.id === draft.value?.id),
 );
 </script>
 
 <template>
   <main class="compose">
-    <QueryState :loading="query.loading.value" :error="query.error.value" :empty="draft === null" />
+    <QueryState
+      :loading="profilesQuery.loading.value"
+      :error="profilesQuery.error.value"
+      :empty="draft === null"
+    />
     <template v-if="draft !== null">
-      <header class="compose__header row">
-        <h1>{{ isNew ? "New profile" : draft.title }}</h1>
-        <span v-if="dirty" class="badge warn" data-testid="dirty">unsaved</span>
-        <span class="spacer"></span>
-        <span
-          class="small muted"
-          data-testid="preview-runner"
-          :data-state='previewCurrent && !running ? "current" : "stale"'
-          aria-live="polite"
-        >
-          {{ previewStatus }}
-        </span>
-        <template v-if="canWrite">
-          <input
-            v-model="message"
-            aria-label="Revision message"
-            class="message"
-            placeholder="Revision message (optional)"
-          />
-          <button type="button" :disabled="!dirty" @click="revert">Revert</button>
-          <button
-            class="primary"
-            type="button"
-            :disabled="saving || idTaken"
-            data-testid="save-profile"
-            @click="save"
+      <header class="stack compose__intro">
+        <RouterLink class="small" :to='{ name: "profiles", params: { shelf } }'>← Profiles</RouterLink>
+        <div class="compose__header row">
+          <h1>
+            <span v-if="!isNew" class="muted">Edit </span>{{ isNew ? "New profile" : draft.title }}
+          </h1>
+          <span v-if="dirty" class="badge warn" data-testid="dirty">unsaved</span>
+          <span class="spacer"></span>
+          <span
+            class="small muted"
+            data-testid="preview-runner"
+            :data-state='previewCurrent && !running ? "current" : "stale"'
+            aria-live="polite"
           >
-            Save profile
-          </button>
-        </template>
+            {{ previewStatus }}
+          </span>
+          <RouterLink
+            v-if="!isNew && !dirty"
+            class="button"
+            :to='{ name: "compile", params: { shelf, profile: draft.id } }'
+          >
+            Install…
+          </RouterLink>
+          <template v-if="canWrite">
+            <input
+              v-model="message"
+              aria-label="Note about this change"
+              class="message"
+              placeholder="Note about this change (optional)"
+            />
+            <button type="button" :disabled="!dirty" @click="revert">Revert</button>
+            <button
+              class="primary"
+              type="button"
+              :disabled="saving || idTaken"
+              data-testid="save-profile"
+              @click="save"
+            >
+              Save profile
+            </button>
+          </template>
+        </div>
+        <p class="muted">
+          Pick the items a repository gets with this profile. The <code>apm.yml</code> below shows what installing it
+          writes, and updates as you edit.
+        </p>
       </header>
-      <p v-if="idTaken" class="error-text small" role="alert">A profile with the id <code>{{ draft.id }}</code> exists. Pick another id.</p>
+      <p v-if="idTaken" class="error-text small" role="alert">
+        A profile with the id <code>{{ draft.id }}</code> exists. Pick another id.
+      </p>
       <ul v-if="saveErrors.length > 0" class="error-text small" role="alert">
         <li v-for="error in saveErrors" :key="error">{{ error }}</li>
       </ul>
@@ -256,7 +291,12 @@ const idTaken = computed(
           @remove="remove"
           @place="add"
         />
-        <ComposeRail :preview="preview" :inventory="inventory" :error="previewError" />
+        <ComposeRail
+          :preview="preview"
+          :inventory="inventory"
+          :error="previewError"
+          :profile="draft.id"
+        />
       </div>
       <ComposePreview :preview="preview" :running="running" />
       <StackTester :shelf="shelf" :in-profile="inProfile" @add="add($event, null)" />
@@ -270,6 +310,10 @@ const idTaken = computed(
   display: grid;
   gap: var(--spacing-size-4);
   align-content: start;
+}
+
+.compose__intro {
+  gap: var(--spacing-size-2);
 }
 
 .compose__header {

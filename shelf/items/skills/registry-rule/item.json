@@ -1,0 +1,7 @@
+{
+  "id": "registry-rule",
+  "kind": "skill",
+  "title": "Add a registry rule",
+  "description": "Change what the OpenAPM registry accepts or answers, with the conformance case both hosts run.",
+  "tags": ["registry", "testing"]
+}

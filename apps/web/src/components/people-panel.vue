@@ -142,14 +142,14 @@ async function copy(text: string): Promise<void> {
   <section class="panel stack">
     <h2>People</h2>
     <p class="small muted">
-      Who may sign in to this shelf in the browser, with the same scopes a key holds. Removing someone takes effect at
-      their next request.
+      Who may sign in to this shelf in the browser, and what each may do there. Removing someone takes effect at their
+      next request.
     </p>
     <table class="table" data-testid="grants">
       <thead>
         <tr>
           <th>Name</th>
-          <th>Scopes</th>
+          <th>Allowed to</th>
           <th>Since</th>
           <th><span class="visually-hidden">Remove</span></th>
         </tr>
@@ -183,8 +183,8 @@ async function copy(text: string): Promise<void> {
     </table>
     <h3>Invite someone</h3>
     <p class="small muted">
-      An invite is a link, used once within 7 days. Whoever opens it signs in, adds a passkey, and holds these scopes
-      on this shelf.
+      An invite is a link that works once, within 7 days. Whoever opens it adds a passkey and may then do what you tick
+      here on this shelf.
     </p>
     <div v-if="newInvite !== null" class="panel secret" role="status">
       <strong>Send this link to the person it is for. It is shown once.</strong>
@@ -200,7 +200,7 @@ async function copy(text: string): Promise<void> {
         <input v-model="inviteForm.name" autocomplete="off" placeholder="Ada" required />
       </label>
       <fieldset>
-        <legend>Scopes</legend>
+        <legend>What they may do</legend>
         <label v-for="choice in scopeChoices" :key="choice.scope" class="row small">
           <input v-model="inviteForm.scopes" type="checkbox" :value="choice.scope" />
           {{ choice.label }} <code class="muted">{{ choice.scope }}</code>
@@ -240,7 +240,7 @@ async function copy(text: string): Promise<void> {
           />
         </label>
         <fieldset>
-          <legend>Scopes</legend>
+          <legend>What they may do</legend>
           <label v-for="choice in scopeChoices" :key="choice.scope" class="row small">
             <input v-model="githubForm.scopes" type="checkbox" :value="choice.scope" />
             {{ choice.label }} <code class="muted">{{ choice.scope }}</code>

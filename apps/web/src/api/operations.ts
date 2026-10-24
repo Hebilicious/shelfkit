@@ -193,6 +193,77 @@ export const InventoryQuery = graphql(`
   }
 `);
 
+/**
+ * Everything the shelf's lists and item pages show first, in one request: the summary and every item with its body
+ * and item.json. Revisions, scans, and other files are the item's own query (`ItemQuery`), loaded when it opens.
+ * The service pages `items` 200 at a time; `data/shelf.ts` asks for the rest when the shelf holds more.
+ */
+export const ShelfIndexQuery = graphql(`
+  query ShelfIndex($shelf: ID!, $offset: Int) {
+    shelf(id: $shelf) {
+      id
+      name
+      description
+      public
+      registryUrl
+      defaultProfile
+      itemCount
+      profileCount
+      viewerAccess {
+        owner
+        member
+        read
+        write
+        profiles
+      }
+      recents(limit: 8) {
+        usedAt
+        uses
+        item {
+          id
+        }
+      }
+      items(limit: 200, offset: $offset) {
+        total
+        nodes {
+          item {
+            id
+            kind
+            title
+            description
+            tags
+            targets
+            revision
+            updatedAt
+            scanStatus
+            favourite
+            body
+            variables
+            asCommand
+            document
+            source
+            coordinate {
+              kind
+              entry
+              name
+              message
+            }
+            drift {
+              status
+            }
+            dependents {
+              requiredBy
+              recommendedBy
+              bundles
+              profiles
+            }
+          }
+        }
+      }
+    }
+  }
+`);
+
 // Prompts.
 
 export const PromptsQuery = graphql(`
@@ -236,26 +307,13 @@ export const PromptsQuery = graphql(`
   }
 `);
 
+/** A prompt's files and history; the prompt itself is in `ShelfIndexQuery`. */
 export const PromptQuery = graphql(`
   query Prompt($shelf: ID!, $id: ID!) {
     shelf(id: $shelf) {
       id
-      viewerAccess {
-        write
-      }
       item(id: $id) {
         id
-        kind
-        title
-        description
-        tags
-        body
-        variables
-        asCommand
-        favourite
-        revision
-        updatedAt
-        document
         files {
           path
           contents
@@ -379,31 +437,14 @@ export const DeleteItemMutation = graphql(`
   }
 `);
 
-// One item.
+// One item: what the index does not carry. Its header and content come from `ShelfIndexQuery`.
 
 export const ItemQuery = graphql(`
   query Item($shelf: ID!, $id: ID!) {
     shelf(id: $shelf) {
       id
-      viewerAccess {
-        write
-      }
       item(id: $id) {
         id
-        kind
-        title
-        description
-        tags
-        targets
-        path
-        body
-        document
-        revision
-        createdAt
-        updatedAt
-        favourite
-        source
-        scanStatus
         files {
           path
           sha256
@@ -427,18 +468,6 @@ export const ItemQuery = graphql(`
           latest
           checkedAt
           error
-        }
-        coordinate {
-          kind
-          entry
-          name
-          message
-        }
-        dependents {
-          requiredBy
-          recommendedBy
-          bundles
-          profiles
         }
         revisions {
           revision
@@ -488,52 +517,6 @@ export const ProfilesQuery = graphql(`
           }
           conflicts {
             severity
-          }
-        }
-      }
-    }
-  }
-`);
-
-export const ComposeQuery = graphql(`
-  query Compose($shelf: ID!) {
-    shelf(id: $shelf) {
-      id
-      registryUrl
-      viewerAccess {
-        write
-        profiles
-      }
-      bundles
-      profiles {
-        id
-        title
-        document
-      }
-      snapshot {
-        digest
-      }
-      files {
-        path
-        sha256
-        size
-      }
-      items(limit: 1000) {
-        total
-        nodes {
-          item {
-            id
-            kind
-            title
-            description
-            tags
-            revision
-            coordinate {
-              kind
-              entry
-              name
-              message
-            }
           }
         }
       }
@@ -642,46 +625,6 @@ export const DeleteProfileMutation = graphql(`
         digest
       }
     }
-  }
-`);
-
-// Compile.
-
-export const CompileQuery = graphql(`
-  query Compile($shelf: ID!, $profile: ID!) {
-    shelf(id: $shelf) {
-      id
-      registryUrl
-      profile(id: $profile) {
-        id
-        title
-        revision
-        apmCoordinate
-        document
-        resolution {
-          json
-        }
-        plan {
-          errors {
-            path
-            message
-          }
-          plan {
-            json
-          }
-        }
-      }
-      profiles {
-        id
-        title
-      }
-    }
-  }
-`);
-
-export const ReportActivityMutation = graphql(`
-  mutation ReportActivity($input: JSON!) {
-    reportActivity(input: $input)
   }
 `);
 
@@ -1022,6 +965,26 @@ export const SharedProfileQuery = graphql(`
         installCommand
         profileRevision
         files
+      }
+    }
+  }
+`);
+
+// The profile editor: what the shelf index and the profiles list do not carry. Its items come from `ShelfIndexQuery`
+// and its profiles from `ProfilesQuery`, so the editor lists every item however large the shelf.
+
+export const ProfileEditorQuery = graphql(`
+  query ProfileEditor($shelf: ID!) {
+    shelf(id: $shelf) {
+      id
+      bundles
+      snapshot {
+        digest
+      }
+      files {
+        path
+        sha256
+        size
       }
     }
   }

@@ -200,7 +200,7 @@ A **revision** is an immutable snapshot of one item: `sha256` over a canonical s
 
 #### `skill`
 
-A directory with `SKILL.md`, following [agentskills.io](https://agentskills.io/specification). Only spec frontmatter is used (`name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools`), because clients and uploaders reject unknown keys.
+A directory with `SKILL.md`, following [agentskills.io](https://agentskills.io/specification). A skill fails to load only when an agent could not use it: no frontmatter, frontmatter that is not a YAML mapping, a `name` that is not the item id, or no `description`. Every other deviation from the spec (an unknown key such as Claude Code's `disable-model-invocation`, a description over 1024 characters, nested `metadata`) is a `skill-frontmatter` notice from `check`, and the file is kept as written: harnesses read such skills, while strict clients and uploaders, such as claude.ai's skill upload, may refuse them.
 
 #### `prompt`
 
@@ -461,14 +461,17 @@ Vue 3, Vite, Vize, CSSForge. Everything goes through the same API as the CLI.
 
 | Screen | Purpose |
 | --- | --- |
-| **Shelf** | Inventory. Search, filter by kind and tag, bulk-select into a profile. |
+| **Browse** | The shelf's items. Search, filter by kind and tag, bulk-select into a profile. |
 | **Prompts** | The prompt library, treated as a first-class surface rather than a filtered list. |
-| **Item** | Rendered content, revisions and diffs, provenance, reverse dependencies, the APM coordinate. |
-| **Compose** | Build a profile: drag items in, watch resolution and conflicts, see the `apm.yml` update live. |
-| **Compile** | Pick a profile and repository, read the manifest, copy the install command. |
+| **Item** | Rendered content, what installing it writes, history and diffs, origin, what uses it, scans. |
+| **Profiles** | Every profile, what it installs, and the way to edit or install it. |
+| **Edit profile** | Build a profile: drag items in, see what it installs and any conflicts, see the `apm.yml` update live. Reached from a profile, not the navigation. |
+| **Install** | Install a profile through the shelf's registry with stock APM: copy a prompt that has an agent do it, the terminal steps, or the ShelfKit CLI's, and see which file each item becomes for each agent. Reached from a profile. |
 | **Import** | Paste a repo, registry, catalog, or shelf URL; pick items; set pins. |
-| **Activity** | Which repositories compiled which profile revision, and what is stale. |
+| **Repositories** | Which repositories installed which profile version, and which are behind. |
 | **Settings** | Your passkeys and devices, people and invites, API keys for programs, sources, secret names, registry visibility. |
+
+Two rules hold on every screen. **Moving between screens never waits on the network** for what the shelf's index already holds: opening a shelf loads every item once, keeps it across visits, and the live subscription marks it stale. **The UI speaks plainly**: the format's own terms (kind slugs such as `library` and `stack`, `vendored`, compile, resolution, revision hashes) are shown as a label with a sentence saying what they do for the agent, and APM's words (`apm.yml`, `apm install`) are kept because the reader meets them in the repository.
 
 Signing in is "Sign in with a passkey", or a one-time link on a device without one; "Sign in with GitHub" appears only on a deployment that enables it. No key is ever typed into the browser.
 
@@ -483,9 +486,9 @@ Prompts are the most-used kind and deserve more than a list, because the actual 
 - **Editing in place**, with revision history. A prompt is short enough that the list, the editor, and the preview fit on one screen.
 - **Import from anywhere**, because prompts are collected from chats, docs, and other people's shelves.
 
-### 9.2 The composer
+### 9.2 The profile editor
 
-The composer is the profile editor: a three-pane screen with the item inventory on the left, the profile in the middle as an ordered, grouped list, and a live resolution rail on the right showing resolved items, unpinned items, conflicts by severity, and the resulting APM coordinates. Underneath, a `apm.yml` preview updates as items move, so the authored selection and the compiled output are visible at the same time. A stack-marker tester takes a sample `package.json` and reports which stacks match.
+The profile editor (the composer): a three-pane screen with the item inventory on the left, the profile in the middle as an ordered, grouped list, and a live resolution rail on the right showing resolved items, unpinned items, conflicts by severity, and the resulting APM coordinates. Underneath, a `apm.yml` preview updates as items move, so the authored selection and the compiled output are visible at the same time. A stack-marker tester takes a sample `package.json` and reports which stacks match.
 
 ---
 
@@ -517,7 +520,7 @@ Four consequences to accept, all of them real:
 - **Every query is a round trip to a named object**, so the API layer batches work into single object methods rather than issuing many small calls.
 - **A shelf is single-threaded and pinned to one location**, with a soft ceiling around 1,000 requests per second for a pass-through object and considerably less for one doing work. A hot shelf is bounded by its object.
 - **There is no cross-object query of any kind.** No join, no global index, no cross-shelf transaction. This is the constraint that shapes the next paragraph.
-- **Migrations run inside the object at runtime**, in the constructor behind `blockConcurrencyWhile`, because there is no CLI path to a Durable Object's SQLite. `PRAGMA user_version` is unsupported, so schema versioning is explicit. **The cap is 10 GB per object**, not per class, so capacity scales with shelf count. A full object fails writes with `SQLITE_FULL` while reads and deletes keep working, which is why the shelf reports its own storage usage instead of waiting to discover the ceiling.
+- **Migrations run inside the object at runtime**, behind `blockConcurrencyWhile`, because there is no CLI path to a Durable Object's SQLite. An object that holds a shelf migrates in its constructor, and a wake whose `schema_version` is already current skips the migrator. An object that has never been written migrates on its first write instead, so a read of an unknown shelf id answers "not found" and leaves no storage behind. `PRAGMA user_version` is unsupported, so schema versioning is explicit. **The cap is 10 GB per object**, not per class, so capacity scales with shelf count. A full object fails writes with `SQLITE_FULL` while reads and deletes keep working, which is why the shelf reports its own storage usage instead of waiting to discover the ceiling.
 
 #### Search is per shelf
 

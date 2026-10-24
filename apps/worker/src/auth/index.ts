@@ -230,8 +230,9 @@ export async function grantedShelves(
 export const SHELF_MARKERS = "shelves/";
 
 /**
- * Whether the deployment holds `shelf`. Checked before any request touches a shelf's object, because naming a
- * Durable Object creates it: a request for a shelf that does not exist must never make one.
+ * Whether the deployment holds `shelf`, from its marker in R2. Checked before a request that may write touches a
+ * shelf's object: a request for a shelf that does not exist must never make one. The reads `shelfStub` names skip
+ * it, because an object that holds no shelf answers them without writing.
  */
 export async function shelfExists(env: Env, shelf: string): Promise<boolean> {
   if (!v.is(ShelfIdSchema, shelf)) {
@@ -285,12 +286,12 @@ export async function sessionForKey(env: Env, key: string): Promise<Session> {
   if (parsed.kind !== "key") {
     return { kind: "invalid" };
   }
-  // A well-formed key of a shelf the deployment does not hold is no key, and its shelf's object is never created.
-  const stub = await existingShelf(env, parsed.shelf);
-  if (stub === null) {
-    return { kind: "invalid" };
-  }
-  const found = await stub.resolveKey(await secretHash(key));
+  // A well-formed key of a shelf the deployment does not hold is no key. Its shelf's object is asked without asking R2
+  // first whether the shelf exists: an object that holds no shelf holds no keys, and answers without writing
+  // anything, so no object is left behind (`ShelfIndex`'s constructor).
+  const found = await shelfStub(env, parsed.shelf).resolveKey(
+    await secretHash(key)
+  );
   if (found === null) {
     return { kind: "invalid" };
   }
@@ -304,8 +305,10 @@ export async function sessionForKey(env: Env, key: string): Promise<Session> {
 }
 
 /**
- * The shelf's Durable Object. One per shelf, named by the shelf's id. Naming it creates it, so a request reaches a
- * shelf through `existingShelf` unless it is creating the shelf (the owner's first push).
+ * The shelf's Durable Object. One per shelf, named by the shelf's id. An object that holds no shelf writes nothing
+ * until it is written to, so the reads that answer "not found" for such an object (a shelf's summary, its grants,
+ * a key) reach it directly; everything else reaches a shelf through `existingShelf` unless it is creating the shelf
+ * (the owner's first push).
  */
 export function shelfStub(env: Env, shelf: string) {
   return env.SHELF.get(env.SHELF.idFromName(shelf));

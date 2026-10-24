@@ -1,0 +1,22 @@
+name: shelfkit-agent-tools
+version: "0.0.0"
+targets:
+  - claude
+  - codex
+  - copilot
+  - cursor
+dependencies:
+  apm:
+    - ./vendor/agent-tools
+  mcp:
+    - name: io.github.upstash/context7
+      registry: false
+      transport: http
+      url: "https://mcp.context7.com/mcp"
+    - name: microsoft/playwright-mcp
+      registry: false
+      transport: stdio
+      command: npx
+      args:
+        - "-y"
+        - "@playwright/mcp@latest"

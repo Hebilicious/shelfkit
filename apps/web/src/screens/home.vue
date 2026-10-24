@@ -21,10 +21,22 @@ watch(
 
 <template>
   <main class="page home">
-    <h1>Shelves</h1>
+    <header class="stack">
+      <h1>ShelfKit</h1>
+      <p class="lead">
+        One place for the prompts, skills, conventions and MCP servers your coding agents use, and a way to install
+        the right set of them into any repository.
+      </p>
+      <p class="muted small">
+        Items live on a shelf. A profile picks the items one kind of project needs. Installing a profile writes an
+        <code>apm.yml</code> into the repository, and <code>apm install</code> sets up Claude, Codex, Copilot or Cursor
+        with everything it lists.
+      </p>
+    </header>
+    <h2 v-if="shelves.length > 0">Your shelves</h2>
     <p v-if="sessionError !== null" class="error-text">{{ sessionError }}</p>
     <template v-else-if="viewer !== null && !viewer.authenticated && shelves.length === 0">
-      <p>Sign in to open your shelf.</p>
+      <p>Sign in to open your shelf, or open a shelf someone shared with you.</p>
       <p><RouterLink class="button primary" :to='{ name: "sign-in" }'>Sign in</RouterLink></p>
     </template>
     <p v-else-if="viewer !== null && shelves.length === 0 && viewer.owner" class="muted">
@@ -56,5 +68,10 @@ watch(
   max-width: var(--layout-measure-wide);
   margin: 0 auto;
   width: 100%;
+}
+
+.lead {
+  margin: 0;
+  font-size: var(--typography_fluid-sans-text-l);
 }
 </style>

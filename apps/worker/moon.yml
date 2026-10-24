@@ -156,6 +156,15 @@ tasks:
     options:
       persistent: true
       runInCI: false
+  preview:
+    description: "Upload the checked-out branch as a Worker Preview named after the branch, with its own Durable Objects. Pass the account as CLOUDFLARE_ACCOUNT_ID."
+    command: "node_modules/.bin/wrangler preview"
+    deps:
+      - "web:build"
+      - "engine:build"
+    options:
+      cache: false
+      runInCI: false
   deploy:
     command: "node_modules/.bin/wrangler deploy"
     deps:

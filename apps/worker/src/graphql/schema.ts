@@ -62,6 +62,20 @@ interface ShelfNode {
 interface ItemNode {
   readonly shelf: string;
   readonly summary: ItemSummary;
+  /**
+   * The ids of the list the item came in, itself included. The first of them to need its detail fetches the detail of
+   * all of them in one call (`detail`), so a page of items is one call to the shelf's object, not one per item.
+   */
+  readonly page?: readonly string[];
+}
+
+/** A list of items as nodes that fetch their detail together. */
+function itemNodes(
+  shelf: string,
+  summaries: readonly ItemSummary[]
+): ItemNode[] {
+  const page = summaries.map((summary) => summary.id);
+  return summaries.map((summary) => ({ page, shelf, summary }));
 }
 
 interface ProfileNode {
@@ -135,6 +149,7 @@ function stub(context: GraphQLContext, shelf: string) {
   return shelfStub(context.env, shelf);
 }
 
+/** The detail of the item, fetched with every other item of its page, once per request. */
 async function detail(
   context: GraphQLContext,
   node: ItemNode
@@ -142,11 +157,17 @@ async function detail(
   return await context.memo(
     `item ${node.shelf} ${node.summary.id}`,
     async () => {
-      const found = await shelfStub(context.env, node.shelf).itemDetail(
-        context.session,
-        node.shelf,
-        node.summary.id
+      const page = node.page ?? [node.summary.id];
+      const details = await context.memo(
+        `items ${node.shelf} ${page.join(" ")}`,
+        async () =>
+          await shelfStub(context.env, node.shelf).itemDetails(
+            context.session,
+            node.shelf,
+            page
+          )
       );
+      const found = details?.[page.indexOf(node.summary.id)] ?? null;
       if (found === null) {
         throw new GraphQLError(`the item \`${node.summary.id}\` is gone`, {
           extensions: { code: "NOT_FOUND" },
@@ -155,6 +176,24 @@ async function detail(
       return found;
     }
   );
+}
+
+/** The text of the item's primary file, fetched with every other item of its page, once per request. */
+async function body(
+  context: GraphQLContext,
+  node: ItemNode
+): Promise<string | null> {
+  const page = node.page ?? [node.summary.id];
+  const bodies = await context.memo(
+    `bodies ${node.shelf} ${page.join(" ")}`,
+    async () =>
+      await shelfStub(context.env, node.shelf).itemBodies(
+        context.session,
+        node.shelf,
+        page
+      )
+  );
+  return bodies?.[page.indexOf(node.summary.id)] ?? null;
 }
 
 async function contents(
@@ -195,15 +234,29 @@ async function planOf(
   });
 }
 
+/** The viewer's favourites and recents on a shelf, asked of its object once per request and limit. */
+async function personalOf(context: GraphQLContext, shelf: string, limit = 20) {
+  return await context.memo(
+    `personal ${shelf} ${limit}`,
+    async () =>
+      await shelfStub(context.env, shelf).personal(
+        context.session,
+        shelf,
+        limit
+      )
+  );
+}
+
+/**
+ * The shelf, or `null` when there is none the viewer can read. Asked of the shelf's object without asking R2 first
+ * whether the deployment holds it: an object that holds no shelf answers `ShelfNotFound` and writes nothing
+ * (`ShelfIndex`'s constructor), so a read of an unknown id leaves no object behind.
+ */
 async function loadShelf(
   context: GraphQLContext,
   id: string
 ): Promise<ShelfNode | null> {
-  const target = await existingShelf(context, id);
-  if (target === null) {
-    return null;
-  }
-  const found = await target.summary(context.session, id);
+  const found = await shelfStub(context.env, id).summary(context.session, id);
   return found.ok ? { id, summary: found.value } : null;
 }
 
@@ -228,12 +281,11 @@ async function shelfSession(
   if (session.kind !== "person") {
     return session;
   }
-  return await context.memo(`session ${shelf}`, async () => {
-    const target = await existingShelf(context, shelf);
-    return target === null
-      ? { kind: "anonymous" }
-      : await target.effectiveSession(session);
-  });
+  // Like `loadShelf`, without asking R2 first: an object that holds no shelf grants nothing and writes nothing.
+  return await context.memo(
+    `session ${shelf}`,
+    async () => await shelfStub(context.env, shelf).effectiveSession(session)
+  );
 }
 
 /** The shelf's object for a mutation, or `NOT_FOUND` when the deployment holds no such shelf. */
@@ -667,18 +719,10 @@ export function buildSchema(): GraphQLSchema {
           "The text of the file the kind is defined by (prompt.md, SKILL.md, agent.md, AGENTS.fragment.md).",
         nullable: true,
         resolve: async (node, _args, context) => {
-          const primary = PRIMARY_FILE.get(node.summary.kind);
-          if (primary === undefined) {
+          if (!PRIMARY_FILE.has(node.summary.kind)) {
             return null;
           }
-          const files = await contents(
-            context,
-            node.shelf,
-            node.summary.id,
-            node.summary.revision
-          );
-          const found = files.find((file) => file.path === primary);
-          return found?.encoding === "utf-8" ? found.contents : null;
+          return await body(context, node);
         },
       }),
       coordinate: t.field({
@@ -851,11 +895,16 @@ export function buildSchema(): GraphQLSchema {
       readonly shelf: string;
       readonly item: ItemSummary;
       readonly snippet?: string;
+      readonly page?: readonly string[];
     }>("SearchHit")
     .implement({
       fields: (t) => ({
         item: t.field({
-          resolve: (hit) => ({ shelf: hit.shelf, summary: hit.item }),
+          resolve: (hit) => ({
+            page: hit.page,
+            shelf: hit.shelf,
+            summary: hit.item,
+          }),
           type: Item,
         }),
         snippet: t.string({
@@ -879,8 +928,14 @@ export function buildSchema(): GraphQLSchema {
     .implement({
       fields: (t) => ({
         nodes: t.field({
-          resolve: (list) =>
-            list.hits.map((hit) => ({ ...hit, shelf: list.shelf })),
+          resolve: (list) => {
+            const page = list.hits.map((hit) => hit.item.id);
+            return list.hits.map((hit) => ({
+              ...hit,
+              page,
+              shelf: list.shelf,
+            }));
+          },
           type: [SearchHit],
         }),
         total: t.exposeInt("total"),
@@ -893,11 +948,16 @@ export function buildSchema(): GraphQLSchema {
       readonly item: ItemSummary;
       readonly usedAt: string;
       readonly uses: number;
+      readonly page: readonly string[];
     }>("RecentItem")
     .implement({
       fields: (t) => ({
         item: t.field({
-          resolve: (row) => ({ shelf: row.shelf, summary: row.item }),
+          resolve: (row) => ({
+            page: row.page,
+            shelf: row.shelf,
+            summary: row.item,
+          }),
           type: Item,
         }),
         usedAt: t.field({ resolve: (row) => row.usedAt, type: "DateTime" }),
@@ -1028,15 +1088,23 @@ export function buildSchema(): GraphQLSchema {
         description: "The resolved items.",
         resolve: async (node, _args, context) => {
           const ids = new Set(node.resolution.items.map((entry) => entry.id));
-          const found = await shelfStub(context.env, node.shelf).inventory(
-            context.session,
-            node.shelf,
-            { limit: 200 }
+          // Every profile of the request lists from the same inventory, asked for once.
+          const found = await context.memo(
+            `inventory ${node.shelf} 200`,
+            async () =>
+              await shelfStub(context.env, node.shelf).inventory(
+                context.session,
+                node.shelf,
+                { limit: 200 }
+              )
           );
           return found.ok
-            ? found.value.items
-                .filter((hit) => ids.has(hit.item.id))
-                .map((hit) => ({ shelf: node.shelf, summary: hit.item }))
+            ? itemNodes(
+                node.shelf,
+                found.value.items
+                  .filter((hit) => ids.has(hit.item.id))
+                  .map((hit) => hit.item)
+              )
             : [];
         },
         type: [Item],
@@ -1637,14 +1705,8 @@ export function buildSchema(): GraphQLSchema {
       }),
       favourites: t.field({
         resolve: async (shelf, _args, context) => {
-          const personal = await stub(context, shelf.id).personal(
-            context.session,
-            shelf.id
-          );
-          return (personal?.favourites ?? []).map((summary) => ({
-            shelf: shelf.id,
-            summary,
-          }));
+          const personal = await personalOf(context, shelf.id);
+          return itemNodes(shelf.id, personal?.favourites ?? []);
         },
         type: [Item],
       }),
@@ -1886,10 +1948,7 @@ export function buildSchema(): GraphQLSchema {
           );
           let hits = found.ok ? found.value.items : [];
           if (args.favouritesOnly === true) {
-            const personal = await stub(context, shelf.id).personal(
-              context.session,
-              shelf.id
-            );
+            const personal = await personalOf(context, shelf.id);
             const favourites = new Set(
               (personal?.favourites ?? []).map((item) => item.id)
             );
@@ -1912,13 +1971,16 @@ export function buildSchema(): GraphQLSchema {
         args: { limit: t.arg.int() },
         description: "Items this key used most recently.",
         resolve: async (shelf, args, context) => {
-          const personal = await stub(context, shelf.id).personal(
-            context.session,
+          const personal = await personalOf(
+            context,
             shelf.id,
             args.limit ?? 20
           );
-          return (personal?.recents ?? []).map(({ usedAt, uses, ...item }) => ({
+          const recents = personal?.recents ?? [];
+          const page = recents.map((recent) => recent.id);
+          return recents.map(({ usedAt, uses, ...item }) => ({
             item,
+            page,
             shelf: shelf.id,
             usedAt,
             uses,

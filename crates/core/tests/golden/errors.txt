@@ -18,7 +18,6 @@ items/prompts/leaky-body/prompt.md: `line 3` holds a literal that looks like a c
 items/prompts/needs-ghost/item.json: `requires` references unknown item `ghost`
 items/prompts/no-body: missing `prompt.md`
 items/skills/bad-frontmatter/SKILL.md: invalid SKILL.md frontmatter: `name` is `another-name` but must equal the item id `bad-frontmatter`
-items/skills/bad-frontmatter/SKILL.md: invalid SKILL.md frontmatter: unknown key `version`; agentskills.io allows only allowed-tools, compatibility, description, license, metadata, name
 items/stacks/broken-json/item.json: invalid JSON: EOF while parsing a value at line 2 column 0
 items/stacks/no-markers/item.json: `recommends` references unknown item `phantom`
 items/stacks/no-markers/item.json: a stack needs at least one marker: markers are what make it detectable

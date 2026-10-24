@@ -3,8 +3,9 @@ import type { Profile } from "@shelfkit/schema";
 import { computed, ref } from "vue";
 
 import type { BundleDocument } from "../api/json.ts";
-import type { InventoryItem, ProfileOption } from "../api/types.ts";
+import type { ProfileOption } from "../api/types.ts";
 import { ITEM_DRAG_TYPE } from "../api/types.ts";
+import type { IndexItem, ItemKind } from "../data/shelf.ts";
 import {
   CANONICAL_TARGETS,
   CLI_ONLY_TARGETS,
@@ -15,11 +16,12 @@ import {
   slugify,
   toggle,
 } from "../lib/profile.ts";
+import { conflictSentence, KIND_ORDER, KINDS, shortRevision } from "../lib/vocabulary.ts";
 
 const { profile, isNew, inventory, bundles, profiles } = defineProps<{
   profile: Profile;
   isNew: boolean;
-  inventory: readonly InventoryItem[];
+  inventory: readonly IndexItem[];
   bundles: readonly BundleDocument[];
   profiles: readonly ProfileOption[];
 }>();
@@ -51,12 +53,19 @@ function setTitle(title: string): void {
   }
 }
 
-/** The profile's items grouped by kind, each with its place in the profile's order. */
+interface Entry {
+  readonly itemRef: string;
+  readonly id: string;
+  readonly at: number;
+  readonly item: IndexItem | undefined;
+}
+
+/**
+ * The profile's items grouped by kind, each with its place in the profile's order. The groups follow the kinds'
+ * usual order; items no longer on the shelf come last.
+ */
 const groups = computed(() => {
-  const grouped = new Map<
-    string,
-    { itemRef: string; id: string; at: number; item: InventoryItem | undefined }[]
-  >();
+  const grouped = new Map<ItemKind | "missing", Entry[]>();
   for (const [at, itemRef] of profile.items.entries()) {
     const id = refId(itemRef);
     const item = byId.value.get(id);
@@ -65,7 +74,13 @@ const groups = computed(() => {
     group.push({ at, id, item, itemRef });
     grouped.set(kind, group);
   }
-  return [...grouped.entries()].map(([kind, entries]) => ({ entries, kind }));
+  const order: readonly (ItemKind | "missing")[] = [...KIND_ORDER, "missing"];
+  return order.flatMap((kind) => {
+    const entries = grouped.get(kind);
+    return entries === undefined
+      ? []
+      : [{ entries, kind, title: kind === "missing" ? "Not on this shelf" : KINDS[kind].plural }];
+  });
 });
 
 const dropping = ref<number | null>(null);
@@ -153,8 +168,8 @@ function setTargets(slug: string): void {
       </label>
     </div>
     <div class="items-head row">
-      <h2>Items</h2>
-      <span class="small muted">{{ profile.items.length }} named directly</span>
+      <h2>Items in this profile</h2>
+      <span class="small muted">{{ profile.items.length }} chosen here</span>
     </div>
     <div
       class="dropzone"
@@ -164,9 +179,9 @@ function setTargets(slug: string): void {
       @dragleave="dropping = null"
       @drop.prevent="onDrop($event, profile.items.length)"
     >
-      <p v-if="profile.items.length === 0" class="muted small">Drop items here, or add them from the inventory.</p>
+      <p v-if="profile.items.length === 0" class="muted small">Drop items here, or add them from the list of items on this shelf.</p>
       <div v-for="group in groups" :key="group.kind" class="group">
-        <h3 class="small muted">{{ group.kind }}</h3>
+        <h3 class="small muted">{{ group.title }}</h3>
         <ul class="list">
           <li
             v-for="entry in group.entries"
@@ -181,18 +196,22 @@ function setTargets(slug: string): void {
             <div class="list-row">
               <span class="ellipsis">{{ entry.item?.title ?? entry.id }}</span>
               <span class="mono small muted ellipsis">{{ entry.id }}</span>
-              <span v-if="entry.item === undefined" class="badge danger">not in the shelf</span>
+              <span v-if="entry.item === undefined" class="badge danger">not on this shelf</span>
               <span class="spacer"></span>
               <button
                 class="quiet small"
                 type="button"
                 :aria-pressed="refRevision(entry.itemRef) !== null"
                 :title='refRevision(entry.itemRef) === null
-                  ? "Pin to the current revision"
-                  : `Pinned to ${refRevision(entry.itemRef)}`'
+                  ? "Follows the latest version. Click to lock it to the version on the shelf now."
+                  : `Locked to version ${shortRevision(refRevision(entry.itemRef) ?? "")}: later edits to the item do not reach repositories until you unlock it.`'
                 @click="togglePin(entry.id, entry.itemRef)"
               >
-                {{ refRevision(entry.itemRef) === null ? "pin" : "pinned" }}
+                {{
+                  refRevision(entry.itemRef) === null
+                    ? "Lock version"
+                    : `Locked · ${shortRevision(refRevision(entry.itemRef) ?? "")}`
+                }}
               </button>
               <button
                 class="quiet small"
@@ -224,7 +243,8 @@ function setTargets(slug: string): void {
       </div>
     </div>
     <fieldset v-if="bundles.length > 0">
-      <legend>Bundles</legend>
+      <legend>Item groups</legend>
+      <p class="small muted">Named groups of items that several profiles share. Ticking one adds every item in it.</p>
       <label v-for="bundle in bundles" :key="bundle.id" class="row small">
         <input
           type="checkbox"
@@ -235,7 +255,10 @@ function setTargets(slug: string): void {
       </label>
     </fieldset>
     <fieldset v-if="profiles.length > 0">
-      <legend>Extends</legend>
+      <legend>Also include profile</legend>
+      <p class="small muted">
+        Everything in a profile ticked here is installed too. Where the settings differ, this profile's win.
+      </p>
       <label v-for="other in profiles" :key="other.id" class="row small">
         <input
           type="checkbox"
@@ -246,10 +269,10 @@ function setTargets(slug: string): void {
       </label>
     </fieldset>
     <fieldset>
-      <legend>Compile</legend>
+      <legend>Install settings</legend>
       <div class="grid">
         <label class="field">
-          Package name
+          Package name in apm.yml
           <input
             :value='profile.compile.name ?? ""'
             placeholder="the profile id"
@@ -260,33 +283,34 @@ function setTargets(slug: string): void {
           Version
           <input
             :value='profile.version ?? ""'
-            placeholder="from the revision"
+            placeholder="worked out from the content"
             @input="set({ version: inputValue($event) || undefined })"
           />
         </label>
         <div class="field">
-          <label for="compile-pin">Pin</label>
+          <label for="compile-pin">Item versions</label>
           <select id="compile-pin" :value='profile.compile.pin ?? ""' @change="setPin">
-            <option value="">default (revision)</option>
-            <option value="revision">revision</option>
-            <option value="latest">latest</option>
+            <option value="">Respect locked versions (default)</option>
+            <option value="revision">Respect locked versions</option>
+            <option value="latest">Always the latest, even where locked</option>
           </select>
         </div>
         <div class="field">
-          <label for="compile-on-conflict">On conflict</label>
+          <label for="compile-on-conflict">When the repository already declares the same thing</label>
           <select
             id="compile-on-conflict"
             :value='profile.compile.onConflict ?? ""'
             @change="setOnConflict"
           >
-            <option value="">default (fail)</option>
-            <option value="fail">fail</option>
-            <option value="shelf-wins">shelf wins</option>
-            <option value="local-wins">local wins</option>
+            <option value="">Stop and let me decide (default)</option>
+            <option value="fail">Stop and let me decide</option>
+            <option value="shelf-wins">Replace it with this shelf's</option>
+            <option value="local-wins">Keep the repository's, leave this shelf's out</option>
           </select>
+          <span class="small muted">If both declare it, {{ conflictSentence(profile.compile.onConflict ?? "fail") }}.</span>
         </div>
         <div class="field">
-          <label for="compile-vendor">Vendor authored items</label>
+          <label for="compile-vendor">Items written on this shelf</label>
           <select
             id="compile-vendor"
             :value='profile.compile.vendorAuthored === undefined
@@ -296,15 +320,20 @@ function setTargets(slug: string): void {
                 : "no"'
             @change="setVendorAuthored"
           >
-            <option value="">default</option>
-            <option value="yes">yes</option>
-            <option value="no">no</option>
+            <option value="">Copy into vendor/{{ profile.id }}/ (default)</option>
+            <option value="yes">Copy into vendor/{{ profile.id }}/</option>
+            <option value="no">Leave them out</option>
           </select>
+          <span class="small muted">
+            They have nowhere upstream for APM to fetch them from, so their text is copied into the repository as a
+            local APM package.
+          </span>
         </div>
       </div>
       <div class="stack">
-        <span class="small muted">Targets (none: APM detects the harnesses)</span>
-        <div aria-label="Targets" class="row" role="group">
+        <span>Agents to set up</span>
+        <span class="small muted">With none chosen, APM sets up every agent it finds in the repository.</span>
+        <div aria-label="Agents to set up" class="row" role="group">
           <button
             v-for="slug in CANONICAL_TARGETS"
             :key="slug"
@@ -316,8 +345,8 @@ function setTargets(slug: string): void {
             {{ slug }}
           </button>
         </div>
-        <div aria-label="Targets outside the producer set" class="row" role="group">
-          <span class="small muted">Outside the OpenAPM v0.1 producer set:</span>
+        <div aria-label="Agents outside the standard set" class="row" role="group">
+          <span class="small muted">Outside the OpenAPM v0.1 standard set (<code>shelfkit check</code> reports a profile that uses them):</span>
           <button
             v-for="slug in CLI_ONLY_TARGETS"
             :key="slug"
@@ -336,7 +365,7 @@ function setTargets(slug: string): void {
                 allowNonconformantTargets: profile.compile.allowNonconformantTargets === true ? undefined : true,
               })"
             />
-            opt in
+            allow them
           </label>
         </div>
       </div>

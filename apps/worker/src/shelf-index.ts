@@ -70,7 +70,7 @@ import {
   registryAccess,
 } from "./auth/session.ts";
 import type { Person, Session, ShelfAccess } from "./auth/session.ts";
-import { migrateDatabase, openDatabase } from "./db/migrate.ts";
+import { isUnmigrated, migrateDatabase, openDatabase } from "./db/migrate.ts";
 import type { ShelfDatabase } from "./db/migrate.ts";
 import * as table from "./db/schema.ts";
 import { engine } from "./engine.ts";
@@ -111,6 +111,8 @@ import {
   engineFiles,
   isShelfPath,
   manifestText,
+  PRIMARY_FILE,
+  text as utf8,
 } from "./shelf/files.ts";
 import {
   bodySnippet,
@@ -344,7 +346,9 @@ const encoder = new TextEncoder();
 const SEARCH_INDEX_VERSION = "contentless-1";
 
 export class ShelfIndex extends DurableObject<Env> {
-  private readonly db: ShelfDatabase;
+  private readonly database: ShelfDatabase;
+  /** Whether the database has the shelf's schema. An object that has never held a shelf does not, until it writes. */
+  private migrated = false;
   private loaded: Loaded | undefined;
   private readonly plans = new Map<string, Plan | CompileFailed>();
   /**
@@ -358,13 +362,40 @@ export class ShelfIndex extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.db = openDatabase(ctx.storage);
+    this.database = openDatabase(ctx.storage);
     // There is no CLI path to a Durable Object's SQLite, so the schema is migrated here, before any request reaches
     // the object. `PRAGMA user_version` is unsupported, so the version is recorded explicitly (`src/db/migrate.ts`).
+    //
+    // An object that has never been migrated has never held a shelf. It stays unmigrated, and so writes nothing,
+    // until it first writes (`db`): a request that names a shelf the deployment does not hold (a key or a query for
+    // an unknown id) wakes the object, finds no shelf, and leaves no storage behind. That is what lets a read reach
+    // the object without asking R2 first whether the shelf exists.
     void ctx.blockConcurrencyWhile(async () => {
+      if (isUnmigrated(ctx.storage)) {
+        return;
+      }
       migrateDatabase(ctx.storage);
+      this.migrated = true;
       await this.rebuildSearchIndex();
     });
+  }
+
+  /**
+   * The shelf's database, migrated first if this object has never been. The first push migrates such an object behind
+   * `blockConcurrencyWhile` before it writes (`commit`), and every read starts with `shelfId()`, which answers `null`
+   * without the database, so this is a backstop: migrating is synchronous, so no other request runs between the check
+   * and the migration either way.
+   */
+  private get db(): ShelfDatabase {
+    this.migrate();
+    return this.database;
+  }
+
+  private migrate(): void {
+    if (!this.migrated) {
+      migrateDatabase(this.ctx.storage);
+      this.migrated = true;
+    }
   }
 
   // --- Identity and access ---------------------------------------------------------------------------------------
@@ -375,6 +406,10 @@ export class ShelfIndex extends DurableObject<Env> {
   }
 
   private metaValue(key: string): string | null {
+    // An unmigrated object holds no shelf and no meta; answering without the database keeps it unmigrated.
+    if (!this.migrated) {
+      return null;
+    }
     return (
       this.db
         .select({ value: table.meta.value })
@@ -462,6 +497,10 @@ export class ShelfIndex extends DurableObject<Env> {
     readonly name: string;
     readonly scopes: readonly string[];
   } | null {
+    // An object that holds no shelf holds no keys. The auth module asks before it knows the shelf exists.
+    if (!this.migrated) {
+      return null;
+    }
     const found = this.db
       .select()
       .from(table.apiKey)
@@ -918,14 +957,17 @@ export class ShelfIndex extends DurableObject<Env> {
     if (wanted.length === 0) {
       return [];
     }
-    return this.db
-      .select({ sha256: table.blob.sha256 })
-      .from(table.blob)
-      .where(
-        and(inArray(table.blob.sha256, wanted), eq(table.blob.referenced, 1))
-      )
-      .all()
-      .map((row) => row.sha256);
+    // One query per chunk: Durable Object SQLite binds at most `BOUND_PARAMETERS` values per statement.
+    return chunked(wanted, BOUND_PARAMETERS - 1).flatMap((chunk) =>
+      this.db
+        .select({ sha256: table.blob.sha256 })
+        .from(table.blob)
+        .where(
+          and(inArray(table.blob.sha256, chunk), eq(table.blob.referenced, 1))
+        )
+        .all()
+        .map((row) => row.sha256)
+    );
   }
 
   /**
@@ -1015,17 +1057,19 @@ export class ShelfIndex extends DurableObject<Env> {
     if (problems.length > 0) {
       return { errors: problems, ok: false, reason: "invalid" };
     }
+    const named = [
+      ...new Set([...entries.values()].map((entry) => entry.sha256)),
+    ];
+    // One query per chunk: Durable Object SQLite binds at most `BOUND_PARAMETERS` values per statement.
     const known = new Set(
-      this.db
-        .select({ sha256: table.blob.sha256 })
-        .from(table.blob)
-        .where(
-          inArray(table.blob.sha256, [
-            ...new Set([...entries.values()].map((entry) => entry.sha256)),
-          ])
-        )
-        .all()
-        .map((row) => row.sha256)
+      chunked(named, BOUND_PARAMETERS).flatMap((chunk) =>
+        this.db
+          .select({ sha256: table.blob.sha256 })
+          .from(table.blob)
+          .where(inArray(table.blob.sha256, chunk))
+          .all()
+          .map((row) => row.sha256)
+      )
     );
     const missing = [
       ...new Set([...entries.values()].map((entry) => entry.sha256)),
@@ -1167,6 +1211,14 @@ export class ShelfIndex extends DurableObject<Env> {
         `${SHELF_MARKERS}${input.shelf}`,
         JSON.stringify({ createdAt: now(), shelf: input.shelf })
       );
+      // The first snapshot is this object's first write, and so its first migration (the constructor leaves an
+      // object that has never held a shelf unmigrated).
+      if (!this.migrated) {
+        // oxlint-disable-next-line eslint/require-await -- `blockConcurrencyWhile` takes a function that returns a promise; migrating is synchronous.
+        await this.ctx.blockConcurrencyWhile(async () => {
+          this.migrate();
+        });
+      }
     }
 
     // From here on, nothing awaits: the check and the writes are one step of the object.
@@ -1868,88 +1920,172 @@ export class ShelfIndex extends DurableObject<Env> {
   // --- Items, for the UI ------------------------------------------------------------------------------------------
 
   itemDetail(session: Session, shelf: string, id: string): ItemDetail | null {
+    return this.itemDetails(session, shelf, [id])?.[0] ?? null;
+  }
+
+  /**
+   * The detail of several items at once, in the order asked, `null` for an id the shelf does not hold: what the UI's
+   * item fields read for a whole page in one call. Every item, bundle, and profile is read once for all of them, so
+   * a page costs a few queries rather than a few per item.
+   */
+  itemDetails(
+    session: Session,
+    shelf: string,
+    ids: readonly string[]
+  ): (ItemDetail | null)[] | null {
     const granted = this.reader(session, shelf);
     if ("ok" in granted) {
       return null;
     }
-    const row = this.db.query.item
-      .findFirst({ where: { id }, with: { scans: true, upstream: true } })
-      .sync();
-    if (row === undefined) {
-      return null;
-    }
-    const current = this.db
-      .select()
-      .from(table.revision)
-      .where(
-        and(
-          eq(table.revision.itemId, id),
-          eq(table.revision.revision, row.revision)
-        )
-      )
-      .get();
     const items = this.db.select().from(table.item).all();
-    const bundles = this.db.select().from(table.bundle).all();
-    const profiles = this.db.select().from(table.profile).all();
-    const favourite =
-      granted.keyId !== null &&
-      this.db
+    const byId = new Map(items.map((row) => [row.id, row]));
+    const wanted = [...new Set(ids)].filter((id) => byId.has(id));
+    const scans = new Map<string, ScanRecord[]>();
+    const upstreams = new Map<string, typeof table.upstream.$inferSelect>();
+    const currentFiles = new Map<string, ItemDetail["files"]>();
+    for (const chunk of chunked(wanted, BOUND_PARAMETERS / 2)) {
+      for (const row of this.db
         .select()
-        .from(table.favourite)
+        .from(table.scan)
+        .where(inArray(table.scan.itemId, chunk))
+        .all()) {
+        scans.set(row.itemId, [
+          ...(scans.get(row.itemId) ?? []),
+          scanRecord(row),
+        ]);
+      }
+      for (const row of this.db
+        .select()
+        .from(table.upstream)
+        .where(inArray(table.upstream.itemId, chunk))
+        .all()) {
+        upstreams.set(row.itemId, row);
+      }
+      const revisions = chunk.flatMap((id) => {
+        const row = byId.get(id);
+        return row === undefined ? [] : [row.revision];
+      });
+      for (const row of this.db
+        .select({
+          files: table.revision.files,
+          itemId: table.revision.itemId,
+          revision: table.revision.revision,
+        })
+        .from(table.revision)
         .where(
           and(
-            eq(table.favourite.keyId, granted.keyId),
-            eq(table.favourite.itemId, id)
+            inArray(table.revision.itemId, chunk),
+            inArray(table.revision.revision, revisions)
           )
         )
-        .get() !== undefined;
-    return {
-      coordinate: row.coordinate,
-      createdAt: row.createdAt,
-      dependents: {
-        bundles: bundles
-          .filter((entry) =>
-            entry.document.items.some((ref) => ref.split("@")[0] === id)
-          )
-          .map((entry) => entry.id),
-        profiles: profiles
-          .filter((entry) =>
-            entry.resolution.items.some((resolved) => resolved.id === id)
-          )
-          .map((entry) => entry.id),
-        recommendedBy: items
-          .filter(
-            (entry) =>
-              entry.document.kind === "stack" &&
-              (entry.document.recommends ?? []).includes(id)
-          )
-          .map((entry) => entry.id),
-        requiredBy: items
-          .filter((entry) => entry.requires.includes(id))
-          .map((entry) => entry.id),
-      },
-      document: row.document,
-      favourite,
-      files: current?.files ?? [],
-      path: row.path,
-      scans: row.scans
-        .map(scanRecord)
-        .toSorted((a, b) => compare(b.recordedAt, a.recordedAt)),
-      summary: summaryOf(row),
-      updatedAt: row.updatedAt,
-      upstream:
-        row.upstream === null
-          ? null
-          : {
-              checkedAt: row.upstream.checkedAt,
-              error: row.upstream.error,
-              latest: row.upstream.latest,
-              status: v.parse(
-                UpstreamStateSchema.entries.status,
-                row.upstream.status
-              ),
-            },
+        .all()) {
+        if (byId.get(row.itemId)?.revision === row.revision) {
+          currentFiles.set(row.itemId, row.files);
+        }
+      }
+    }
+    const favourites = new Set(
+      granted.keyId === null
+        ? []
+        : this.db
+            .select({ itemId: table.favourite.itemId })
+            .from(table.favourite)
+            .where(eq(table.favourite.keyId, granted.keyId))
+            .all()
+            .map((row) => row.itemId)
+    );
+    const dependents = dependentsOf(
+      items,
+      this.db.select().from(table.bundle).all(),
+      this.db.select().from(table.profile).all()
+    );
+    return ids.map((id) => {
+      const row = byId.get(id);
+      if (row === undefined) {
+        return null;
+      }
+      const upstream = upstreams.get(id);
+      return {
+        coordinate: row.coordinate,
+        createdAt: row.createdAt,
+        dependents: dependents(id),
+        document: row.document,
+        favourite: favourites.has(id),
+        files: currentFiles.get(id) ?? [],
+        path: row.path,
+        scans: (scans.get(id) ?? []).toSorted((a, b) =>
+          compare(b.recordedAt, a.recordedAt)
+        ),
+        summary: summaryOf(row),
+        updatedAt: row.updatedAt,
+        upstream:
+          upstream === undefined
+            ? null
+            : {
+                checkedAt: upstream.checkedAt,
+                error: upstream.error,
+                latest: upstream.latest,
+                status: v.parse(
+                  UpstreamStateSchema.entries.status,
+                  upstream.status
+                ),
+              },
+      };
+    });
+  }
+
+  /**
+   * The text of each item's primary file (prompt.md, SKILL.md, agent.md, AGENTS.fragment.md) at its current
+   * revision, in the order asked: `null` for an id the shelf does not hold, a kind without one, or a file that is not
+   * UTF-8. Read from the snapshot this object holds in memory when it has it, else only those files from R2.
+   */
+  async itemBodies(
+    session: Session,
+    shelf: string,
+    ids: readonly string[]
+  ): Promise<(string | null)[] | null> {
+    const granted = this.reader(session, shelf);
+    if ("ok" in granted) {
+      return null;
+    }
+    const wanted = new Set(ids);
+    const rows = new Map(
+      this.db
+        .select({
+          id: table.item.id,
+          kind: table.item.kind,
+          path: table.item.path,
+        })
+        .from(table.item)
+        .all()
+        .filter((row) => wanted.has(row.id))
+        .map((row) => [row.id, row])
+    );
+    const primaryPath = (id: string) => {
+      const row = rows.get(id);
+      const primary =
+        row === undefined ? undefined : PRIMARY_FILE.get(row.kind);
+      return row === undefined || primary === undefined
+        ? null
+        : `${row.path}/${primary}`;
     };
+    const paths = new Set(ids.map(primaryPath));
+    const entries = new Map(
+      this.db
+        .select()
+        .from(table.file)
+        .all()
+        .filter((row) => paths.has(row.path))
+        .map(
+          (row) => [row.path, { sha256: row.sha256, size: row.size }] as const
+        )
+    );
+    const contents = await this.readContents(entries);
+    return ids.map((id) => {
+      const path = primaryPath(id);
+      const bytes = path === null ? undefined : contents.get(path);
+      return bytes === undefined ? null : utf8(bytes);
+    });
   }
 
   /** An item's revisions, newest first. */
@@ -3659,6 +3795,73 @@ function snapshotRecord(
     parent: row.parent,
     totalBytes: row.totalBytes,
   };
+}
+
+/** Durable Object SQLite binds at most 100 parameters in one statement. */
+const BOUND_PARAMETERS = 100;
+
+/** `values` in runs of at most `size`. */
+function chunked<T>(values: readonly T[], size: number): T[][] {
+  const runs: T[][] = [];
+  for (let start = 0; start < values.length; start += size) {
+    runs.push(values.slice(start, start + size));
+  }
+  return runs;
+}
+
+/** Record that `by` names `id`, once. */
+function addDependent(
+  into: Map<string, string[]>,
+  id: string,
+  by: string
+): void {
+  const found = into.get(id);
+  if (found === undefined) {
+    into.set(id, [by]);
+  } else if (!found.includes(by)) {
+    found.push(by);
+  }
+}
+
+/**
+ * What names each item, worked out once for the whole shelf: items that require it, stacks that recommend it, the
+ * bundles that list it, and the profiles whose resolution holds it.
+ */
+function dependentsOf(
+  items: readonly (typeof table.item.$inferSelect)[],
+  bundles: readonly (typeof table.bundle.$inferSelect)[],
+  profiles: readonly (typeof table.profile.$inferSelect)[]
+): (id: string) => ItemDetail["dependents"] {
+  const requiredBy = new Map<string, string[]>();
+  const recommendedBy = new Map<string, string[]>();
+  const inBundles = new Map<string, string[]>();
+  const inProfiles = new Map<string, string[]>();
+  for (const entry of items) {
+    for (const id of entry.requires) {
+      addDependent(requiredBy, id, entry.id);
+    }
+    if (entry.document.kind === "stack") {
+      for (const id of entry.document.recommends ?? []) {
+        addDependent(recommendedBy, id, entry.id);
+      }
+    }
+  }
+  for (const entry of bundles) {
+    for (const ref of entry.document.items) {
+      addDependent(inBundles, ref.split("@")[0] ?? ref, entry.id);
+    }
+  }
+  for (const entry of profiles) {
+    for (const resolved of entry.resolution.items) {
+      addDependent(inProfiles, resolved.id, entry.id);
+    }
+  }
+  return (id) => ({
+    bundles: inBundles.get(id) ?? [],
+    profiles: inProfiles.get(id) ?? [],
+    recommendedBy: recommendedBy.get(id) ?? [],
+    requiredBy: requiredBy.get(id) ?? [],
+  });
 }
 
 function scanRecord(row: typeof table.scan.$inferSelect): ScanRecord {

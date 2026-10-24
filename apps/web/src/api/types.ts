@@ -1,14 +1,8 @@
 /** Shapes of query results that several components share. */
-import type { ResultOf } from "./graphql.ts";
-import type { ComposeQuery } from "./operations.ts";
+import type { ProfileSummary } from "../data/shelf.ts";
 
-type ComposeShelf = NonNullable<ResultOf<typeof ComposeQuery>["shelf"]>;
+/** Another profile of the shelf, as the profile editor offers it to `extends`. */
+export type ProfileOption = Pick<ProfileSummary, "id" | "title" | "document">;
 
-/** An item as the composer's inventory lists it. */
-export type InventoryItem = ComposeShelf["items"]["nodes"][number]["item"];
-
-/** Another profile of the shelf, as the composer offers it to `extends`. */
-export type ProfileOption = ComposeShelf["profiles"][number];
-
-/** The drag-and-drop type an item id travels under, from the inventory to the profile. */
+/** The drag-and-drop type an item id travels under, from the item list to the profile. */
 export const ITEM_DRAG_TYPE = "application/x-shelfkit-item";

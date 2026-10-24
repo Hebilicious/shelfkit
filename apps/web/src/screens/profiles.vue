@@ -3,21 +3,29 @@ import { computed } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 
 import { execute } from "../api/graphql.ts";
-import { DeleteProfileMutation, ProfilesQuery, SaveProfileMutation } from "../api/operations.ts";
+import { DeleteProfileMutation, SaveProfileMutation } from "../api/operations.ts";
 import QueryState from "../components/query-state.vue";
 import { copyToClipboard } from "../composables/clipboard.ts";
 import { useListNav } from "../composables/list-nav.ts";
 import { useShelfId } from "../composables/shelf-context.ts";
 import { notify, notifyError } from "../composables/toasts.ts";
-import { useQuery } from "../composables/use-query.ts";
+import { invalidate, shelfPrefix } from "../data/cache.ts";
+import { useProfiles, useShelfIndex } from "../data/shelf.ts";
 
 const shelf = useShelfId();
 const router = useRouter();
 
-const query = useQuery(async () => {
-  const data = await execute(ProfilesQuery, { shelf: shelf.value });
-  return data.shelf;
-}, [shelf]);
+const query = useProfiles(shelf);
+const shelfIndex = useShelfIndex(shelf);
+const titles = computed(
+  () => new Map((shelfIndex.data.value?.items ?? []).map((item) => [item.id, item.title])),
+);
+
+/** The first few items a profile installs, by title, for a row that says what it holds. */
+function itemNames(ids: readonly { id: string }[]): string {
+  const names = ids.slice(0, 4).map((entry) => titles.value.get(entry.id) ?? entry.id);
+  return ids.length > 4 ? `${names.join(", ")} and ${ids.length - 4} more` : names.join(", ");
+}
 
 const profiles = computed(() => query.data.value?.profiles ?? []);
 const canWrite = computed(() => query.data.value?.viewerAccess.write === true);
@@ -37,7 +45,7 @@ function counts(conflicts: readonly { severity: string }[]): ConflictCounts {
 async function copyCoordinate(coordinate: string): Promise<void> {
   try {
     await copyToClipboard(coordinate);
-    notify("Registry coordinate copied.");
+    notify("Registry name copied.");
   } catch (error) {
     notifyError(error);
   }
@@ -55,7 +63,7 @@ async function remove(id: string, title: string, document: unknown): Promise<voi
       notify(data.deleteProfile.reason ?? "the shelf refused the delete", null, "error");
       return;
     }
-    await query.refresh();
+    invalidate(shelfPrefix(shelfId));
     notify(`Deleted profile “${title}”.`, async () => {
       const restored = await execute(SaveProfileMutation, {
         document,
@@ -65,7 +73,7 @@ async function remove(id: string, title: string, document: unknown): Promise<voi
       if (!restored.saveProfile.ok) {
         throw new Error(restored.saveProfile.reason ?? "the shelf refused to restore it");
       }
-      await query.refresh();
+      invalidate(shelfPrefix(shelfId));
     });
   } catch (error) {
     notifyError(error);
@@ -90,14 +98,16 @@ const index = useListNav({
       <span class="spacer"></span>
       <RouterLink v-if="canWrite" class="button primary" :to='{ name: "compose", params: { shelf } }'>New profile</RouterLink>
     </header>
-    <p class="small muted">
-      A profile is what a repository installs: items, bundles and compile settings, compiled to one <code>apm.yml</code>.
+    <p class="muted">
+      A profile is the set of items one kind of repository gets: say, every prompt and convention for your Vue
+      projects. Install it in a repository and ShelfKit writes an <code>apm.yml</code> that lists them;
+      <code>apm install</code> then puts each one where Claude, Codex, Copilot and Cursor look for it.
     </p>
     <QueryState
       :loading="query.loading.value"
       :error="query.error.value"
       :empty="profiles.length === 0"
-      empty-text="No profiles yet. Compose one from the shelf's items."
+      empty-text="No profiles yet. Make one from the items on this shelf."
     />
     <ul class="list panel" data-testid="profile-list">
       <li v-for="(profile, at) in profiles" :key="profile.id">
@@ -106,45 +116,47 @@ const index = useListNav({
             <div class="row">
               <RouterLink
                 class="profile-row__title"
-                :to='{ name: "compose", params: { shelf, profile: profile.id } }'
+                :to='{ name: "compile", params: { shelf, profile: profile.id } }'
               >
                 {{ profile.title }}
               </RouterLink>
-              <span class="mono small muted">{{ profile.id }}</span>
-              <span v-if="query.data.value?.defaultProfile === profile.id" class="badge">default</span>
-              <span v-if="profile.version" class="badge">v{{ profile.version }}</span>
+              <span
+                v-if="query.data.value?.defaultProfile === profile.id"
+                class="badge"
+                title="What shelfkit compile installs when no profile is named"
+              >default</span>
             </div>
-            <span class="small muted ellipsis">{{ profile.description }}</span>
+            <span v-if="profile.description" class="small muted ellipsis">{{ profile.description }}</span>
+            <span class="small">
+              {{ profile.resolution.items.length }} {{ profile.resolution.items.length === 1 ? "item" : "items" }}<template v-if="profile.resolution.items.length > 0">: {{ itemNames(profile.resolution.items) }}</template>
+            </span>
             <div class="row small">
-              <span>{{ profile.resolution.items.length }} items</span>
               <span v-if="counts(profile.resolution.conflicts).errors > 0" class="severity-error">
-                {{ counts(profile.resolution.conflicts).errors }} errors
+                {{ counts(profile.resolution.conflicts).errors }} {{ counts(profile.resolution.conflicts).errors === 1 ? "problem" : "problems" }} to fix before it installs
               </span>
               <span v-if="counts(profile.resolution.conflicts).warnings > 0" class="severity-warning">
-                {{ counts(profile.resolution.conflicts).warnings }} warnings
+                {{ counts(profile.resolution.conflicts).warnings }} {{ counts(profile.resolution.conflicts).warnings === 1 ? "warning" : "warnings" }}
               </span>
               <span v-if="profile.published" class="muted">
-                published as {{ profile.published.package }}
+                In this shelf's registry as
+                <button
+                  class="quiet small mono"
+                  title="Copy the name APM installs it by"
+                  type="button"
+                  @click="copyCoordinate(profile.apmCoordinate)"
+                >{{ profile.apmCoordinate }}</button>
               </span>
-              <button
-                class="quiet small mono"
-                title="Copy the registry coordinate"
-                type="button"
-                @click="copyCoordinate(profile.apmCoordinate)"
-              >
-                {{ profile.apmCoordinate }}
-              </button>
             </div>
           </div>
           <span class="spacer"></span>
           <RouterLink
-            class="button"
-            :to='{ name: "compose", params: { shelf, profile: profile.id } }'
-          >Compose</RouterLink>
+            class="button primary"
+            :to='{ name: "compile", params: { shelf, profile: profile.id } }'
+          >Install</RouterLink>
           <RouterLink
             class="button"
-            :to='{ name: "compile", params: { shelf, profile: profile.id } }'
-          >Compile</RouterLink>
+            :to='{ name: "compose", params: { shelf, profile: profile.id } }'
+          >Edit</RouterLink>
           <button
             v-if="canWrite"
             class="danger"

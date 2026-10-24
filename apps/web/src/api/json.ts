@@ -5,6 +5,7 @@
 import {
   CompilePlanSchema,
   ItemKindSchema,
+  ItemSchema,
   ItemSummarySchema,
   ProfileSchema,
   ResolvedProfileSchema,
@@ -12,6 +13,7 @@ import {
 } from "@shelfkit/schema";
 import type {
   CompilePlan,
+  Item,
   ItemSummary,
   Profile,
   ResolvedProfile,
@@ -37,6 +39,15 @@ const VariablesSchema = v.array(
 export function readVariables(value: unknown): PromptVariable[] {
   const parsed = v.safeParse(VariablesSchema, value);
   return parsed.success ? parsed.output : [];
+}
+
+/**
+ * An item.json, or `null` when it is not one.
+ * BOUNDARY: a GraphQL `JSON` value is unparsed; the schema above parses it here.
+ */
+export function readItem(value: unknown): Item | null {
+  const parsed = v.safeParse(ItemSchema, value);
+  return parsed.success ? parsed.output : null;
 }
 
 /**

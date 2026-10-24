@@ -142,21 +142,28 @@ describe("ids, repositories, and frontmatter", () => {
     expect(
       skillProblem(skill("name: pdf\ndescription: Read PDFs."), "pdf")
     ).toBeUndefined();
-    expect(
-      skillProblem(
-        skill("name: pdf\ndescription: Read PDFs.\nversion: 1"),
-        "pdf"
-      )
-    ).toContain("version");
     expect(skillProblem(skill("name: other\ndescription: x"), "pdf")).toContain(
       "must be the item id"
     );
     expect(
+      skillProblem(skill("name: pdf\ndescription: '  '"), "pdf")
+    ).toContain("description must be non-empty");
+    expect(skillProblem(skill("name: pdf"), "pdf")).toContain("description");
+    expect(skillProblem("No frontmatter.", "pdf")).toBe(
+      "SKILL.md has no YAML frontmatter"
+    );
+  });
+
+  it("imports a SKILL.md that strays from agentskills.io, as the loader keeps it", () => {
+    const long = "x".repeat(1025);
+    expect(
       skillProblem(
-        skill("name: pdf\ndescription: x\nmetadata:\n  nested:\n    a: b"),
+        skill(
+          `name: pdf\ndescription: ${long}\ndisable-model-invocation: true\nversion: 1\nmetadata:\n  nested:\n    a: b`
+        ),
         "pdf"
       )
-    ).toContain("metadata");
+    ).toBeUndefined();
   });
 });
 

@@ -17,7 +17,7 @@ import { signSession } from "../src/auth/browser.ts";
 import { listShelves } from "../src/auth/index.ts";
 import type { Session } from "../src/auth/index.ts";
 import { displayPrefix } from "../src/auth/keys.ts";
-import { migrateDatabase } from "../src/db/migrate.ts";
+import { migrateDatabase, SCHEMA_VERSION } from "../src/db/migrate.ts";
 import { GitHubForge } from "../src/forge/github.ts";
 import { runJob } from "../src/jobs/consumer.ts";
 import { once } from "../src/runtime/once.ts";
@@ -124,8 +124,13 @@ describe("1. a key's stored prefix", () => {
           "INSERT INTO api_key (id, name, hash, prefix, scopes, created_at) VALUES ('old', 'old', 'hash', ?, '[]', '2026-01-01T00:00:00Z')",
           leaked
         );
+        // A database from before the migration: without its record, and at the schema version before it.
         state.storage.sql.exec(
           "DELETE FROM __drizzle_migrations WHERE name LIKE '%safe_prefixes%'"
+        );
+        state.storage.sql.exec(
+          "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+          String(SCHEMA_VERSION - 1)
         );
         migrateDatabase(state.storage);
         return state.storage.sql
@@ -300,7 +305,7 @@ describe("4. a stale session in the browser's cookie", () => {
 describe("5. a request for a shelf that does not exist", () => {
   beforeEach(fresh);
 
-  it("creates no Durable Object, on any surface", async () => {
+  it("leaves no Durable Object storage behind, on any surface", async () => {
     for (let index = 0; index < 5; index += 1) {
       // oxlint-disable-next-line eslint/no-await-in-loop -- one request at a time.
       const raw = await exports.default.fetch(
@@ -346,13 +351,25 @@ describe("5. a request for a shelf that does not exist", () => {
       }
     );
     expect(put.status).toBe(401);
+    // The surfaces that may write ask R2 first, and name no object.
     const created = await listDurableObjectIds(env.SHELF);
-    const junk = ["junk", "junk-0", "junk-1", "junk-2", "junk-3", "junk-4"].map(
+    const junk = ["junk-0", "junk-1", "junk-2", "junk-3", "junk-4"].map(
       (name) => env.SHELF.idFromName(name)
     );
     expect(
       created.filter((id) => junk.some((named) => named.equals(id)))
     ).toStrictEqual([]);
+    // The reads (a shelf's summary, a key's lookup) ask the object itself, which finds no shelf and writes nothing.
+    const tables = await runInDurableObject(
+      env.SHELF.get(env.SHELF.idFromName("junk")),
+      (_instance: ShelfIndex, state) =>
+        state.storage.sql
+          .exec<{ name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '_cf_%'"
+          )
+          .toArray()
+    );
+    expect(tables).toStrictEqual([]);
   });
 
   it("lists every shelf, across R2's pages", async () => {

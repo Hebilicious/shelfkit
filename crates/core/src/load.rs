@@ -9,7 +9,7 @@
 use crate::error::{Error, ErrorKind, Errors};
 use crate::item::{self, Item, ItemKind, Mcp, Payload};
 use crate::profile::{Bundle, ItemRef, Manifest, Profile};
-use crate::revision::{Revision, normalize_line_endings};
+use crate::revision::Revision;
 use crate::secret;
 use crate::shelf::{LoadedItem, Shelf};
 use crate::source::{FileSource, Listing, check_path};
@@ -27,17 +27,6 @@ pub(crate) const NONCONFORMANT: &str = "is outside the OpenAPM v0.1 producer set
 /// `.claude-plugin/` directory is part of the plugin.
 const OS_JUNK: &[&str] = &[".DS_Store", "Thumbs.db", "desktop.ini"];
 const ITEM_JSON: &str = "item.json";
-
-/// The agentskills.io frontmatter keys. Clients and uploaders reject any
-/// other key, so the loader does too.
-const SKILL_FRONTMATTER_KEYS: &[&str] = &[
-    "allowed-tools",
-    "compatibility",
-    "description",
-    "license",
-    "metadata",
-    "name",
-];
 
 /// Load a shelf and validate all of it.
 pub fn load(source: &dyn FileSource) -> Result<Shelf, Errors> {
@@ -509,79 +498,10 @@ impl Loader<'_> {
         }
     }
 
-    /// Check `SKILL.md`'s frontmatter against agentskills.io.
+    /// Check `SKILL.md`'s frontmatter. Only the problems that stop an agent
+    /// from using the skill fail the load; [`Shelf::check`] reports the rest.
     fn skill(&mut self, path: &str, id: &str, bytes: &[u8]) {
-        let text = String::from_utf8_lossy(&normalize_line_endings(bytes)).into_owned();
-        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-        let frontmatter = text
-            .strip_prefix("---\n")
-            .and_then(|rest| rest.split_once("\n---").map(|(yaml, _)| yaml));
-        let Some(frontmatter) = frontmatter else {
-            self.push(
-                path,
-                ErrorKind::Frontmatter("must start with a `---` YAML block".into()),
-            );
-            return;
-        };
-        let mapping = match serde_yaml::from_str::<serde_yaml::Value>(frontmatter) {
-            Ok(serde_yaml::Value::Mapping(mapping)) => mapping,
-            Ok(_) => {
-                self.push(
-                    path,
-                    ErrorKind::Frontmatter("must be a YAML mapping".into()),
-                );
-                return;
-            }
-            Err(error) => {
-                self.push(path, ErrorKind::Frontmatter(error.to_string()));
-                return;
-            }
-        };
-
-        let mut problems = Vec::new();
-        for key in mapping.keys() {
-            match key.as_str() {
-                Some(key) if SKILL_FRONTMATTER_KEYS.contains(&key) => {}
-                Some(key) => problems.push(format!(
-                    "unknown key `{key}`; agentskills.io allows only {}",
-                    SKILL_FRONTMATTER_KEYS.join(", ")
-                )),
-                None => problems.push("keys must be strings".to_owned()),
-            }
-        }
-        let string = |key: &str| mapping.get(key).and_then(serde_yaml::Value::as_str);
-        match string("name") {
-            Some(name) if name == id => {}
-            Some(name) => problems.push(format!(
-                "`name` is `{name}` but must equal the item id `{id}`"
-            )),
-            None => problems.push("`name` is required and must be a string".to_owned()),
-        }
-        match string("description") {
-            Some(description)
-                if !description.trim().is_empty() && description.chars().count() <= 1024 => {}
-            _ => problems.push(
-                "`description` is required, non-empty, and at most 1024 characters".to_owned(),
-            ),
-        }
-        for key in ["license", "compatibility", "allowed-tools"] {
-            if mapping.get(key).is_some_and(|value| !value.is_string()) {
-                problems.push(format!("`{key}` must be a string"));
-            }
-        }
-        if string("compatibility").is_some_and(|value| value.chars().count() > 500) {
-            problems.push("`compatibility` must be at most 500 characters".to_owned());
-        }
-        if let Some(metadata) = mapping.get("metadata") {
-            let ok = metadata.as_mapping().is_some_and(|map| {
-                map.iter()
-                    .all(|(key, value)| key.is_string() && value.is_string())
-            });
-            if !ok {
-                problems.push("`metadata` must map strings to strings".to_owned());
-            }
-        }
-        for problem in problems {
+        for problem in crate::skill::check_frontmatter(id, bytes).hard {
             self.push(path, ErrorKind::Frontmatter(problem));
         }
     }
