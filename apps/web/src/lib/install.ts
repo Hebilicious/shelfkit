@@ -69,7 +69,7 @@ export function agentPrompt(target: InstallTarget): string {
   ];
   if (target.isPrivate) {
     lines.push(
-      `3. The shelf is private. Ask me for a ShelfKit key with read scope (the shelf's owner makes one in Settings), and run the install with it in \`${tokenVariable(target)}\`. Never write the key into a file.`,
+      `3. The shelf is private. APM sends a key only to a registry its user config names, so run \`${APM} config set registry.${registryName(target)}.url ${target.registryUrl}\`. Then ask me for a ShelfKit key with read scope (the shelf's owner makes one in Settings), and run the install with it in \`${tokenVariable(target)}\`. Never write the key into a file.`,
       `4. Run \`${APM} install\`.`,
       "5. Tell me which files APM wrote. Commit apm.yml, apm.lock.yaml, and those files, but do not edit the installed files: they are regenerated from the shelf on the next install."
     );
@@ -99,7 +99,9 @@ export function terminalSteps(target: InstallTarget): string {
   ];
   if (target.isPrivate) {
     lines.push(
-      "# The shelf is private: a key with read scope, from the shelf's Settings.",
+      "# The shelf is private. APM sends a key only to a registry its user config names,",
+      "# and reads the key (one with read scope, from the shelf's Settings) from the environment.",
+      `${APM} config set registry.${registryName(target)}.url ${target.registryUrl}`,
       `read -rs ${tokenVariable(target)} && export ${tokenVariable(target)}`,
       ""
     );
