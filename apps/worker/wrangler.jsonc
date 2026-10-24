@@ -56,6 +56,29 @@
   "triggers": {
     "crons": ["0 * * * *"],
   },
+  // A branch's Worker Preview (`moon run worker:preview`). Previews inherit nothing from the settings above, so each
+  // binding is named again here. Every Preview gets Durable Object namespaces of its own; R2 and the queue are shared
+  // between Previews but never with production. Queue consumers and crons do not run in a Preview, so an import
+  // started there waits. Its secrets are the Preview base config's (`wrangler preview base-config secret put`).
+  "previews": {
+    "durable_objects": {
+      "bindings": [
+        { "name": "SHELF", "class_name": "ShelfIndex" },
+        { "name": "ACCOUNT", "class_name": "AccountIndex" },
+      ],
+    },
+    "r2_buckets": [
+      { "binding": "BLOBS", "bucket_name": "shelfkit-blobs-preview" },
+    ],
+    "queues": {
+      "producers": [{ "binding": "JOBS", "queue": "shelfkit-jobs-preview" }],
+    },
+    "vars": {
+      "SHELFKIT_VERSION": "0.0.0",
+      "GITHUB_URL": "https://github.com",
+      "GITHUB_API_URL": "https://api.github.com",
+    },
+  },
   "vars": {
     "SHELFKIT_VERSION": "0.0.0",
     // Where signing in with GitHub goes: the authorize and token endpoints, and the REST API. Only tests point these
