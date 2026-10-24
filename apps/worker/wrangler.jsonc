@@ -21,6 +21,7 @@
       "/mcp",
       "/apm/*",
       "/raw/*",
+      "/git/*",
       "/auth/*",
     ],
   },
@@ -42,8 +43,12 @@
   // Content by sha256 under `objects/`; published archives under `archives/`, which a bucket lock keeps immutable;
   // `shelves/` lists the shelves held.
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "shelfkit-blobs" }],
-  // Each shelf's source files are a Git repository in this Artifacts namespace, named by the shelf's id.
-  "artifacts": [{ "binding": "ARTIFACTS", "namespace": "shelfkit" }],
+  // Each shelf's files are a Git repository in this Artifacts namespace, named by the shelf's id (src/repository/).
+  // Artifacts has no local simulator: `remote` says so, and the local configuration (scripts/local-config.ts) that
+  // `worker:dev` and the tests run leaves the binding out.
+  "artifacts": [
+    { "binding": "ARTIFACTS", "namespace": "shelfkit", "remote": true },
+  ],
   "queues": {
     "producers": [{ "binding": "JOBS", "queue": "shelfkit-jobs" }],
     "consumers": [

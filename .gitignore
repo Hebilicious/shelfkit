@@ -16,6 +16,8 @@ build/
 .wrangler/
 .dev.vars
 dist-worker/
+# The Worker's local configuration, generated from wrangler.jsonc (apps/worker/scripts/local-config.ts).
+wrangler.local.json
 
 # CSSForge generated output is committed by design; nothing to ignore here.
 

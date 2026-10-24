@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { defineConfig, devices } from "@playwright/test";
 
+import { writeLocalConfig } from "../worker/scripts/local-config.ts";
 import {
   FAKE_GITHUB_WEB,
   GITHUB_VARS,
@@ -14,7 +15,8 @@ import { BASE_URL, OWNER_KEY, PORT } from "./test/e2e/support.ts";
 
 /**
  * The specs drive the built SPA served by the real Worker under `wrangler dev`, with Miniflare's Durable Object, R2 and
- * queue, so every screen goes through the same GraphQL API the CLI uses. Each run starts from empty storage, and the
+ * queue, so every screen goes through the same GraphQL API the CLI uses. It runs the local configuration
+ * (`apps/worker/scripts/local-config.ts`), without Artifacts, which Miniflare cannot run. Each run starts from empty storage, and the
  * specs seed their shelves with `shelfkit push`. The browser signs in as people do by default: one-time links and
  * passkeys, made by Chromium's virtual authenticator. A second Worker has GitHub sign-in enabled, through a stand-in
  * GitHub (`test/e2e/fake-github-server.ts`) that only this configuration points it at; the `github` project's specs
@@ -26,6 +28,7 @@ const state = mkdtempSync(path.join(here, ".e2e", "state-"));
 const githubState = mkdtempSync(path.join(here, ".e2e", "github-state-"));
 const ownerKeyHash = createHash("sha256").update(OWNER_KEY).digest("hex");
 const wrangler = path.join(here, "../worker/node_modules/.bin/wrangler");
+const workerConfig = writeLocalConfig();
 const tsx = path.join(here, "../../node_modules/.bin/tsx");
 
 export default defineConfig({
@@ -73,7 +76,7 @@ export default defineConfig({
       command: [
         wrangler,
         "dev",
-        "--config ../worker/wrangler.jsonc",
+        `--config ${workerConfig}`,
         `--port ${PORT}`,
         "--ip localhost",
         `--var OWNER_KEY_HASH:${ownerKeyHash}`,
@@ -91,7 +94,7 @@ export default defineConfig({
       command: [
         wrangler,
         "dev",
-        "--config ../worker/wrangler.jsonc",
+        `--config ${workerConfig}`,
         `--port ${GITHUB_WORKER_PORT}`,
         "--ip localhost",
         `--var OWNER_KEY_HASH:${ownerKeyHash}`,

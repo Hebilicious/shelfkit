@@ -7,7 +7,9 @@
  *
  * 1. the R2 bucket `shelfkit-blobs`, and a bucket lock that keeps `archives/` immutable: a published registry
  *    version cannot be overwritten or deleted at the storage layer either;
- * 2. the queue `shelfkit-jobs` and its dead-letter queue `shelfkit-jobs-dlq`;
+ * 2. the queue `shelfkit-jobs` and its dead-letter queue `shelfkit-jobs-dlq`, and a report on the Artifacts namespace
+ *    that holds each shelf's Git repository: the binding creates it with the first shelf, without a jurisdiction, and
+ *    Wrangler cannot create one, so a namespace kept in the EU or the US is made in the dashboard beforehand;
  * 3. the owner key, unless the Worker already has one: 32 random bytes, of which the Worker keeps only the SHA-256 as
  *    the secret `OWNER_KEY_HASH`. Programs use it: the CLI, agents, CI. People sign in with passkeys;
  * 4. the session secret `SESSION_SECRET`, unless the Worker has one: the HMAC key of the browser's session cookie;
@@ -228,6 +230,39 @@ function ensureQueue(name: string): void {
     return;
   }
   must(wrangler(["queues", "create", name]), `creating the queue ${name}`);
+}
+
+/** The Artifacts namespace the Worker's `ARTIFACTS` binding names in `wrangler.jsonc`. */
+function artifactsNamespace(): string {
+  const config = readFileSync(path.join(worker, "wrangler.jsonc"), "utf-8");
+  const namespace =
+    /"binding": "ARTIFACTS", "namespace": "(?<namespace>[^"]+)"/u.exec(config)
+      ?.groups?.namespace;
+  if (namespace === undefined) {
+    throw new Error("wrangler.jsonc has no ARTIFACTS binding");
+  }
+  return namespace;
+}
+
+/** Say where shelves' repositories will live. Nothing is created: the binding makes the namespace when it needs it. */
+function reportArtifacts(): void {
+  const namespace = artifactsNamespace();
+  step(`Artifacts namespace ${namespace}, for each shelf's Git repository`);
+  const found = wrangler(
+    ["artifacts", "namespaces", "get", namespace, "--json"],
+    { quiet: true }
+  );
+  if (found.status !== 0) {
+    console.log(
+      "    not there yet: the first shelf creates it, with no jurisdiction. To keep repositories in the EU or the US, create it now in the dashboard (Storage & databases > Artifacts) with that jurisdiction; it cannot change later"
+    );
+    return;
+  }
+  const jurisdiction = /"jurisdiction":\s*"(?<value>[^"]+)"/u.exec(found.stdout)
+    ?.groups?.value;
+  console.log(
+    `    exists${jurisdiction === undefined ? "" : `, in the ${jurisdiction} jurisdiction`}`
+  );
 }
 
 /** The Worker's name: the top-level `name` in `wrangler.jsonc`, which Wrangler names it by in its errors. */
@@ -642,6 +677,7 @@ async function main(): Promise<void> {
     ensureLock(directory);
     ensureQueue(DEAD_LETTERS);
     ensureQueue(QUEUE);
+    reportArtifacts();
 
     const existing = workerSecrets();
     const secrets: Record<string, string> = {};
