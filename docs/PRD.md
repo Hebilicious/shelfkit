@@ -1,7 +1,7 @@
 # PRD: ShelfKit
 
-**Status:** Draft v3.0\
-**Last Updated:** 2026-09-19\
+**Status:** Draft v3.1\
+**Last Updated:** 2026-10-24\
 **License:** MIT\
 **Repository:** `shelfkit`
 
@@ -16,7 +16,7 @@ A **shelf** is a Git repository of selected context: skills, prompts, instructio
 ShelfKit does three things APM does not:
 
 1. **Registers.** It serves an OpenAPM-conformant registry, so a shelf is installable through APM's own resolver, and it indexes and curates from other registries and other public ShelfKit instances.
-2. **Hosts.** A self-hosted service on Cloudflare with a web UI for browsing, composing, and copying, plus an MCP endpoint so an agent can pull context mid-session with no shell.
+2. **Hosts.** A self-hosted service on Cloudflare with a web UI for browsing, composing, and copying, plus an MCP endpoint so an agent can pull context mid-session with no shell. Each hosted shelf is a Git repository too, which `git clone` reads and `git push` updates.
 3. **Serves MCP.** It can host MCP servers itself and expose them under one endpoint, covering the local ones no registry can describe.
 
 **APM is the installer. ShelfKit is the shelf.**
@@ -30,7 +30,7 @@ It is deliberately short. Where a decision needs a specific version, a limit, or
 ## 2. Principles
 
 1. **Build on APM, never beside it.** The only manifest in a target repository is `apm.yml`. No ShelfKit-specific repository state, no second lockfile, no parallel format.
-2. **The shelf is a Git repository.** Portable, diffable, reviewable, and readable with nothing installed.
+2. **The shelf is a Git repository.** Portable, diffable, reviewable, and readable with nothing installed. That holds for a hosted shelf as well: its files live in a Git repository (§10.1), and every change made in the UI, by the CLI, or by an import is a commit.
 3. **Pinned by default.** Every compiled reference is a resolved revision. Reproducibility is the point of compiling rather than copying.
 4. **A thin slice.** No organizations, no roles, no policy engine. A shelf has an owner, the people the owner invites with scopes, and optional read-only links.
 5. **A published contract is a dependency, not a reimplementation.** Manifest validation uses OpenAPM's published JSON Schemas. Registry serving uses OpenAPM's Registry HTTP API.
@@ -125,7 +125,7 @@ One consequence to accept: because APM owns install, **an APM breaking change is
 | `shelfkit verify` | The manifest still matches the profile it came from |
 | `shelfkit recommend` | Propose items and profiles from detected stack markers |
 | `shelfkit doctor` | Detect `apm`, harnesses, and source drift |
-| `shelfkit login` / `push` | The hosted service |
+| `shelfkit login` / `push` | The hosted service. `push` uploads a shelf directory, which may be a subdirectory of a larger repository, and the service commits it; a shelf that is a repository of its own can also `git push` to `/git/{shelf}.git` (§10.3). |
 
 ---
 
@@ -385,7 +385,7 @@ Conformance points that matter:
 - Bearer authentication with the `read`, `read:{owner}/{repo}`, `publish:{owner}/{repo}`, and `publish:{owner}/*` scopes. The same key is the ShelfKit API key.
 - Public shelves serve anonymous reads.
 
-APM's client side of registries is behind `apm experimental enable registries`. ShelfKit documents that, and the Git-repo path works today without it.
+APM's client side of registries is behind `apm experimental enable registries`. ShelfKit documents that, and the Git-repo path works today without it, including against a hosted shelf's own repository: APM 0.33.0 installs a dependency on `https://<host>/git/<shelf>.git#<commit>` as a generic Git host, reading the key from a Git credential helper, with no experimental flag.
 
 ### 7.2 Curating from other registries and shelves
 
@@ -496,19 +496,38 @@ Cloudflare Worker  (single deployable)
   /apm/v1/*      registry wire contract
   /mcp           MCP tools
   /graphql       API for the UI and the CLI, including keys, links, invites, and passkeys
+  /git/*         each shelf's Git repository, relayed to Artifacts
   /auth/passkey/* passkey sign-in for the browser
   /auth/github/*  GitHub sign-in, when enabled
   /*             static SPA
 
-  Resolver (Rust/WASM)   Importer   Registry
+  Resolver (Rust/WASM)   Importer   Registry   Git objects and packs (Rust/WASM)
         │
-   Durable Object per shelf (SQLite)        R2              Queues + Cron
-   items, profiles, revisions, scan records content by hash imports, upstream checks
+   Artifacts repo per shelf    Durable Object per shelf (SQLite)        R2                   Queues + Cron
+   the shelf's files, history  items, profiles, revisions, scan records content by hash,    imports, upstream checks,
+                               (an index of the repo's head)            published archives   indexing pushes
 ```
 
 ### 10.1 Storage
 
-**One Durable Object per shelf, with its own SQLite database, accessed through Drizzle.** Items, profiles, revisions, and scan records live in the shelf's object. Content lives in R2 keyed by `sha256`, so no database ever holds a blob.
+**A shelf's files live in a Git repository in [Cloudflare Artifacts](https://developers.cloudflare.com/artifacts/), one repository per shelf, named by the shelf's id.** The repository is the source of truth and holds the history. Everything that changes a shelf's files is a commit on its `main` branch: `shelfkit push`, an edit in the UI, an import, an index from a forge, and a `git push` through the Worker. The Artifacts binding reads commits, trees, and blobs but cannot write, so the Worker builds the commit and its pack with the Rust engine (`crates/git`, compiled to WASM with the rest) and pushes it over Git's smart HTTP protocol with a write token minted for that push.
+
+**One Durable Object per shelf, with its own SQLite database, accessed through Drizzle, indexes the repository's head.** Items, profiles, revisions, and scan records live in the shelf's object, which records the commit it is indexed at and that commit's tree. Content lives in R2 keyed by `sha256`, so no database ever holds a blob: the index serves file bytes from R2 rather than reading the repository on every request, because every binding read (`log`, `readTree`, `readBlob`) is an Artifacts operation, as are a token minted, a push, and a clone. Indexing a commit reads only the blobs the index has not seen. R2 also holds published registry archives, whose immutability is the registry's own rule and no business of a Git repository.
+
+How the two stay in step:
+
+- **A write the Worker makes** is committed first and indexed second, one write at a time per shelf. A push whose branch has moved since the commit the shelf is indexed at is refused by the repository, and the write is a conflict.
+- **A push from a Git client** goes through `/git/{shelf}.git` (§10.3). Once the repository has accepted it, the Worker queues an index of the new head. A head the engine cannot load is recorded on the shelf with its errors, and the index stays at the last commit that loaded, so a broken push never half-loads a shelf; until a later push fixes it, writes from the Worker are conflicts.
+- **The hourly cron** queues the same index for every shelf, which catches a push made around the Worker, and gives a shelf indexed before its deployment had Artifacts its first commit.
+
+Consequences of Artifacts to accept:
+
+- **It is Workers Paid only** (10,000 operations and 1 GB a month included, then $0.15 per 1,000 operations and $0.50 per GB-month). Workers Paid is already this service's floor (§10.5).
+- **It has no local simulator, and Wrangler says it never will.** Local mode runs without repositories: snapshots are the only copy of a shelf's files, and there is no `/git` route (§10.5).
+- **A repository holds at most 1 GB** (repositories created before 2026-09-29 keep 10 GB). A shelf is kilobytes to megabytes.
+- **It is in open beta**, and its limits have moved once already. The Worker reaches it through one interface (`src/repository/`), so a change stays in one place.
+- **Its repository tokens are a second credential.** None ever leaves the Worker (§10.3). Minting one per Git exchange is the largest share of a shelf's operations; reusing a token for its minute is the first saving if that matters.
+- **Two behaviours found against the service** (October 2026): an imported repository answers `log` only when no ref is named, so the forge reads an import's head that way; and Artifacts cannot import from a `workers.dev` Worker on the same account, so a deployment cannot index another of its own shelves by URL.
 
 A shelf is the natural boundary: every read and write in the product happens in the context of one shelf, publishing a revision is a local transaction rather than contention on a shared database, and Drizzle supports `drizzle-orm/durable-sqlite` officially. Storage is also cheaper per gigabyte than D1.
 
@@ -553,6 +572,8 @@ On Linux, a browser makes and uses passkeys through a passkey provider: its own 
 
 **GitHub sign-in is opt-in.** With `moon run worker:setup -- --github-sign-in`, setup creates the deployment's own GitHub App (asking for no permissions), records the owner's GitHub account by numeric id, and the sign-in screen offers "Sign in with GitHub". `/auth/github/start` and `/auth/github/callback` run the authorization code flow with PKCE; the Worker uses GitHub's token once, to read who signed in, and revokes it. The owner's GitHub account signs in as the owner principal, and the owner grants other GitHub accounts scopes as for anyone else. Without the flag, no GitHub App exists and no button is shown. `--no-github-sign-in` turns it off again by deleting its secrets: every GitHub session, the owner's included, then ends at its next request, and GitHub accounts' grants hold nothing.
 
+**Git clients.** `/git/{shelf}.git` serves each shelf's repository over Git's smart HTTP protocol, for `git clone`, `fetch`, and `push`, and for APM installing from it. A Git client presents a key as HTTP Basic, with the key as the password (what a credential helper supplies), or as a Bearer header (`git -c http.extraHeader="Authorization: Bearer <key>"`). Reading takes what reading the shelf takes, so a public shelf clones anonymously; pushing takes write access, and the owner may push a shelf that does not exist yet. The Worker decides with the same auth module as every other surface, then relays the exchange to Artifacts with a repository token it mints for that one request and that expires in a minute. No Artifacts token ever reaches a client, so revoking a key ends its Git access at once, and Artifacts' lack of anonymous reads does not matter.
+
 **Programs.** The CLI, agents, CI, and APM's registry client send `Authorization: Bearer <key>`, the header the registry wire contract defines. A deployment has an **owner key** and any number of **scoped API keys**, and a middleware in the Worker resolves a key to a scope set before any resolver runs. The scope vocabulary is shared with the registry, so one key can read, publish, or both.
 
 Keys, links, invites, and passkeys are managed over GraphQL, not REST, because they are a UI and CLI concern like every other operation:
@@ -585,7 +606,7 @@ The owner may still put Cloudflare Access in front of the whole deployment as an
 | Styling | CSSForge on JSR, generated as a prebuild step, output committed |
 | API | GraphQL Yoga 5.24, Pothos 4.15, Drizzle v1-rc with the relational query builder v2 |
 | Core and compiler | Rust, compiled native for the CLI and WASM for the Worker |
-| Storage | Durable Object SQLite per shelf, R2 for content |
+| Storage | Artifacts repository per shelf for files and history, Durable Object SQLite per shelf for the index, R2 for content by hash and published archives |
 | Async | Queues and Cron Triggers for imports and upstream checks |
 | Deploy | Wrangler, the platform's own CLI, and nothing else. |
 | Validation | OpenAPM JSON Schemas, compiled in, plus Valibot at the API edge |
@@ -604,9 +625,11 @@ pnpm shelfkit setup      # create resources, write secrets, migrate, deploy
 
 Setup ends by opening the owner's enrollment link in the browser, which signs the owner in and adds a passkey there. With `--github-sign-in` it first creates the deployment's GitHub App: a page on the operator's loopback posts the app's manifest to github.com, the operator clicks "Create GitHub App", and setup stores the app's client id and secret as Worker secrets and discards its private key. A GitHub OAuth App created by hand, with the same two secrets, works the same way.
 
+Setup also reports the Artifacts namespace the Worker binds (`shelfkit` by default). The binding creates it, without a jurisdiction, with the first shelf's repository. To keep repositories in the EU or the US, create the namespace with that jurisdiction in the dashboard before the first push: Wrangler cannot create a namespace, and a namespace's jurisdiction cannot change.
+
 The one place Wrangler is weak is Durable Object migration ergonomics, where a first deploy and a class change both need care. ShelfKit handles that by generating the migration entries from the shelf model rather than expecting an operator to hand-write them, and by checking migration state in CI.
 
-A local mode runs everything on Miniflare, including the registry, with no Cloudflare account. The Deploy to Cloudflare button is offered from a separate flattened template repository, since it does not support monorepos. Workers Paid at $5/month is the documented floor. Workers Free caps CPU at 10 ms per invocation, and a cold GraphQL request that parses, validates, and resolves through WASM is expected to exceed that. The exact figure is unmeasured, so M2 confirms it before this is stated as fact. D1 and Durable Object free allowances are enforced daily.
+A local mode runs everything on Miniflare, including the registry, with no Cloudflare account, and without repositories: Artifacts has no local simulator, so `moon run worker:dev` runs a configuration without its binding, where snapshots are the only copy of a shelf's files. `wrangler dev` with the full configuration uses the account's Artifacts instead. The Deploy to Cloudflare button is offered from a separate flattened template repository, since it does not support monorepos. Workers Paid at $5/month is the documented floor. Workers Free caps CPU at 10 ms per invocation, and a cold GraphQL request that parses, validates, and resolves through WASM is expected to exceed that. The exact figure is unmeasured, so M2 confirms it before this is stated as fact. D1 and Durable Object free allowances are enforced daily.
 
 ---
 
@@ -645,6 +668,7 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 - [ ] GraphQL API with SSE subscriptions
 - [ ] API keys with read and publish scopes
 - [ ] Indexing a shelf repo through the forge API, with R2 content addressing
+- [ ] An Artifacts repository per shelf: every write a commit, `/git/{shelf}.git` for Git clients, pushes indexed afterwards
 - [ ] `/mcp` with discovery and planning tools
 - [ ] Wrangler deployment path and local Miniflare mode, with generated Durable Object migration entries
 
@@ -679,7 +703,7 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 | --- | --- | --- |
 | 1 | Do profiles need a version beyond a revision hash? | No. A profile revision is a hash; semver is generated only when publishing to the registry, from a `version` field if one is set. |
 | 2 | Local authoring versus importing. | Curation is the primary flow, but authoring stays because a stack or a library is inherently personal and cannot be imported from anywhere. Prompts are the most-authored kind. |
-| 3 | Running Git in a Durable Object versus the forge REST API. | Start with the forge API, behind an interface. A DO that speaks Git is viable today and would let a shelf be cloned directly and work with self-hosted forges, but the available library (`durable-git`, 0.0.x, single-maintainer, first published weeks before this draft) documents a failure mode on first full-history clones of very large repositories. Cloudflare Artifacts would be the right long-term home and entered beta in April 2026, with no general availability or public free tier as of this draft. This stays behind a flag. Cloudflare Artifacts is the right long-term home and is still closed beta with a missed public-beta target, so the interface exists to swap it in. |
+| 3 | Running Git in a Durable Object versus the forge REST API. | **Decided: Cloudflare Artifacts** (open beta since 2026-10-01). Each shelf is an Artifacts repository (§10.1), so a hosted shelf clones directly. Indexing from a forge keeps GitHub's REST API for `owner/repo`, which also reads private repositories with a token, and reads any other public HTTPS remote by importing it into a temporary Artifacts repository, one commit deep, then deleting it. Artifacts imports public remotes only. |
 | 4 | OpenAPI surface alongside GraphQL for third parties. | Generate one from the same operations if integrators ask. Not in v1. |
 | 5 | What the composer must show that a text editor cannot. | The compiled manifest, live. Everything else in the composer is convenience. |
 | 6 | APM version tracking. | Pin a supported range and check it in `doctor`. APM is at 0.31.0, ships weekly, and OpenAPM v0.1 is an editor's working draft with no backward-compatibility guarantee before 1.0, though breaking changes carry a 90-day migration window. That cadence is the strongest argument for the golden-file tests in M1 and for never parsing human-oriented output. |
