@@ -435,16 +435,19 @@ fn push_uploads_each_file_once_commits_and_publishes_every_profile() {
         "{}",
         ran.stdout
     );
-    assert!(
-        ran.stdout.contains("Published hebilicious/default@"),
-        "{}",
-        ran.stdout
-    );
+    for profile in ["default", "agent-tools"] {
+        assert!(
+            ran.stdout
+                .contains(&format!("Published hebilicious/{profile}@")),
+            "{}",
+            ran.stdout
+        );
+    }
     let state = service.state.borrow();
     let files = state.files.as_ref().unwrap();
     assert!(files.contains_key("shelf.json"));
     assert!(files.contains_key("items/prompts/commit-style/prompt.md"));
-    assert_eq!(state.packages.len(), 1);
+    assert_eq!(state.packages.len(), 2);
     drop(state);
 
     let again = shelfkit(&service, &shelf, &["push"]);

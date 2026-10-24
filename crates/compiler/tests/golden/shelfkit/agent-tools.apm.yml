@@ -8,9 +8,6 @@ targets:
 dependencies:
   apm:
     - ./vendor/agent-tools
-    - path: ./vendor/agent-tools--only-claude
-      targets:
-        - claude
   mcp:
     - name: io.github.upstash/context7
       registry: false
@@ -23,8 +20,3 @@ dependencies:
       args:
         - "-y"
         - "@playwright/mcp@latest"
-  lsp:
-    - name: rust
-      command: rust-analyzer
-      extensionToLanguage:
-        ".rs": rust

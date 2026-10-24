@@ -1,20 +1,16 @@
 {
   "profile": "agent-tools",
-  "profileRevision": "sha256-a6bf5a426bf7795e16a53802297421acffc38d430a1ac440a19db41f43c2802a",
-  "apmYml": "name: shelfkit-agent-tools\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - codex\n  - copilot\n  - cursor\ndependencies:\n  apm:\n    - ./vendor/agent-tools\n    - path: ./vendor/agent-tools--only-claude\n      targets:\n        - claude\n  mcp:\n    - name: io.github.upstash/context7\n      registry: false\n      transport: http\n      url: \"https://mcp.context7.com/mcp\"\n    - name: microsoft/playwright-mcp\n      registry: false\n      transport: stdio\n      command: npx\n      args:\n        - \"-y\"\n        - \"@playwright/mcp@latest\"\n  lsp:\n    - name: rust\n      command: rust-analyzer\n      extensionToLanguage:\n        \".rs\": rust\n",
-  "apmYmlDigest": "sha256:a16170426a7a1bc2ca3db75e4a13836a0da40f836d13fabbfc4f484aa4b7dcfd",
+  "profileRevision": "sha256-7d2741ddaf84f6ab1680c0ac0a68db290ac4187070ba269b01f3741cdbf34006",
+  "apmYml": "name: shelfkit-agent-tools\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - codex\n  - copilot\n  - cursor\ndependencies:\n  apm:\n    - ./vendor/agent-tools\n  mcp:\n    - name: io.github.upstash/context7\n      registry: false\n      transport: http\n      url: \"https://mcp.context7.com/mcp\"\n    - name: microsoft/playwright-mcp\n      registry: false\n      transport: stdio\n      command: npx\n      args:\n        - \"-y\"\n        - \"@playwright/mcp@latest\"\n",
+  "apmYmlDigest": "sha256:b4fc5cfa2645db31ceb9748eff754974950abcb508eb2ec4b9c03855b5676255",
   "files": [
-    {
-      "path": "vendor/agent-tools--only-claude/.apm/hooks/format-after-edit.json",
-      "contents": "{\n  \"hooks\": {\n    \"PostToolUse\": [\n      {\n        \"matcher\": \"Edit|Write\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"moon run root:format\"\n          }\n        ]\n      }\n    ]\n  }\n}\n"
-    },
-    {
-      "path": "vendor/agent-tools--only-claude/apm.yml",
-      "contents": "name: agent-tools--only-claude\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile agent-tools, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\nx-shelfkit-vendored-for: agent-tools\n"
-    },
     {
       "path": "vendor/agent-tools/.apm/agents/registry-reviewer.agent.md",
       "contents": "---\ndescription: Reviews a change to the registry against the OpenAPM wire contract.\n---\n\nYou review changes to `crates/registry` and the hosts that serve it.\n\nFor each change, check:\n\n- The rule lives in the library, and both hosts only do I/O.\n- `conformance/cases.json` has a case that fails without the change.\n- Status codes keep the contract: `401` for a missing or unknown credential, `403` only for a missing scope, `409` for a repeated version.\n- Archives are read strictly: anything Python's `tarfile` could read differently is refused.\n\nReport each problem with the file and line, and say what the contract requires instead.\n"
+    },
+    {
+      "path": "vendor/agent-tools/.apm/hooks/format-after-edit.json",
+      "contents": "{\n  \"hooks\": {\n    \"PostToolUse\": [\n      {\n        \"matcher\": \"Edit|Write\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"moon run root:format\"\n          }\n        ]\n      }\n    ]\n  }\n}\n"
     },
     {
       "path": "vendor/agent-tools/.apm/instructions/drizzle-durable-sqlite.instructions.md",
@@ -77,11 +73,6 @@
       "path": "items/mcp/playwright/item.json",
       "code": "mcp-schema-mismatch",
       "message": "`playwright` compiles to a `dependencies.mcp` object, the form APM documents, which the published OpenAPM v0.1 JSON Schema rejects for every MCP object; the spec's prose is authoritative, so the entry is validated against APM 0.33.0's own MCP entry rules (schemas/apm-mcp-entry.schema.json) instead"
-    },
-    {
-      "path": "profiles/agent-tools.json",
-      "code": "unratified-lsp",
-      "message": "`rust-analyzer` compiles to `dependencies.lsp`, which is absent from the published OpenAPM v0.1 schema: it passes validation without being defined by it"
     }
   ]
 }

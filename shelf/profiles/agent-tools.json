@@ -2,11 +2,10 @@
   "$schema": "https://shelfkit.dev/schemas/profile.json",
   "id": "agent-tools",
   "title": "ShelfKit agent tools",
-  "description": "Everything in ShelfKit development, plus the tools an agent runs: docs lookup, a browser, rust-analyzer, and formatting after each edit.",
+  "description": "Everything in ShelfKit development, plus the tools an agent runs: docs lookup, a browser, and formatting after each edit.",
   "items": [
     "context7",
     "playwright",
-    "rust-analyzer",
     "format-after-edit"
   ],
   "bundles": [],
