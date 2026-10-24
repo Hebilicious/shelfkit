@@ -3,7 +3,8 @@
 import { RouterLink } from "vue-router";
 
 import type { ItemKind } from "../data/shelf.ts";
-import { KIND_GUIDES, KINDS } from "../lib/vocabulary.ts";
+import { KIND_GUIDES, KINDS, RULES_NOTE } from "../lib/vocabulary.ts";
+import InstallPlaces from "./install-places.vue";
 
 const {
   kind,
@@ -36,6 +37,16 @@ const {
       <dd>{{ KIND_GUIDES[kind].gets }}</dd>
       <dt>For example</dt>
       <dd>{{ KIND_GUIDES[kind].example }}</dd>
+      <dt>Where it goes</dt>
+      <dd>
+        <InstallPlaces :kind="kind" />
+        <p
+          v-if='kind === "instructions" || kind === "stack" || kind === "library"'
+          class="small muted"
+        >
+          {{ RULES_NOTE }}
+        </p>
+      </dd>
     </dl>
   </header>
 </template>

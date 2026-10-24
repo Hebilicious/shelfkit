@@ -293,3 +293,45 @@ export async function writePromptAsOwner(
     data: { writeItem: { ok: true } },
   });
 }
+
+/** A profile's current revision, read over GraphQL with the owner key. */
+export async function profileRevision(
+  request: APIRequestContext,
+  shelf: string,
+  profile: string
+): Promise<string> {
+  const response = await request.post(`${BASE_URL}/graphql`, {
+    data: {
+      query:
+        "query ($shelf: ID!, $profile: ID!) { shelf(id: $shelf) { profile(id: $profile) { revision } } }",
+      variables: { profile, shelf },
+    },
+    headers: { authorization: `Bearer ${OWNER_KEY}` },
+  });
+  expect(response.ok()).toBe(true);
+  const body = v.parse(
+    v.object({
+      data: v.object({
+        shelf: v.object({ profile: v.object({ revision: v.string() }) }),
+      }),
+    }),
+    await response.json()
+  );
+  return body.data.shelf.profile.revision;
+}
+
+/** Record that a repository installed a profile, as an agent does after installing it (`shelf.report`). */
+export async function reportActivityAsOwner(
+  request: APIRequestContext,
+  input: Readonly<Record<string, string>>
+): Promise<void> {
+  const response = await request.post(`${BASE_URL}/graphql`, {
+    data: {
+      query: "mutation ($input: JSON!) { reportActivity(input: $input) }",
+      variables: { input },
+    },
+    headers: { authorization: `Bearer ${OWNER_KEY}` },
+  });
+  expect(response.ok()).toBe(true);
+  expect(await response.json()).not.toHaveProperty("errors");
+}

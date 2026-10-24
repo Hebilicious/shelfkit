@@ -10,6 +10,7 @@ import { computed } from "vue";
 import { RouterLink } from "vue-router";
 
 import { readItem } from "../api/json.ts";
+import { bodyText } from "../lib/prompt.ts";
 import ExternalLink from "./external-link.ts";
 import MarkdownView from "./markdown-view.ts";
 
@@ -172,9 +173,9 @@ const recommends = computed(() =>
       </tbody>
     </table>
     <MarkdownView
-      v-if='body !== null && body !== undefined && body !== ""'
+      v-if='body !== null && body !== undefined && body !== "" && item?.kind !== "skill"'
       class="panel"
-      :source="body"
+      :source="bodyText(body)"
     />
     <section v-if="detection.length > 0" class="panel stack small">
       <strong>Suggested for repositories that</strong>

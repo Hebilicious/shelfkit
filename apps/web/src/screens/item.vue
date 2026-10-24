@@ -12,7 +12,9 @@ import { pretty, readSource } from "../api/json.ts";
 import { DeleteItemMutation, SetFavouriteMutation, WriteItemMutation } from "../api/operations.ts";
 import DiffView from "../components/diff-view.vue";
 import ExternalLink from "../components/external-link.ts";
+import InstallPlaces from "../components/install-places.vue";
 import ItemContent from "../components/item-content.vue";
+import SkillFiles from "../components/skill-files.vue";
 import KindGuide from "../components/kind-guide.vue";
 import QueryState from "../components/query-state.vue";
 import { useShelfId } from "../composables/shelf-context.ts";
@@ -25,6 +27,7 @@ import {
   installSentence,
   KIND_GUIDES,
   KINDS,
+  RULES_NOTE,
   originLabel,
   scanLabel,
   shortRevision,
@@ -273,6 +276,19 @@ const PROVENANCE_FIELDS = [
         </div>
       </header>
       <KindGuide compact :kind="item.kind" :shelf="shelf" />
+      <SkillFiles
+        v-if='item.kind === "skill"'
+        :files='files.length > 0
+          ? files
+          : [
+              {
+                contents: item.body ?? "",
+                encoding: "utf-8",
+                path: "SKILL.md",
+                size: (item.body ?? "").length,
+              },
+            ]'
+      />
       <ItemContent :body="item.body" :document="item.document" :shelf="shelf" :titles="titles" />
       <div class="tabs" role="tablist">
         <button
@@ -288,19 +304,27 @@ const PROVENANCE_FIELDS = [
       </div>
       <section v-if='tab === "installs"' class="stack" data-testid="coordinate">
         <p class="small">
-          {{ KINDS[item.kind].installs }} {{ installSentence(item.coordinate) }}
+          <code>apm install</code> puts it in these files of a repository whose profile includes it:
+        </p>
+        <InstallPlaces :id="item.id" :kind="item.kind" />
+        <p
+          v-if='item.kind === "instructions" || item.kind === "stack" || item.kind === "library"'
+          class="small muted"
+        >
+          {{ RULES_NOTE }}
+        </p>
+        <p class="small muted">
+          {{ installSentence(item.coordinate) }}
           <span v-if="item.coordinate.message" class="severity-error">{{ item.coordinate.message }}</span>
         </p>
         <QueryState :loading="install.loading.value" :error="install.error.value" />
         <template v-if="install.data.value !== null">
           <p v-for="error in install.data.value.errors" :key="error" class="error-text small">{{ error }}</p>
           <details v-for="file in install.data.value.files" :key="file.path" class="panel" open>
-            <summary class="mono small">{{ file.path }}</summary>
+            <summary class="small">
+              The text the agent gets <span class="mono muted">· {{ file.path }} in the profile's package</span>
+            </summary>
             <pre class="wrap">{{ file.contents }}</pre>
-          </details>
-          <details class="panel">
-            <summary class="mono small">apm.yml</summary>
-            <pre>{{ install.data.value.apmYml }}</pre>
           </details>
         </template>
       </section>

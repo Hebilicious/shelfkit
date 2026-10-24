@@ -628,46 +628,6 @@ export const DeleteProfileMutation = graphql(`
   }
 `);
 
-// Compile.
-
-export const CompileQuery = graphql(`
-  query Compile($shelf: ID!, $profile: ID!) {
-    shelf(id: $shelf) {
-      id
-      registryUrl
-      profile(id: $profile) {
-        id
-        title
-        revision
-        apmCoordinate
-        document
-        resolution {
-          json
-        }
-        plan {
-          errors {
-            path
-            message
-          }
-          plan {
-            json
-          }
-        }
-      }
-      profiles {
-        id
-        title
-      }
-    }
-  }
-`);
-
-export const ReportActivityMutation = graphql(`
-  mutation ReportActivity($input: JSON!) {
-    reportActivity(input: $input)
-  }
-`);
-
 // Records.
 
 export const ActivityQuery = graphql(`
