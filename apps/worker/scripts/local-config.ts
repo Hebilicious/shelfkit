@@ -21,11 +21,15 @@ const worker = path.resolve(import.meta.dirname, "..");
 /** The bindings a local run leaves out: Wrangler will never simulate them. */
 const REMOTE_ONLY = new Set(["artifacts"]);
 
+/** Wrangler's configuration, as far as this script reads it: its top-level keys. Wrangler validates the rest. */
+const WranglerConfigSchema = v.record(v.string(), v.unknown());
+type WranglerConfig = v.InferOutput<typeof WranglerConfigSchema>;
+
 /** `wrangler.jsonc` without its remote-only bindings. */
-function localConfig(): Record<string, unknown> {
+function localConfig(): WranglerConfig {
   // BOUNDARY: wrangler.jsonc is Wrangler's to validate; this only drops keys from it.
   const parsed = v.parse(
-    v.record(v.string(), v.unknown()),
+    WranglerConfigSchema,
     JSON.parse(
       stripJsonc(readFileSync(path.join(worker, "wrangler.jsonc"), "utf-8"))
     )
@@ -35,7 +39,7 @@ function localConfig(): Record<string, unknown> {
   );
 }
 
-function write(name: string, config: Record<string, unknown>): string {
+function write(name: string, config: WranglerConfig): string {
   const target = path.join(worker, name);
   writeFileSync(target, `${JSON.stringify(config, null, 2)}\n`);
   return target;
