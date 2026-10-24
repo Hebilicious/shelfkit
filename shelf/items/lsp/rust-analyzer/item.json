@@ -1,0 +1,10 @@
+{
+  "id": "rust-analyzer",
+  "kind": "lsp",
+  "title": "rust-analyzer",
+  "description": "Code intelligence for the crates: types, references, and errors as the agent edits.",
+  "tags": ["rust"],
+  "name": "rust",
+  "command": "rust-analyzer",
+  "extensionToLanguage": { ".rs": "rust" }
+}

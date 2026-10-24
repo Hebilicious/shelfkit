@@ -1,0 +1,7 @@
+{
+  "id": "update-goldens",
+  "kind": "skill",
+  "title": "Update the compiler's goldens",
+  "description": "Regenerate the apm.yml golden files after a deliberate compiler change, and check the diff is the change you meant.",
+  "tags": ["testing", "compiler"]
+}

@@ -1,0 +1,8 @@
+{
+  "id": "format-after-edit",
+  "kind": "hook",
+  "title": "Format after an edit",
+  "description": "Formats the repository after the agent edits or writes a file, so commits never fail on formatting.",
+  "tags": ["formatting"],
+  "targets": ["claude"]
+}
