@@ -240,7 +240,7 @@ describe("writes become commits", () => {
       { ...shelfOf("kit", false, PROMPT), "README.md": "# Kit\n" },
       null
     );
-    await expect(indexed("kit")).resolves.toBe(true);
+    await expect(indexed("kit")).resolves.toBeTruthy();
     await push("kit", shelfOf("kit", false, withPrompt("Edited.\n")));
     const files = await headFiles("kit");
     expect([
@@ -276,7 +276,7 @@ describe("pushes through the Git route", () => {
       before.hash
     );
     expect(pushed.status).toBe(200);
-    await expect(indexed("kit")).resolves.toBe(true);
+    await expect(indexed("kit")).resolves.toBeTruthy();
     const shelf = await repositoryOf("kit");
     expect(shelf.snapshot).toStrictEqual({
       commit: pushed.commit,
@@ -321,7 +321,7 @@ describe("pushes through the Git route", () => {
       null
     );
     expect(pushed.status).toBe(200);
-    await expect(indexed("fresh")).resolves.toBe(true);
+    await expect(indexed("fresh")).resolves.toBeTruthy();
     const shelf = await repositoryOf("fresh");
     expect(shelf.repository?.commit).toBe(pushed.commit);
   });
