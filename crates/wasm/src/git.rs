@@ -142,7 +142,7 @@ fn commit_input(request: CommitRequest) -> Result<CommitInput, (Status, Vec<u8>)
             problems.push(Problem {
                 path: path.to_owned(),
                 message: format!(
-                    "`{}` is not a file mode: 100644, 100755, or 120000",
+                    "`{}` is not a file mode: 100644, 100755, 120000, or 160000",
                     text.unwrap_or_default()
                 ),
             });
@@ -451,6 +451,45 @@ mod tests {
         );
         assert_eq!(status, Status::Failed);
         assert_eq!(output["errors"][0]["path"], "../x");
+    }
+
+    #[test]
+    fn a_gitlink_is_kept_by_id_and_refused_with_contents() {
+        let submodule = "1".repeat(40);
+        let (status, plan) = call(
+            commit,
+            &json!({
+                "base": [],
+                "files": [{ "path": "vendor/sub", "mode": "160000", "id": submodule }],
+                "author": author(),
+                "message": "Submodule"
+            }),
+        );
+        assert_eq!(status, Status::Planned, "{plan}");
+        assert_eq!(
+            plan["files"],
+            json!([{ "path": "vendor/sub", "mode": "160000", "id": submodule }])
+        );
+        let (_, received) = call(receive, &json!({ "body": plan["request"] }));
+        let vendor = received["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|object| object["entries"][0]["name"] == "sub")
+            .unwrap();
+        assert_eq!(vendor["entries"][0]["mode"], "160000");
+
+        let (status, output) = call(
+            commit,
+            &json!({
+                "base": [],
+                "files": [{ "path": "vendor/sub", "mode": "160000", "contents": "x" }],
+                "author": author(),
+                "message": "Submodule"
+            }),
+        );
+        assert_eq!(status, Status::Failed);
+        assert_eq!(output["errors"][0]["path"], "vendor/sub");
     }
 
     #[test]

@@ -39,8 +39,10 @@ pub struct NewFile {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     /// A blob of the parent commit, by id: an unchanged file, or one moved.
+    /// For a gitlink ([`Mode::Gitlink`]), the submodule's commit, which need
+    /// not be anywhere.
     Known(ObjectId),
-    /// The file's bytes.
+    /// The file's bytes. Never a gitlink's.
     Contents(Vec<u8>),
 }
 
@@ -96,13 +98,28 @@ pub fn plan_commit(input: &CommitInput) -> Result<CommitPlan, Vec<Error>> {
             objects: Vec::new(),
         }
     });
-    let base_blobs: HashSet<ObjectId> = input.base.iter().map(|file| file.id).collect();
+    // A gitlink's id is a commit of another repository, not a blob here.
+    let base_blobs: HashSet<ObjectId> = input
+        .base
+        .iter()
+        .filter(|file| file.mode != Mode::Gitlink)
+        .map(|file| file.id)
+        .collect();
 
     let mut files = Vec::with_capacity(input.files.len());
     let mut new_blobs: Vec<(ObjectId, &[u8])> = Vec::new();
     let mut seen: HashSet<ObjectId> = HashSet::new();
     for file in &input.files {
         let id = match &file.source {
+            // The server never needs a gitlink's commit, so any id will do.
+            Source::Known(id) if file.mode == Mode::Gitlink => *id,
+            Source::Contents(_) if file.mode == Mode::Gitlink => {
+                errors.push(Error::invalid(
+                    &file.path,
+                    "a gitlink (160000) names a submodule's commit by id, and has no contents",
+                ));
+                ObjectId::ZERO
+            }
             Source::Known(id) => {
                 if !base_blobs.contains(id) {
                     errors.push(Error::invalid(
@@ -277,6 +294,34 @@ mod tests {
         let errors = plan_commit(&input(None, Vec::new(), vec![known])).unwrap_err();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].path(), "x");
+    }
+
+    #[test]
+    fn a_gitlink_is_an_id_and_never_contents() {
+        let commit = object_id(Kind::Commit, b"a commit of another repository");
+        let gitlink = NewFile {
+            path: "vendor/sub".to_owned(),
+            mode: Mode::Gitlink,
+            source: Source::Known(commit),
+        };
+        let plan = plan_commit(&input(None, Vec::new(), vec![gitlink.clone()])).unwrap();
+        // The commit and two trees: nothing for the gitlink.
+        assert_eq!(plan.objects, 3);
+        assert_eq!(plan.files[0].mode, Mode::Gitlink);
+
+        // A base gitlink's id is no blob to name by id.
+        let mut as_file = gitlink.clone();
+        as_file.mode = Mode::File;
+        let parent = Some(plan.push.unwrap().commit);
+        let errors = plan_commit(&input(parent, plan.files, vec![as_file])).unwrap_err();
+        assert_eq!(errors[0].path(), "vendor/sub");
+
+        let with_contents = NewFile {
+            source: Source::Contents(b"x".to_vec()),
+            ..gitlink
+        };
+        let errors = plan_commit(&input(None, Vec::new(), vec![with_contents])).unwrap_err();
+        assert!(errors[0].reason().contains("gitlink"), "{errors:?}");
     }
 
     #[test]

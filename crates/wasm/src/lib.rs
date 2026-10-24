@@ -91,7 +91,9 @@
 //!   commit `ref` (default `refs/heads/main`) points at, absent for a root
 //!   commit, `base` is every file of that commit, `files` is every file of
 //!   the new one (an `id` names a blob of `base`), `mode` is `100644` (the
-//!   default), `100755`, or `120000`, `encoding` is `utf-8` (the default) or
+//!   default), `100755`, `120000`, or `160000` (a gitlink: its `id` is a
+//!   submodule's commit, which need not be in `base`, and it never has
+//!   `contents`), `encoding` is `utf-8` (the default) or
 //!   `base64`, `time` is Unix seconds, and `offset` minutes east of UTC. The
 //!   output is `{ "commit", "tree", "unchanged", "objects", "files": [{
 //!   "path", "mode", "id" }], "request" }`: `request` is the body of the

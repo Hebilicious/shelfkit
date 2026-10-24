@@ -162,19 +162,17 @@ fn canonical_order(left: &str, left_is_tree: bool, right: &str, right_is_tree: b
 /// The mode of an entry in a tree someone else wrote.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryMode {
-    File(Mode),
+    /// A file, a symbolic link, or a gitlink.
+    Leaf(Mode),
     /// `40000`: a directory.
     Tree,
-    /// `160000`: a submodule's commit.
-    Submodule,
 }
 
 impl EntryMode {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::File(mode) => mode.as_str(),
+            Self::Leaf(mode) => mode.as_str(),
             Self::Tree => TREE_MODE,
-            Self::Submodule => "160000",
         }
     }
 }
@@ -204,11 +202,11 @@ pub fn decode(body: &[u8]) -> Result<Vec<TreeEntry>> {
             .position(|&byte| byte == b' ')
             .ok_or_else(|| Error::malformed(what(), "no space after the mode"))?;
         let mode = match &rest[..space] {
-            b"100644" => EntryMode::File(Mode::File),
-            b"100755" => EntryMode::File(Mode::Executable),
-            b"120000" => EntryMode::File(Mode::Symlink),
+            b"100644" => EntryMode::Leaf(Mode::File),
+            b"100755" => EntryMode::Leaf(Mode::Executable),
+            b"120000" => EntryMode::Leaf(Mode::Symlink),
+            b"160000" => EntryMode::Leaf(Mode::Gitlink),
             b"40000" => EntryMode::Tree,
-            b"160000" => EntryMode::Submodule,
             other => {
                 return Err(Error::malformed(
                     what(),
@@ -318,7 +316,7 @@ mod tests {
         assert_eq!(root[0].name, "dir");
         assert_eq!(root[0].mode, EntryMode::Tree);
         assert_eq!(root[0].id, trees.objects[0].0);
-        assert_eq!(root[1].mode, EntryMode::File(Mode::File));
+        assert_eq!(root[1].mode, EntryMode::Leaf(Mode::File));
         assert!(decode(b"100644 x").is_err());
         assert!(decode(b"100664 x\0aaaaaaaaaaaaaaaaaaaa").is_err());
         assert!(decode(b"100644 x\0short").is_err());

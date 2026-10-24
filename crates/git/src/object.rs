@@ -120,8 +120,8 @@ pub fn object_id(kind: Kind, body: &[u8]) -> ObjectId {
     ObjectId(hasher.finalize().into())
 }
 
-/// The mode of a file in a tree. A directory's (`40000`) is the tree's own
-/// business, and never a file's.
+/// The mode of an entry in a tree that is not a directory. A directory's
+/// (`40000`) is the tree's own business.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Mode {
     /// `100644`: a regular file.
@@ -131,6 +131,9 @@ pub enum Mode {
     Executable,
     /// `120000`: a symbolic link, whose blob is its target.
     Symlink,
+    /// `160000`: a gitlink, a submodule's commit. Its id names a commit of
+    /// another repository, which this one need not have.
+    Gitlink,
 }
 
 impl Mode {
@@ -140,6 +143,7 @@ impl Mode {
             Self::File => "100644",
             Self::Executable => "100755",
             Self::Symlink => "120000",
+            Self::Gitlink => "160000",
         }
     }
 }
@@ -158,9 +162,10 @@ impl FromStr for Mode {
             "100644" => Ok(Self::File),
             "100755" => Ok(Self::Executable),
             "120000" => Ok(Self::Symlink),
+            "160000" => Ok(Self::Gitlink),
             _ => Err(Error::invalid(
                 text,
-                "not a file mode: 100644, 100755, or 120000",
+                "not a file mode: 100644, 100755, 120000, or 160000",
             )),
         }
     }
@@ -206,7 +211,7 @@ mod tests {
 
     #[test]
     fn modes_round_trip() {
-        for mode in [Mode::File, Mode::Executable, Mode::Symlink] {
+        for mode in [Mode::File, Mode::Executable, Mode::Symlink, Mode::Gitlink] {
             assert_eq!(mode.as_str().parse::<Mode>().unwrap(), mode);
         }
         assert!("40000".parse::<Mode>().is_err());

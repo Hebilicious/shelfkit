@@ -294,6 +294,68 @@ fn pushes_that_real_git_applies() {
 }
 
 #[test]
+fn a_gitlink_survives_a_second_commit() {
+    if !have_git("a_gitlink_survives_a_second_commit") {
+        return;
+    }
+    let dir = TempDir::new("gitlink");
+    git(&dir.0, &["init", "--bare", "--quiet", "repo"], b"", &[]);
+    let repo = dir.0.join("repo");
+    // A commit of another repository, which this one never has.
+    let submodule = object_id(
+        Kind::Commit,
+        b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n",
+    );
+    let gitlink = NewFile {
+        path: "vendor/sub".to_owned(),
+        mode: Mode::Gitlink,
+        source: Source::Known(submodule),
+    };
+    let request = |parent, base, files, message: &str| CommitInput {
+        parent,
+        base,
+        files,
+        reference: "refs/heads/main".to_owned(),
+        author: signature(),
+        committer: None,
+        message: message.to_owned(),
+    };
+    let first = plan_commit(&request(
+        None,
+        Vec::new(),
+        vec![contents("shelf.json", Mode::File, b"{}\n"), gitlink.clone()],
+        "With a submodule",
+    ))
+    .unwrap();
+    assert!(push(&repo, &first).is_ok());
+    git(&repo, &["fsck", "--strict", "--no-dangling"], b"", &[]);
+
+    // The Worker passes the whole tree back: the gitlink by id, in `base`
+    // and in `files`, while a file beside it changes.
+    let second = plan_commit(&request(
+        Some(first.push.as_ref().unwrap().commit),
+        first.files.clone(),
+        vec![
+            contents("shelf.json", Mode::File, b"{ \"name\": \"t\" }\n"),
+            known(&first.files[1]),
+        ],
+        "Edit beside the submodule",
+    ))
+    .unwrap();
+    // The commit, the root tree, and the new blob; `vendor` is unchanged.
+    assert_eq!(second.objects, 3);
+    assert!(push(&repo, &second).is_ok());
+    git(&repo, &["fsck", "--strict", "--no-dangling"], b"", &[]);
+    let listed = ls_tree(&repo, "refs/heads/main");
+    assert_eq!(
+        listed["vendor/sub"],
+        ("160000".to_owned(), submodule.to_string())
+    );
+    let types = text(git(&repo, &["ls-tree", "refs/heads/main:vendor"], b"", &[]));
+    assert_eq!(types, format!("160000 commit {submodule}\tsub\n"));
+}
+
+#[test]
 fn ids_match_what_git_computes() {
     if !have_git("ids_match_what_git_computes") {
         return;
