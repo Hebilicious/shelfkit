@@ -16,6 +16,7 @@ shelfkit-core.workspace = true
 # and no JSON Schema validator (see crates/compiler/src/schema.rs).
 shelfkit-compiler.workspace = true
 shelfkit-registry.workspace = true
+shelfkit-git.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

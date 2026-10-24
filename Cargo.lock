@@ -1239,6 +1239,7 @@ dependencies = [
  "serde_json",
  "shelfkit-compiler",
  "shelfkit-core",
+ "shelfkit-git",
  "shelfkit-registry",
 ]
 
