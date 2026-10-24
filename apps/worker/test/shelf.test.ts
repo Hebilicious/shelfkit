@@ -120,6 +120,19 @@ describe("a push", () => {
     });
   });
 
+  it("with more files than SQLite binds in one statement is accepted", async () => {
+    const files: Record<string, string> = {};
+    for (let at = 0; at < 120; at += 1) {
+      const id = `prompt-${at}`;
+      files[`items/prompts/${id}/item.json`] =
+        `${JSON.stringify({ id, kind: "prompt", title: `Prompt ${at}` })}\n`;
+      files[`items/prompts/${id}/prompt.md`] = `Prompt number ${at}.\n`;
+    }
+    const pushed = await push("kit", shelfOf("kit", false, files));
+    expect(pushed.errors).toStrictEqual([]);
+    expect(pushed.ok).toBeTruthy();
+  });
+
   it("creates a shelf only with the owner key", async () => {
     const key = await createKey("kit", ["read", "publish:kit/*"]);
     const refused = await exports.default.fetch(

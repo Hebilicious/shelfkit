@@ -23,6 +23,21 @@ export function openDatabase(storage: DurableObjectStorage): ShelfDatabase {
   return drizzle(storage, { relations });
 }
 
+/**
+ * Whether no migration has ever run here: an object that has never held a shelf. Drizzle's own table and `meta` are
+ * the first things a migration makes. Reading `sqlite_master` writes nothing, so asking does not make the object's
+ * storage exist.
+ */
+export function isUnmigrated(storage: DurableObjectStorage): boolean {
+  return (
+    storage.sql
+      .exec(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('meta', '__drizzle_migrations')"
+      )
+      .toArray().length === 0
+  );
+}
+
 /** The schema version the database records; 0 for a new object. */
 export function recordedVersion(storage: DurableObjectStorage): number {
   const tables = storage.sql
@@ -47,6 +62,10 @@ export function migrateDatabase(storage: DurableObjectStorage): void {
     throw new Error(
       `the shelf's database is at schema version ${recorded}, and this Worker knows ${SCHEMA_VERSION}: deploy a Worker at least as new as the one that migrated it`
     );
+  }
+  // Up to date: nothing to run and nothing to write, which is every wake but the first after a deploy that migrates.
+  if (recorded === SCHEMA_VERSION) {
+    return;
   }
   const failed = migrate(openDatabase(storage), bundle);
   if (failed !== undefined) {
