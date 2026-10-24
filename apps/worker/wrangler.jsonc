@@ -42,6 +42,8 @@
   // Content by sha256 under `objects/`; published archives under `archives/`, which a bucket lock keeps immutable;
   // `shelves/` lists the shelves held.
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "shelfkit-blobs" }],
+  // Each shelf's source files are a Git repository in this Artifacts namespace, named by the shelf's id.
+  "artifacts": [{ "binding": "ARTIFACTS", "namespace": "shelfkit" }],
   "queues": {
     "producers": [{ "binding": "JOBS", "queue": "shelfkit-jobs" }],
     "consumers": [
