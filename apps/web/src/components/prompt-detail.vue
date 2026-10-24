@@ -297,9 +297,12 @@ async function restore(at: number): Promise<void> {
       notify(problemText(result), null, "error");
       return;
     }
-    notify("Restored as a new revision.");
+    // The same files are the same revision: restoring one makes it current again, rather than a copy of it.
+    notify("Restored. The prompt is at that revision again.");
     selectedRevision.value = 0;
     await query.refresh();
+    // The editor holds what was typed before the restore; saving it would undo the restore.
+    resetDraft();
   } catch (error) {
     notifyError(error);
   }
