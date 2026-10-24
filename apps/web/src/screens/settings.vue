@@ -386,7 +386,7 @@ async function removeSecretName(
       <section v-if="owner" class="panel">
         <h2>Keys</h2>
         <p class="small muted">
-          Keys are for programs: the CLI, an agent, CI, or APM's registry client. People sign in with GitHub instead. A
+          Keys are for programs: the CLI, an agent, CI, or APM's registry client. People sign in instead: with a passkey, a one-time link, or GitHub where this deployment allows it. A
           key is shown once, when it is created; give each program one with only the scopes it needs.
         </p>
         <div v-if="newSecret !== null" class="panel secret" role="status">
