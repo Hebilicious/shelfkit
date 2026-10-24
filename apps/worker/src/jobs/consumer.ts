@@ -14,6 +14,7 @@ import * as v from "valibot";
 
 import { listShelves, shelfStub } from "../auth/index.ts";
 import type { Session } from "../auth/index.ts";
+import { ArtifactsForge } from "../forge/artifacts.ts";
 import { GitHubForge } from "../forge/github.ts";
 import { indexFromForge } from "../forge/index.ts";
 import type { Forge } from "../forge/index.ts";
@@ -26,7 +27,8 @@ import type { JobMessage } from "./messages.ts";
 export interface JobDependencies {
   readonly adapters: readonly SourceAdapter[];
   readonly scanners: readonly Scanner[];
-  readonly forge: Forge;
+  /** The forge that reads `repository`: GitHub's REST API for `owner/repo`, Artifacts for any other HTTPS URL. */
+  readonly forge: (repository: string) => Forge;
   readonly fetch: typeof fetch;
   readonly now: () => string;
 }
@@ -35,10 +37,22 @@ export function jobDependencies(env: Env): JobDependencies {
   return {
     adapters,
     fetch: async (input, init) => await fetch(input, init),
-    forge: new GitHubForge(
-      async (input, init) => await fetch(input, init),
-      env.GITHUB_TOKEN
-    ),
+    forge: (repository) => {
+      if (!repository.startsWith("https://")) {
+        return new GitHubForge(
+          async (input, init) => await fetch(input, init),
+          env.GITHUB_TOKEN
+        );
+      }
+      // SAFETY: the binding is declared, but a local configuration leaves it out, so it may be undefined at run time.
+      const binding = env.ARTIFACTS as Artifacts | undefined;
+      if (binding === undefined) {
+        throw new Error(
+          "this deployment runs without Artifacts, so it indexes only GitHub repositories (owner/repo)"
+        );
+      }
+      return new ArtifactsForge(binding);
+    },
     now: () => `${new Date().toISOString().slice(0, 19)}Z`,
     scanners,
   };
@@ -127,6 +141,10 @@ export async function runJob(
     }
     case "index.forge": {
       await indexForge(message, env, dependencies);
+      return;
+    }
+    case "repository.sync": {
+      await syncRepository(message, env);
       return;
     }
     default: {
@@ -359,7 +377,8 @@ async function indexForge(
   dependencies: JobDependencies
 ): Promise<void> {
   const session: Session = { job: message.type, kind: "system" };
-  const committed = await indexFromForge(env, dependencies.forge, session, {
+  const forge = dependencies.forge(message.repository);
+  const committed = await indexFromForge(env, forge, session, {
     ref: message.ref,
     repository: message.repository,
     root: message.root,
@@ -369,6 +388,24 @@ async function indexForge(
     console.error(
       `indexing ${message.repository} into ${message.shelf} was refused`,
       committed.errors
+    );
+  }
+}
+
+/** Index the head of a shelf's repository; a head the engine refuses is recorded on the shelf, not retried. */
+async function syncRepository(
+  message: JobOf<"repository.sync">,
+  env: Env
+): Promise<void> {
+  const session: Session = { job: message.type, kind: "system" };
+  const synced = await shelfStub(env, message.shelf).syncRepository(
+    session,
+    message.shelf
+  );
+  if (synced.status === "refused") {
+    console.error(
+      `the head of ${message.shelf}'s repository, ${synced.commit}, was refused`,
+      synced.errors
     );
   }
 }

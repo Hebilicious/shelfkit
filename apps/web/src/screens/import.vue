@@ -211,8 +211,13 @@ function when(timestamp: string): string {
       </form>
       <form aria-label="Index a GitHub repository" class="panel" @submit.prevent="index">
         <h2>A whole shelf from GitHub</h2>
-        <p class="small muted">Read a shelf (a directory with a shelf.json) from a GitHub repository into this one.</p>
-        <label class="field">Repository <input v-model="indexForm.repository" placeholder="owner/repo" required /></label>
+        <p class="small muted">
+          Read a shelf (a directory with a shelf.json) from a GitHub repository into this one, or from a public Git
+          repository on any other host by its https:// URL, whose ref is then a branch.
+        </p>
+        <label class="field">
+          Repository <input v-model="indexForm.repository" placeholder="owner/repo, or https://…" required />
+        </label>
         <div class="row">
           <label class="field">Ref <input v-model="indexForm.ref" placeholder="the default branch" /></label>
           <label class="field">Directory <input v-model="indexForm.root" placeholder="the root" /></label>

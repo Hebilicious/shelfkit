@@ -383,6 +383,11 @@ export function buildSchema(): GraphQLSchema {
       description:
         "One state of the shelf's files. Its manifest is the R2 object named by `digest`.",
       fields: (t) => ({
+        commit: t.exposeString("commit", {
+          description:
+            "The commit in the shelf's repository that holds these files; null where the deployment has no Artifacts.",
+          nullable: true,
+        }),
         createdAt: t.field({
           resolve: (row) => row.createdAt,
           type: "DateTime",
@@ -394,6 +399,53 @@ export function buildSchema(): GraphQLSchema {
         origin: t.exposeString("origin"),
         parent: t.exposeString("parent", { nullable: true }),
         totalBytes: t.exposeFloat("totalBytes"),
+      }),
+    });
+
+  const RefusedHead = builder
+    .objectRef<{
+      readonly commit: string;
+      readonly errors: readonly {
+        readonly path: string;
+        readonly message: string;
+      }[];
+    }>("RefusedHead")
+    .implement({
+      description:
+        "A commit pushed to the shelf's repository that the engine could not load: the shelf stays at the commit before it until a push fixes it.",
+      fields: (t) => ({
+        commit: t.exposeString("commit"),
+        errors: t.field({ resolve: (head) => head.errors, type: [Problem] }),
+      }),
+    });
+
+  const Repository = builder
+    .objectRef<{
+      readonly url: string;
+      readonly commit: string | null;
+      readonly refused: {
+        readonly commit: string;
+        readonly errors: readonly {
+          readonly path: string;
+          readonly message: string;
+        }[];
+      } | null;
+    }>("Repository")
+    .implement({
+      description:
+        "The shelf's Git repository. Clone, fetch, and push it at `url` with a key: as the password of HTTP Basic, or as a Bearer header.",
+      fields: (t) => ({
+        commit: t.exposeString("commit", {
+          description:
+            "The commit the shelf is indexed at; null until its files are first committed.",
+          nullable: true,
+        }),
+        refused: t.field({
+          nullable: true,
+          resolve: (repository) => repository.refused,
+          type: RefusedHead,
+        }),
+        url: t.exposeString("url"),
       }),
     });
 
@@ -1963,6 +2015,19 @@ export function buildSchema(): GraphQLSchema {
         resolve: (_shelf, _args, context) =>
           `${new URL(context.request.url).origin}/apm`,
       }),
+      repository: t.field({
+        description:
+          "The shelf's Git repository, which holds its files; null where the deployment runs without Artifacts.",
+        nullable: true,
+        resolve: (shelf, _args, context) =>
+          shelf.summary.repository === null
+            ? null
+            : {
+                ...shelf.summary.repository,
+                url: `${new URL(context.request.url).origin}/git/${shelf.id}.git`,
+              },
+        type: Repository,
+      }),
       secretNames: t.field({
         resolve: async (shelf, _args, context) =>
           (await stub(context, shelf.id).secretNames(
@@ -2448,7 +2513,8 @@ export function buildSchema(): GraphQLSchema {
         args: {
           ref: t.arg.string(),
           repository: t.arg.string({
-            description: "owner/repo on GitHub.",
+            description:
+              "owner/repo on GitHub, or the HTTPS URL of a public Git repository anywhere else (read through Artifacts; `ref` is then a branch).",
             required: true,
           }),
           root: t.arg.string({
@@ -2458,7 +2524,7 @@ export function buildSchema(): GraphQLSchema {
           shelf: t.arg.id({ required: true }),
         },
         description:
-          "Queue indexing a shelf from a GitHub repository through the REST API; the result arrives as a `snapshot` event.",
+          "Queue indexing a shelf from a Git repository: GitHub's REST API for owner/repo, Artifacts for any other public HTTPS URL. The result arrives as a `snapshot` event.",
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
           const target = await held(context, shelf);

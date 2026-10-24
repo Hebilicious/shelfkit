@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { DURABLE_OBJECTS } from "../src/durable-objects.ts";
+import { stripJsonc } from "./jsonc.ts";
 
 const worker = path.resolve(import.meta.dirname, "..");
 const configPath = path.join(worker, "wrangler.jsonc");
@@ -29,40 +30,6 @@ interface MigrationDraft {
   tag: string;
   new_sqlite_classes?: string[];
   deleted_classes?: string[];
-}
-
-/** JSONC to JSON: comments and trailing commas removed, strings left alone. */
-function stripJsonc(text: string): string {
-  let out = "";
-  let inString = false;
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    const next = text[index + 1];
-    if (inString) {
-      out += char;
-      if (char === "\\") {
-        out += next ?? "";
-        index += 1;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (char === '"') {
-      inString = true;
-      out += char;
-    } else if (char === "/" && next === "/") {
-      while (index < text.length && text[index] !== "\n") {
-        index += 1;
-      }
-      out += "\n";
-    } else if (char === "/" && next === "*") {
-      index = text.indexOf("*/", index + 2) + 1;
-    } else {
-      out += char;
-    }
-  }
-  return out.replaceAll(/,(?<close>\s*[}\]])/gu, "$<close>");
 }
 
 interface Config {
