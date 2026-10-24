@@ -13,6 +13,7 @@ import type { Session } from "../src/auth/index.ts";
 import { engine } from "../src/engine.ts";
 import { ArtifactsForge } from "../src/forge/artifacts.ts";
 import { indexFromForge } from "../src/forge/index.ts";
+import { ArtifactsRepository } from "../src/repository/artifacts.ts";
 import { fakeArtifacts, repositories } from "./fake-artifacts.ts";
 import {
   createKey,
@@ -543,5 +544,19 @@ describe("indexing from any public Git host", () => {
     });
     const listed = await fakeArtifacts.list();
     expect(listed.repos.map((repo) => repo.name)).toStrictEqual(["kit"]);
+  });
+});
+
+describe("errors from the Artifacts binding", () => {
+  it("are read through `wrangler dev`'s remote proxy too, which drops their code", async () => {
+    const proxied: Artifacts = {
+      ...fakeArtifacts,
+      get: async (name) => {
+        await Promise.resolve();
+        throw new Error(`ArtifactsError: Repository not found: ${name}.`);
+      },
+    };
+    const repository = new ArtifactsRepository(proxied, fakeArtifacts.fetch);
+    await expect(repository.head("nowhere")).resolves.toBeNull();
   });
 });

@@ -44,6 +44,30 @@ const PENDING = new Set([
   "FORK_IN_PROGRESS",
 ]);
 
+/**
+ * The codes `wrangler dev`'s remote proxy loses: an `ArtifactsError` crosses it as a plain `Error` whose message is
+ * `ArtifactsError: <message>`, so the code is read back from the message (`Repository not found: x.`, `repo already
+ * exists: x`, and the in-progress states).
+ */
+const PROXIED_CODES: readonly (readonly [RegExp, string])[] = [
+  [/not found/iu, "NOT_FOUND"],
+  [/already exists/iu, "ALREADY_EXISTS"],
+  [/in progress/iu, "CREATE_IN_PROGRESS"],
+];
+
+/** The code of an error the binding threw, deployed or through `wrangler dev`; null for any other error. */
+function errorCode(error: Error): string | null {
+  if (v.is(ArtifactsErrorSchema, error)) {
+    return error.code;
+  }
+  if (!error.message.startsWith("ArtifactsError: ")) {
+    return null;
+  }
+  return (
+    PROXIED_CODES.find(([pattern]) => pattern.test(error.message))?.[1] ?? null
+  );
+}
+
 /** Each kind of tree entry that is not a tree, by the mode the engine names it with. */
 const MODES: Readonly<
   Record<Exclude<ArtifactsTreeEntryType, "tree">, GitMode>
@@ -107,8 +131,8 @@ export class ArtifactsRepository implements ShelfRepository {
           });
         } catch (error) {
           if (
-            !v.is(ArtifactsErrorSchema, error) ||
-            error.code !== "ALREADY_EXISTS"
+            !(error instanceof Error) ||
+            errorCode(error) !== "ALREADY_EXISTS"
           ) {
             throw error;
           }
@@ -137,10 +161,11 @@ export class ArtifactsRepository implements ShelfRepository {
     try {
       repo = await this.#binding.get(shelf);
     } catch (error) {
-      if (v.is(ArtifactsErrorSchema, error) && error.code === "NOT_FOUND") {
+      const code = error instanceof Error ? errorCode(error) : null;
+      if (code === "NOT_FOUND") {
         return { kind: "missing" };
       }
-      if (v.is(ArtifactsErrorSchema, error) && PENDING.has(error.code)) {
+      if (code !== null && PENDING.has(code)) {
         return { kind: "pending" };
       }
       throw error;
