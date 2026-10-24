@@ -1,18 +1,21 @@
 /**
  * Live updates: `subscription { shelfChanged(shelf) }` over server-sent events, pushed from the shelf's own Durable
- * Object (`docs/PRD.md` section 10.2). Every event bumps `shelfChanges`, which every `useQuery` watches, so a prompt
- * edited in another tab, an import finishing, or a `shelfkit push` shows up without a reload. `EventSource` reconnects
- * by itself after a dropped connection.
+ * Object (`docs/PRD.md` section 10.2). Every event marks the shelf's cached answers stale (`data/cache.ts`), so a
+ * prompt edited in another tab, an import finishing, or a `shelfkit push` shows up without a reload, while every screen
+ * keeps showing what it has until the new answer lands. `EventSource` reconnects by itself after a dropped connection.
  */
 import * as v from "valibot";
 import { ref } from "vue";
 
 import { getUrl } from "../api/graphql.ts";
 import { ShelfChangedSubscription } from "../api/operations.ts";
+import { invalidate, shelfPrefix } from "../data/cache.ts";
 import { loadSession } from "./session.ts";
 
-/** How many changes the current shelf has seen since the page loaded. */
-export const shelfChanges = ref(0);
+/** Every cached answer about `shelf` is out of date. */
+function changed(shelf: string): void {
+  invalidate(shelfPrefix(shelf));
+}
 
 /** The connection's state, for the indicator in the header. */
 export const liveState = ref<"off" | "connecting" | "live">("off");
@@ -84,8 +87,8 @@ function scheduleReconnect(shelf: string): void {
 
 /**
  * Open the subscription. `EventSource` retries a dropped connection by itself, but gives up for good on an error
- * answer (a 503, say): then this reconnects, backing off. A connection that opens after any error refetches every
- * screen's data, since changes made while it was down sent no event.
+ * answer (a 503, say): then this reconnects, backing off. A connection that opens after any error marks every
+ * answer about the shelf stale, since changes made while it was down sent no event.
  */
 function connect(shelf: string): void {
   disconnect();
@@ -99,7 +102,7 @@ function connect(shelf: string): void {
     reconnectDelay = RECONNECT_FIRST_MS;
     if (missedChanges) {
       missedChanges = false;
-      shelfChanges.value += 1;
+      changed(shelf);
     }
   });
   next.addEventListener("error", () => {
@@ -113,7 +116,7 @@ function connect(shelf: string): void {
     const event = readEvent(message.data);
     if (event !== null) {
       lastChange.value = event;
-      shelfChanges.value += 1;
+      changed(shelf);
       // A key was created or revoked: it may be the one this browser holds.
       if (event.kind === "keys") {
         void loadSession();

@@ -461,14 +461,17 @@ Vue 3, Vite, Vize, CSSForge. Everything goes through the same API as the CLI.
 
 | Screen | Purpose |
 | --- | --- |
-| **Shelf** | Inventory. Search, filter by kind and tag, bulk-select into a profile. |
+| **Browse** | The shelf's items. Search, filter by kind and tag, bulk-select into a profile. |
 | **Prompts** | The prompt library, treated as a first-class surface rather than a filtered list. |
-| **Item** | Rendered content, revisions and diffs, provenance, reverse dependencies, the APM coordinate. |
-| **Compose** | Build a profile: drag items in, watch resolution and conflicts, see the `apm.yml` update live. |
-| **Compile** | Pick a profile and repository, read the manifest, copy the install command. |
+| **Item** | Rendered content, what installing it writes, history and diffs, origin, what uses it, scans. |
+| **Profiles** | Every profile, what it installs, and the way to edit or install it. |
+| **Edit profile** | Build a profile: drag items in, see what it installs and any conflicts, see the `apm.yml` update live. Reached from a profile, not the navigation. |
+| **Install** | Pick a profile and repository, read what gets written, copy the install command. Reached from a profile. |
 | **Import** | Paste a repo, registry, catalog, or shelf URL; pick items; set pins. |
-| **Activity** | Which repositories compiled which profile revision, and what is stale. |
+| **Repositories** | Which repositories installed which profile version, and which are behind. |
 | **Settings** | Your passkeys and devices, people and invites, API keys for programs, sources, secret names, registry visibility. |
+
+Two rules hold on every screen. **Moving between screens never waits on the network** for what the shelf's index already holds: opening a shelf loads every item once, keeps it across visits, and the live subscription marks it stale. **The UI speaks plainly**: the format's own terms (kind slugs such as `library` and `stack`, `vendored`, compile, resolution, revision hashes) are shown as a label with a sentence saying what they do for the agent, and APM's words (`apm.yml`, `apm install`) are kept because the reader meets them in the repository.
 
 Signing in is "Sign in with a passkey", or a one-time link on a device without one; "Sign in with GitHub" appears only on a deployment that enables it. No key is ever typed into the browser.
 
@@ -483,9 +486,9 @@ Prompts are the most-used kind and deserve more than a list, because the actual 
 - **Editing in place**, with revision history. A prompt is short enough that the list, the editor, and the preview fit on one screen.
 - **Import from anywhere**, because prompts are collected from chats, docs, and other people's shelves.
 
-### 9.2 The composer
+### 9.2 The profile editor
 
-The composer is the profile editor: a three-pane screen with the item inventory on the left, the profile in the middle as an ordered, grouped list, and a live resolution rail on the right showing resolved items, unpinned items, conflicts by severity, and the resulting APM coordinates. Underneath, a `apm.yml` preview updates as items move, so the authored selection and the compiled output are visible at the same time. A stack-marker tester takes a sample `package.json` and reports which stacks match.
+The profile editor (the composer): a three-pane screen with the item inventory on the left, the profile in the middle as an ordered, grouped list, and a live resolution rail on the right showing resolved items, unpinned items, conflicts by severity, and the resulting APM coordinates. Underneath, a `apm.yml` preview updates as items move, so the authored selection and the compiled output are visible at the same time. A stack-marker tester takes a sample `package.json` and reports which stacks match.
 
 ---
 

@@ -13,7 +13,7 @@ import {
 import { copyToClipboard } from "../composables/clipboard.ts";
 import { signOut, viewer, viewerName } from "../composables/session.ts";
 import { notify, notifyError } from "../composables/toasts.ts";
-import { useQuery } from "../composables/use-query.ts";
+import { keyOf, useQuery } from "../data/cache.ts";
 import { addPasskey, deviceLabel, passkeysAvailable } from "../lib/passkeys.ts";
 
 type Passkey = ResultOf<typeof PasskeysQuery>["passkeys"][number];
@@ -27,13 +27,16 @@ const hasAccount = computed(
     viewer.value?.principal === "owner" || viewer.value?.principal?.startsWith("person:") === true,
 );
 
-const passkeys = useQuery(async () => {
-  if (!hasAccount.value) {
-    return [];
-  }
-  const data = await execute(PasskeysQuery, {});
-  return data.passkeys;
-}, [hasAccount]);
+const passkeys = useQuery(
+  () => keyOf("passkeys", hasAccount.value),
+  async () => {
+    if (!hasAccount.value) {
+      return [];
+    }
+    const data = await execute(PasskeysQuery, {});
+    return data.passkeys;
+  },
+);
 
 const list = computed<readonly Passkey[]>(() => passkeys.data.value ?? []);
 const label = ref(deviceLabel());
@@ -135,6 +138,7 @@ async function copy(text: string): Promise<void> {
     </div>
     <template v-if="hasAccount">
       <h3>Passkeys</h3>
+      <p class="small muted">A passkey signs you in on a device with its fingerprint, face or PIN, with no password.</p>
       <table class="table" data-testid="passkeys">
         <thead>
           <tr>

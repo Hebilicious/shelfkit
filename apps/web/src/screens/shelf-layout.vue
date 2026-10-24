@@ -2,24 +2,29 @@
 import { onBeforeUnmount, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 
-import { execute } from "../api/graphql.ts";
-import { ShelfSummaryQuery } from "../api/operations.ts";
-import { useQuery } from "../composables/use-query.ts";
 import { followShelf, liveState } from "../composables/use-shelf-events.ts";
 import { shelves, viewer, viewerName } from "../composables/session.ts";
 import { useShelfId } from "../composables/shelf-context.ts";
-import { SECTIONS } from "../router.ts";
+import { useShelfIndex, warmShelf } from "../data/shelf.ts";
+import { SECTIONS, sectionOf } from "../navigation.ts";
 
 const shelf = useShelfId();
 const route = useRoute();
 const router = useRouter();
 
-const summary = useQuery(async () => {
-  const data = await execute(ShelfSummaryQuery, { shelf: shelf.value });
-  return data.shelf;
-}, [shelf]);
+const summary = useShelfIndex(shelf);
+const NAV = SECTIONS.filter((section) => section.nav);
 
-watch(shelf, (id) => followShelf(id === "" ? null : id), { immediate: true });
+watch(
+  shelf,
+  (id) => {
+    followShelf(id === "" ? null : id);
+    if (id !== "") {
+      warmShelf(id);
+    }
+  },
+  { immediate: true },
+);
 onBeforeUnmount(() => followShelf(null));
 
 function switchShelf(event: Event): void {
@@ -29,8 +34,7 @@ function switchShelf(event: Event): void {
 }
 
 function active(name: string): boolean {
-  const current = String(route.name ?? "");
-  return current === name || (name === "shelf" && current === "item");
+  return sectionOf(String(route.name ?? "")) === name;
 }
 </script>
 
@@ -42,7 +46,7 @@ function active(name: string): boolean {
       </select>
       <strong v-else class="shelf-nav__name">{{ summary.data.value?.name ?? shelf }}</strong>
       <RouterLink
-        v-for="section in SECTIONS"
+        v-for="section in NAV"
         :key="section.name"
         class="shelf-nav__link"
         :class='{ "shelf-nav__link--active": active(section.name) }'
@@ -52,11 +56,20 @@ function active(name: string): boolean {
         {{ section.title }}
       </RouterLink>
       <span class="spacer"></span>
-      <span class="small muted" :title='"Live updates over server-sent events"' data-testid="live">
+      <span
+        class="small muted"
+        :title='liveState === "live"
+          ? "Changes made elsewhere appear here as they happen"
+          : "Reconnecting to receive changes made elsewhere"'
+        data-testid="live"
+      >
         {{ liveState === "live" ? "● live" : liveState === "connecting" ? "○ connecting" : "" }}
       </span>
     </nav>
-    <main v-if="summary.data.value === null && !summary.loading.value" class="page">
+    <main
+      v-if="summary.data.value === null && !summary.loading.value && !summary.refreshing.value"
+      class="page"
+    >
       <h1>No shelf <code>{{ shelf }}</code></h1>
       <p v-if="summary.error.value !== null" class="error-text">{{ summary.error.value }}</p>
       <p v-else-if="viewer?.authenticated !== true">

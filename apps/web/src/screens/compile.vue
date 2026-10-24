@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { OnConflict, RepositoryOutput } from "@shelfkit/engine";
 import { computed, ref, shallowRef, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import { execute, messageOf } from "../api/graphql.ts";
 import type { ResultOf } from "../api/graphql.ts";
@@ -11,7 +11,7 @@ import QueryState from "../components/query-state.vue";
 import { copyToClipboard } from "../composables/clipboard.ts";
 import { useShelfId } from "../composables/shelf-context.ts";
 import { notify, notifyError } from "../composables/toasts.ts";
-import { useQuery } from "../composables/use-query.ts";
+import { shelfKey, useQuery } from "../data/cache.ts";
 import { loadEngine } from "../engine/browser.ts";
 import {
   applyOutput,
@@ -21,20 +21,24 @@ import {
   textDigest,
 } from "../lib/repository.ts";
 import type { OpenedRepository } from "../lib/repository.ts";
-import { param } from "../router.ts";
+import { conflictSentence } from "../lib/vocabulary.ts";
+import { param } from "../navigation.ts";
 
 const shelf = useShelfId();
 const route = useRoute();
 const router = useRouter();
 const profileId = computed(() => param(route.params.profile));
 
-const query = useQuery(async () => {
-  const data = await execute(CompileQuery, {
-    profile: profileId.value === "" ? "-" : profileId.value,
-    shelf: shelf.value,
-  });
-  return data.shelf;
-}, [shelf, profileId]);
+const query = useQuery(
+  () => shelfKey(shelf.value, "compile", profileId.value),
+  async () => {
+    const data = await execute(CompileQuery, {
+      profile: profileId.value === "" ? "-" : profileId.value,
+      shelf: shelf.value,
+    });
+    return data.shelf;
+  },
+);
 
 const profiles = computed(() => query.data.value?.profiles ?? []);
 const profile = computed(() =>
@@ -169,7 +173,7 @@ watch(
   },
 );
 
-/** Write the compile into the repository, then record it as activity: which repository compiled which revision. */
+/** Write the profile into the repository, then record which repository installed which version of it. */
 async function write(): Promise<void> {
   const handle = directory.value;
   const planned = output.value;
@@ -230,37 +234,77 @@ function download(): void {
 }
 
 const cliCommand = computed(() => `shelfkit compile ${profileId.value} --repo .`);
+
+/** The profile's title, from the profile list while the profile itself loads. */
+const title = computed(
+  () =>
+    profile.value?.title ??
+    profiles.value.find((entry) => entry.id === profileId.value)?.title ??
+    profileId.value,
+);
+
+function plural(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
 </script>
 
 <template>
   <main class="page compile">
-    <header class="row">
-      <h1>Compile</h1>
-      <label class="small muted" for="compile-profile">Profile</label>
-      <select id="compile-profile" :value="profileId" data-testid="compile-profile" @change="choose">
-        <option v-for="entry in profiles" :key="entry.id" :value="entry.id">{{ entry.title }} ({{ entry.id }})</option>
-      </select>
+    <header class="stack">
+      <RouterLink class="small" :to='{ name: "profiles", params: { shelf } }'>← Profiles</RouterLink>
+      <div class="row">
+        <h1>Install {{ title }}</h1>
+        <span class="spacer"></span>
+        <label class="small muted" for="compile-profile">Profile</label>
+        <select
+          id="compile-profile"
+          :value="profileId"
+          data-testid="compile-profile"
+          @change="choose"
+        >
+          <option v-for="entry in profiles" :key="entry.id" :value="entry.id">{{ entry.title }} ({{ entry.id }})</option>
+        </select>
+        <RouterLink
+          v-if='profileId !== ""'
+          class="button"
+          :to='{ name: "compose", params: { shelf, profile: profileId } }'
+        >
+          Edit profile
+        </RouterLink>
+      </div>
+      <p class="muted">
+        Write this profile into a repository, then run <code>apm install</code> there to set up your agents with it.
+      </p>
     </header>
     <QueryState
       :loading="query.loading.value"
       :error="query.error.value"
       :empty="profiles.length === 0"
-      empty-text="This shelf has no profile yet. Compose one first."
+      empty-text="This shelf has no profile yet. Make one on the Profiles screen first."
     />
     <template v-if="profile !== null">
-      <ul v-if="planErrors.length > 0" class="error-text small" role="alert">
-        <li v-for="error in planErrors" :key="`${error.path} ${error.message}`">{{ error.path }}: {{ error.message }}</li>
-      </ul>
+      <div v-if="planErrors.length > 0" class="error-text small" role="alert">
+        This profile cannot be installed yet:
+        <ul>
+          <li v-for="error in planErrors" :key="`${error.path} ${error.message}`">{{ error.path }}: {{ error.message }}</li>
+        </ul>
+      </div>
       <div v-if="plan !== null" class="columns">
         <section class="panel">
           <div class="row">
-            <h2>1. The manifest</h2>
+            <h2>1. What gets written: apm.yml</h2>
             <span class="spacer"></span>
             <button type="button" @click='copy(plan.apmYml, "apm.yml")'>Copy</button>
           </div>
+          <p class="small muted">The manifest at the root of the repository: every item this profile installs.</p>
           <pre data-testid="compile-apm-yml">{{ plan.apmYml }}</pre>
           <details v-if="plan.files.length > 0">
-            <summary class="small">{{ plan.files.length }} vendored files under <code>vendor/{{ plan.profile }}</code></summary>
+            <summary class="small">
+              And {{ plural(plan.files.length, "file", "files") }} copied into <code>vendor/{{ plan.profile }}/</code>
+            </summary>
+            <p class="small muted">
+              The items with nowhere upstream to fetch them from, as a local APM package that <code>apm.yml</code> lists.
+            </p>
             <ul class="small mono">
               <li v-for="file in plan.files" :key="file.path">{{ file.path }}</li>
             </ul>
@@ -274,12 +318,12 @@ const cliCommand = computed(() => `shelfkit compile ${profileId.value} --repo .`
           </ul>
         </section>
         <section aria-label="Repository" class="panel">
-          <h2>2. Your repository</h2>
+          <h2>2. Write it into your repository</h2>
           <template v-if="canPick">
             <p class="small muted">
-              Open a local repository. The browser compiles into it exactly as <code>shelfkit compile</code> does: it merges
-              into an existing <code>apm.yml</code> by the profile's <code>onConflict</code> ({{ onConflict }}), writes the
-              vendored packages, and never runs APM.
+              Open the repository's folder. ShelfKit writes <code>apm.yml</code> and the copied files into it, exactly as
+              <code>shelfkit compile --repo</code> would, and runs nothing. If the repository already has an
+              <code>apm.yml</code> that declares something this profile also installs, {{ conflictSentence(onConflict) }}.
             </p>
             <div class="row">
               <button
@@ -296,7 +340,7 @@ const cliCommand = computed(() => `shelfkit compile ${profileId.value} --repo .`
           </template>
           <template v-else>
             <p class="small muted">
-              This browser cannot write into a folder. Download the manifest, or run the CLI in the repository:
+              This browser cannot write into a folder. Download <code>apm.yml</code>, or run this in the repository:
             </p>
             <div class="row">
               <button type="button" @click="download">Download apm.yml</button>
@@ -307,16 +351,16 @@ const cliCommand = computed(() => `shelfkit compile ${profileId.value} --repo .`
               class="small severity-warning"
               data-testid="download-incomplete"
             >
-              This manifest installs <code>./vendor/{{ plan.profile }}</code>, whose {{ plan.files.length }} vendored files
-              the download does not include: <code>apm install</code> fails without them. Run the CLI command above to
-              write them too.
+              This <code>apm.yml</code> installs <code>./vendor/{{ plan.profile }}</code>, the
+              {{ plural(plan.files.length, "file", "files") }} copied from this shelf, which the download does not
+              include: <code>apm install</code> fails without them. Run the command above to write them too.
             </p>
           </template>
           <p v-if="problem !== null" class="error-text small" role="alert">{{ problem }}</p>
           <template v-if="repository !== null">
             <p v-if="stacks !== null" class="small" data-testid="repository-stacks">
-              <template v-if="stacks.length === 0">No stack of this shelf matches its package.json.</template>
-              <template v-else>Matches: <span v-for="stack in stacks" :key="stack" class="chip on">{{ stack }}</span></template>
+              <template v-if="stacks.length === 0">No tech stack on this shelf matches this repository.</template>
+              <template v-else>Tech stacks that match it: <span v-for="stack in stacks" :key="stack" class="chip on">{{ stack }}</span></template>
             </p>
             <p
               v-if="changedSinceOpen"
@@ -346,13 +390,16 @@ const cliCommand = computed(() => `shelfkit compile ${profileId.value} --repo .`
                 <li v-for="reason in output.refused" :key="reason">{{ reason }}</li>
               </ul>
               <div v-if="output.conflicts.length > 0" class="small severity-warning">
-                Settled by <code>onConflict: {{ onConflict }}</code>:
+                The repository already declares these, so {{ conflictSentence(onConflict) }}:
                 <ul>
                   <li v-for="conflict in output.conflicts" :key="conflict">{{ conflict }}</li>
                 </ul>
               </div>
               <div v-if="output.refused.length === 0" class="stack small" data-testid="output-plan">
-                <span>{{ output.write.length }} files to write, {{ output.remove.length }} stale files to remove.</span>
+                <span>
+                  {{ plural(output.write.length, "file", "files") }} to write,
+                  {{ plural(output.remove.length, "old file", "old files") }} to remove (left by an earlier install).
+                </span>
                 <details>
                   <summary>Files</summary>
                   <ul class="mono">
@@ -370,15 +417,20 @@ const cliCommand = computed(() => `shelfkit compile ${profileId.value} --repo .`
                   >
                     Write into {{ repository.name }}
                   </button>
-                  <span v-if="written" class="severity-info" data-testid="written" role="status">Written.</span>
+                  <span v-if="written" class="severity-info" data-testid="written" role="status">
+                    Written. Now run <code>apm install</code> in it.
+                  </span>
                 </div>
               </div>
             </template>
           </template>
         </section>
         <section class="panel">
-          <h2>3. Install</h2>
-          <p class="small muted">In the repository, APM installs what the manifest declares:</p>
+          <h2>3. Install with APM</h2>
+          <p class="small muted">
+            In the repository, run this. APM reads <code>apm.yml</code> and puts each item where Claude, Codex, Copilot,
+            Cursor and the other agents look for it.
+          </p>
           <div class="row">
             <pre class="install" data-testid="install-command">{{ plan.installCommand }}</pre>
             <button
@@ -391,7 +443,8 @@ const cliCommand = computed(() => `shelfkit compile ${profileId.value} --repo .`
             </button>
           </div>
           <p class="small muted">
-            Or install the published profile from this shelf's registry as <code>{{ profile.apmCoordinate }}</code>.
+            Or install the profile straight from this shelf's registry, by its registry name
+            <code>{{ profile.apmCoordinate }}</code>.
           </p>
         </section>
       </div>

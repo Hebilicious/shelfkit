@@ -20,15 +20,15 @@ async function copy(text: string, what: string): Promise<void> {
 </script>
 
 <template>
-  <section aria-label="Compiled preview" class="panel" :aria-busy="running">
+  <section aria-label="What installing writes" class="panel" :aria-busy="running">
     <div class="row">
-      <h2>apm.yml</h2>
+      <h2>What installing writes</h2>
       <span class="small muted">updates as the profile changes</span>
       <span class="spacer"></span>
       <div class="tabs" role="tablist">
         <button role="tab" type="button" :aria-selected='tab === "apm"' @click='tab = "apm"'>apm.yml</button>
         <button role="tab" type="button" :aria-selected='tab === "files"' @click='tab = "files"'>
-          Vendored files ({{ preview?.plan?.files.length ?? 0 }})
+          Copied files ({{ preview?.plan?.files.length ?? 0 }})
         </button>
         <button role="tab" type="button" :aria-selected='tab === "json"' @click='tab = "json"'>Plan JSON</button>
       </div>
@@ -38,25 +38,35 @@ async function copy(text: string, what: string): Promise<void> {
       class="error-text small"
       data-testid="preview-failed"
     >
-      This profile does not compile yet; the conflicts list says why.
+      This profile cannot be installed yet: the problems listed beside it say why.
     </p>
     <template v-if="preview?.plan">
       <div v-show='tab === "apm"' class="stack">
+        <p class="small muted">
+          The manifest written at the root of the repository. <code>apm install</code> reads it and sets up each agent.
+        </p>
         <pre data-testid="apm-yml">{{ preview.plan.apmYml }}</pre>
         <div class="row">
           <button type="button" @click='copy(preview.plan.apmYml, "apm.yml")'>Copy apm.yml</button>
           <code class="small">{{ preview.plan.installCommand }}</code>
-          <span class="small muted mono">{{ preview.plan.apmYmlDigest }}</span>
+          <span class="small muted mono" title="A fingerprint of this apm.yml">{{ preview.plan.apmYmlDigest }}</span>
         </div>
       </div>
-      <ul v-show='tab === "files"' class="list">
-        <li v-for="file in preview.plan.files" :key="file.path">
-          <details>
-            <summary class="mono small">{{ file.path }}</summary>
-            <pre>{{ file.encoding === "base64" ? "(binary)" : file.contents }}</pre>
-          </details>
-        </li>
-      </ul>
+      <div v-show='tab === "files"' class="stack">
+        <p class="small muted">
+          Items with nowhere upstream to fetch them from are copied into the repository under
+          <code>vendor/{{ preview.plan.profile }}/</code> as a local APM package, which <code>apm.yml</code> lists.
+        </p>
+        <p v-if="preview.plan.files.length === 0" class="small muted">This profile copies no files.</p>
+        <ul class="list">
+          <li v-for="file in preview.plan.files" :key="file.path">
+            <details>
+              <summary class="mono small">{{ file.path }}</summary>
+              <pre>{{ file.encoding === "base64" ? "(binary)" : file.contents }}</pre>
+            </details>
+          </li>
+        </ul>
+      </div>
       <div v-show='tab === "json"' class="stack">
         <p class="small muted">
           What <code>shelfkit compile --dry-run --json {{ preview.plan.profile }}</code> prints for this profile{{

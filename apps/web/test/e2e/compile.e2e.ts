@@ -133,7 +133,7 @@ test("a recompile removes stale vendored files and prunes the directories they e
   // Second compile, from the browser and from the CLI.
   await page.getByTestId("open-repository").click();
   await expect(page.getByTestId("output-plan")).toContainText(
-    "1 stale files to remove"
+    "1 old file to remove"
   );
   await page.getByTestId("write-repository").click();
   await expect(page.getByTestId("written")).toBeVisible();

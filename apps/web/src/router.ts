@@ -1,112 +1,106 @@
 /**
  * The screens from `docs/PRD.md` section 9. Everything but sign-in and share pages lives under one shelf,
  * `/shelves/:shelf/...`, since every read and write happens in the context of one shelf.
+ *
+ * Every screen is in the main bundle rather than a chunk of its own: a section opens in the frame it is clicked,
+ * instead of after a download. Only the WebAssembly engine, which the composer and Install run, loads separately.
  */
 import { createRouter, createWebHistory } from "vue-router";
-import type { RouteLocationRaw } from "vue-router";
 
-import type { GoTarget } from "./lib/keys.ts";
-
-/** The sections of a shelf, in the order the navigation lists them, with their `g` key. */
-export const SECTIONS = [
-  { key: "s", name: "shelf", title: "Shelf" },
-  { key: "l", name: "prompts", title: "Prompts" },
-  { key: "p", name: "profiles", title: "Profiles" },
-  { key: "c", name: "compose", title: "Compose" },
-  { key: "k", name: "compile", title: "Compile" },
-  { key: "i", name: "import", title: "Import" },
-  { key: "a", name: "activity", title: "Activity" },
-  { key: ",", name: "settings", title: "Settings" },
-] as const satisfies readonly { key: string; name: GoTarget; title: string }[];
+import ActivityScreen from "./screens/activity.vue";
+import CompileScreen from "./screens/compile.vue";
+import ComposeScreen from "./screens/compose.vue";
+import HomeScreen from "./screens/home.vue";
+import ImportScreen from "./screens/import.vue";
+import ItemScreen from "./screens/item.vue";
+import LinkScreen from "./screens/link.vue";
+import NotFoundScreen from "./screens/not-found.vue";
+import ProfilesScreen from "./screens/profiles.vue";
+import PromptsScreen from "./screens/prompts.vue";
+import SettingsScreen from "./screens/settings.vue";
+import ShareScreen from "./screens/share.vue";
+import ShelfLayoutScreen from "./screens/shelf-layout.vue";
+import ShelfScreen from "./screens/shelf.vue";
+import SignInScreen from "./screens/sign-in.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
-      component: async () => await import("./screens/home.vue"),
+      component: HomeScreen,
       name: "home",
       path: "/",
     },
     {
-      component: async () => await import("./screens/sign-in.vue"),
+      component: SignInScreen,
       name: "sign-in",
       path: "/sign-in",
     },
     {
-      component: async () => await import("./screens/link.vue"),
+      component: LinkScreen,
       name: "link",
       path: "/link",
     },
     {
-      component: async () => await import("./screens/share.vue"),
+      component: ShareScreen,
       name: "share",
       path: "/share/:token",
     },
     {
       children: [
         {
-          component: async () => await import("./screens/shelf.vue"),
+          component: ShelfScreen,
           name: "shelf",
           path: "",
         },
         {
-          component: async () => await import("./screens/prompts.vue"),
+          component: PromptsScreen,
           name: "prompts",
           path: "prompts/:id?",
         },
         {
-          component: async () => await import("./screens/item.vue"),
+          component: ItemScreen,
           name: "item",
           path: "items/:id",
         },
         {
-          component: async () => await import("./screens/profiles.vue"),
+          component: ProfilesScreen,
           name: "profiles",
           path: "profiles",
         },
         {
-          component: async () => await import("./screens/compose.vue"),
+          component: ComposeScreen,
           name: "compose",
           path: "compose/:profile?",
         },
         {
-          component: async () => await import("./screens/compile.vue"),
+          component: CompileScreen,
           name: "compile",
           path: "compile/:profile?",
         },
         {
-          component: async () => await import("./screens/import.vue"),
+          component: ImportScreen,
           name: "import",
           path: "import",
         },
         {
-          component: async () => await import("./screens/activity.vue"),
+          component: ActivityScreen,
           name: "activity",
           path: "activity",
         },
         {
-          component: async () => await import("./screens/settings.vue"),
+          component: SettingsScreen,
           name: "settings",
           path: "settings",
         },
       ],
-      component: async () => await import("./screens/shelf-layout.vue"),
+      component: ShelfLayoutScreen,
       path: "/shelves/:shelf",
     },
     {
-      component: async () => await import("./screens/not-found.vue"),
+      component: NotFoundScreen,
       name: "not-found",
       path: "/:path(.*)*",
     },
   ],
 });
-
-/** Where `g` and a letter go, within the shelf being viewed. */
-export function sectionRoute(shelf: string, name: GoTarget): RouteLocationRaw {
-  return { name, params: { shelf } };
-}
-
-/** The route parameter as one string. */
-export function param(value: string | string[] | undefined): string {
-  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
-}

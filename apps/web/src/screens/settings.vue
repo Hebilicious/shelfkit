@@ -24,26 +24,33 @@ import { copyToClipboard } from "../composables/clipboard.ts";
 import { loadSignInMethods } from "../composables/session.ts";
 import { useShelfId } from "../composables/shelf-context.ts";
 import { notify, notifyError } from "../composables/toasts.ts";
-import { useQuery } from "../composables/use-query.ts";
+import { invalidate, shelfKey, shelfPrefix, useQuery } from "../data/cache.ts";
+import { SOURCE_KINDS, sourceKindLabel } from "../lib/vocabulary.ts";
 
 const shelf = useShelfId();
 
-const query = useQuery(async () => {
-  const data = await execute(SettingsQuery, { shelf: shelf.value });
-  return data;
-}, [shelf]);
+const query = useQuery(
+  () => shelfKey(shelf.value, "settings"),
+  async () => {
+    const data = await execute(SettingsQuery, { shelf: shelf.value });
+    return data;
+  },
+);
 
 const settings = computed(() => query.data.value?.shelf ?? null);
 const owner = computed(() => settings.value?.viewerAccess.owner === true);
 
 // Keys, people, and invites are the owner's business, read only when the viewer is the owner.
-const accessQuery = useQuery(async () => {
-  if (!owner.value) {
-    return null;
-  }
-  const data = await execute(AccessQuery, { shelf: shelf.value });
-  return data.shelf;
-}, [shelf, owner]);
+const accessQuery = useQuery(
+  () => shelfKey(shelf.value, "access", owner.value),
+  async () => {
+    if (!owner.value) {
+      return null;
+    }
+    const data = await execute(AccessQuery, { shelf: shelf.value });
+    return data.shelf;
+  },
+);
 const keys = computed(() => accessQuery.data.value?.keys ?? []);
 const grants = computed(() => accessQuery.data.value?.grants ?? []);
 const invites = computed(() => accessQuery.data.value?.invites ?? []);
@@ -54,6 +61,9 @@ onMounted(() => {
 const canWrite = computed(() => settings.value?.viewerAccess.write === true);
 const sources = computed(() => readSources(settings.value?.sources ?? null));
 const shareLinks = computed(() => query.data.value?.shareLinks ?? []);
+const profileTitles = computed(
+  () => new Map((settings.value?.profiles ?? []).map((profile) => [profile.id, profile.title])),
+);
 
 async function copy(text: string, what: string): Promise<void> {
   try {
@@ -92,12 +102,14 @@ async function setVisibility(isPublic: boolean): Promise<void> {
       notify(data.setVisibility.reason ?? "the shelf refused the change", null, "error");
       return;
     }
-    await query.refresh();
+    invalidate(shelfPrefix(shelfId));
     notify(
-      isPublic ? "The registry now serves anonymous reads." : "The registry now needs a key.",
+      isPublic
+        ? "Anyone can now install this shelf's profiles."
+        : "Installing from the registry now needs a key.",
       async () => {
         await execute(SetVisibilityMutation, { public: !isPublic, shelf: shelfId });
-        await query.refresh();
+        invalidate(shelfPrefix(shelfId));
       },
     );
   } catch (error) {
@@ -120,7 +132,7 @@ const scopeChoices = computed(() => {
   const profiles = settings.value?.profiles ?? [];
   return [
     { label: "Read the shelf", scope: "read" },
-    { label: "Write the shelf", scope: `publish:${id}/*` },
+    { label: "Edit the shelf and publish every profile", scope: `publish:${id}/*` },
     ...profiles.flatMap((profile) => [
       { label: `Install ${profile.title} from the registry`, scope: `read:${id}/${profile.id}` },
       { label: `Publish and edit ${profile.title}`, scope: `publish:${id}/${profile.id}` },
@@ -169,7 +181,7 @@ async function createShareLink(): Promise<void> {
       shelf: shelf.value,
     });
     newShareUrl.value = `${window.location.origin}/share/${data.createShareLink.token}`;
-    await query.refresh();
+    invalidate(shelfPrefix(shelf.value));
   } catch (error) {
     notifyError(error);
   }
@@ -182,7 +194,7 @@ async function revokeShareLink(id: string): Promise<void> {
   try {
     await execute(RevokeShareLinkMutation, { id, shelf: shelf.value });
     notify("Share link revoked.");
-    await query.refresh();
+    invalidate(shelfPrefix(shelf.value));
   } catch (error) {
     notifyError(error);
   }
@@ -190,7 +202,6 @@ async function revokeShareLink(id: string): Promise<void> {
 
 // Sources: removing one is undone by putting it back.
 
-const SOURCE_KINDS = ["git", "apm-registry", "shelfkit", "catalog", "marketplace", "path"] as const;
 const sourceForm = reactive({
   id: "",
   kind: "git",
@@ -230,7 +241,7 @@ async function addSource(): Promise<void> {
   try {
     if (await putSource(sourceEntry())) {
       Object.assign(sourceForm, { id: "", path: "", profile: "", repo: "", secret: "", url: "" });
-      await query.refresh();
+      invalidate(shelfPrefix(shelf.value));
     }
   } catch (error) {
     sourceError.value = messageOf(error);
@@ -244,12 +255,12 @@ async function removeSource(entry: ShelfSourceEntry): Promise<void> {
       notify(data.removeSource.reason ?? "the shelf refused the change", null, "error");
       return;
     }
-    await query.refresh();
+    invalidate(shelfPrefix(shelf.value));
     notify(`Removed the source ${entry.id}.`, async () => {
       if (!(await putSource(entry))) {
         throw new Error(sourceError.value ?? "the shelf refused to restore it");
       }
-      await query.refresh();
+      invalidate(shelfPrefix(shelf.value));
     });
   } catch (error) {
     notifyError(error);
@@ -276,7 +287,7 @@ async function addSecretName(): Promise<void> {
       secretForm.description.trim() === "" ? null : secretForm.description.trim(),
     );
     Object.assign(secretForm, { description: "", name: "", origin: "" });
-    await query.refresh();
+    invalidate(shelfPrefix(shelf.value));
   } catch (error) {
     notifyError(error);
   }
@@ -289,14 +300,14 @@ async function removeSecretName(
 ): Promise<void> {
   try {
     await execute(RemoveSecretNameMutation, { name, shelf: shelf.value });
-    await query.refresh();
+    invalidate(shelfPrefix(shelf.value));
     notify(
-      `Removed the secret name ${name}.`,
+      `Removed the credential ${name}.`,
       origin === null
         ? null
         : async () => {
             await putSecretName(name, origin, description);
-            await query.refresh();
+            invalidate(shelfPrefix(shelf.value));
           },
     );
   } catch (error) {
@@ -308,13 +319,20 @@ async function removeSecretName(
 <template>
   <main class="page settings">
     <h1>Settings</h1>
+    <p class="muted">
+      Your account, who else may use this shelf, the keys programs use, share links, and the places imports come from.
+    </p>
     <AccountPanel />
     <QueryState :loading="query.loading.value" :error="query.error.value" :empty="settings === null" />
     <template v-if="settings !== null">
       <section class="panel">
         <h2>Registry</h2>
+        <p class="small muted">
+          This shelf is also an APM registry: a repository can install its published profiles with APM alone, with no
+          ShelfKit tool installed.
+        </p>
         <div class="row">
-          <span class="small muted">APM's <code>registries</code> entry for this deployment:</span>
+          <span class="small muted">The address to list under <code>registries</code> in <code>apm.yml</code>:</span>
           <code data-testid="registry-url">{{ settings.registryUrl }}</code>
           <button class="small" type="button" @click='copy(settings.registryUrl, "Registry URL")'>Copy</button>
         </div>
@@ -345,8 +363,9 @@ async function removeSecretName(
       <section v-if="owner" class="panel">
         <h2>Keys</h2>
         <p class="small muted">
-          Keys are for programs: the CLI, an agent, CI, or APM's registry client. People sign in with GitHub instead. A
-          key is shown once, when it is created; give each program one with only the scopes it needs.
+          Keys are for programs: the <code>shelfkit</code> CLI, an agent, CI, or APM installing from the registry. People
+          sign in instead (see People). A key is shown once, when it is created; give each program its own, allowed only
+          what it needs.
         </p>
         <div v-if="newSecret !== null" class="panel secret" role="status">
           <strong>Copy this key now; it is not shown again.</strong>
@@ -361,7 +380,7 @@ async function removeSecretName(
             <tr>
               <th>Name</th>
               <th>Key</th>
-              <th>Scopes</th>
+              <th>Allowed to</th>
               <th>Last used</th>
               <th><span class="visually-hidden">Revoke</span></th>
             </tr>
@@ -384,7 +403,7 @@ async function removeSecretName(
         <form aria-label="New key" class="stack" @submit.prevent="createKey">
           <label class="field">New key's name <input v-model="keyForm.name" placeholder="laptop CLI" required /></label>
           <fieldset>
-            <legend>Scopes</legend>
+            <legend>What it may do</legend>
             <label v-for="choice in scopeChoices" :key="choice.scope" class="row small">
               <input v-model="keyForm.scopes" type="checkbox" :value="choice.scope" />
               {{ choice.label }} <code class="muted">{{ choice.scope }}</code>
@@ -397,7 +416,10 @@ async function removeSecretName(
       </section>
       <section class="panel">
         <h2>Share links</h2>
-        <p class="small muted">An unguessable, read-only page for one profile. Anyone with the link can read it, with no key.</p>
+        <p class="small muted">
+          A read-only page for one profile, at an address nobody can guess: what it installs and its <code>apm.yml</code>.
+          Anyone with the link can read it, without signing in.
+        </p>
         <div v-if="newShareUrl !== null" class="panel secret" role="status">
           <strong>The link is shown once.</strong>
           <div class="row">
@@ -408,7 +430,7 @@ async function removeSecretName(
         </div>
         <ul class="list">
           <li v-for="link in shareLinks" :key="link.id" class="list-row">
-            <span>{{ link.profile }}</span>
+            <span>{{ profileTitles.get(link.profile) ?? link.profile }}</span>
             <span class="small muted">created {{ when(link.createdAt) }}</span>
             <span class="spacer"></span>
             <span v-if="link.revokedAt" class="badge danger">revoked</span>
@@ -428,13 +450,16 @@ async function removeSecretName(
       </section>
       <section class="panel">
         <h2>Sources</h2>
-        <p class="small muted">Places this shelf imports from: <code>shelf.json</code>'s <code>sources</code>.</p>
+        <p class="small muted">
+          Saved places to import from, offered on the Import screen. They are kept in <code>shelf.json</code>, under
+          <code>sources</code>.
+        </p>
         <ul class="list">
           <li v-for="entry in sources" :key="entry.id" class="list-row">
             <strong class="mono">{{ entry.id }}</strong>
-            <span class="badge">{{ entry.kind }}</span>
+            <span class="badge">{{ sourceKindLabel(entry.kind) }}</span>
             <span class="mono small ellipsis">{{ entry.repo ?? entry.url ?? entry.path ?? "" }}</span>
-            <span v-if="entry.secret" class="small muted">needs {{ entry.secret }}</span>
+            <span v-if="entry.secret" class="small muted">uses the credential {{ entry.secret }}</span>
             <span class="spacer"></span>
             <button v-if="canWrite" class="danger small" type="button" @click="removeSource(entry)">Remove</button>
           </li>
@@ -442,16 +467,16 @@ async function removeSecretName(
         <form v-if="canWrite" class="source-form" @submit.prevent="addSource">
           <label class="field">Id <input v-model="sourceForm.id" class="mono" required /></label>
           <div class="field">
-            <label for="source-kind">Kind</label>
+            <label for="source-kind">What it is</label>
             <select id="source-kind" v-model="sourceForm.kind">
-              <option v-for="kind in SOURCE_KINDS" :key="kind" :value="kind">{{ kind }}</option>
+              <option v-for="entry in SOURCE_KINDS" :key="entry.kind" :value="entry.kind">{{ entry.label }}</option>
             </select>
           </div>
           <label class="field">Repository <input v-model="sourceForm.repo" placeholder="https://github.com/owner/repo" /></label>
           <label class="field">URL <input v-model="sourceForm.url" placeholder="https://…" /></label>
-          <label class="field">Path <input v-model="sourceForm.path" /></label>
-          <label class="field">Profile (shelfkit) <input v-model="sourceForm.profile" /></label>
-          <label class="field">Secret name <input v-model="sourceForm.secret" class="mono" placeholder="GITHUB_TOKEN" /></label>
+          <label class="field">Folder <input v-model="sourceForm.path" /></label>
+          <label class="field">Profile (another shelf's) <input v-model="sourceForm.profile" /></label>
+          <label class="field">Credential <input v-model="sourceForm.secret" class="mono" placeholder="GITHUB_TOKEN" /></label>
           <div class="row">
             <button type="submit">Add source</button>
           </div>
@@ -459,20 +484,25 @@ async function removeSecretName(
         </form>
       </section>
       <section v-if="owner" class="panel">
-        <h2>Secret names</h2>
+        <h2>Credentials</h2>
         <p class="small muted">
-          Items and sources refer to a credential as <code>{ "secret": "NAME" }</code>. Its value is the Worker secret
-          <code>SHELFKIT_SECRET_NAME</code>, set with <code>wrangler secret put</code>, and is sent only to the origin bound
-          here.
+          Items and sources that need a credential, such as an API key, refer to it by name:
+          <code>{ "secret": "NAME" }</code>. Its value is never typed here: it is the Worker secret
+          <code>SHELFKIT_SECRET_NAME</code>, set with <code>wrangler secret put</code>, and it is sent only to the address
+          listed beside its name.
         </p>
         <table class="table">
           <tbody>
             <tr v-for="secret in settings.secretNames" :key="secret.name">
               <td class="mono">{{ secret.name }}</td>
-              <td class="mono small">{{ secret.origin ?? "nowhere" }}</td>
+              <td class="mono small">{{
+                  secret.origin === null || secret.origin === undefined
+                    ? "sent nowhere"
+                    : `sent only to ${secret.origin}`
+                }}</td>
               <td class="small">{{ secret.description ?? "" }}</td>
               <td>
-                <span class="badge" :class='secret.configured ? "info" : "warn"'>{{ secret.configured ? "set" : "not set" }}</span>
+                <span class="badge" :class='secret.configured ? "info" : "warn"'>{{ secret.configured ? "value set" : "no value yet" }}</span>
               </td>
               <td>
                 <button
@@ -489,14 +519,14 @@ async function removeSecretName(
         <form class="row" @submit.prevent="addSecretName">
           <input
             v-model="secretForm.name"
-            aria-label="Secret name"
+            aria-label="Credential name"
             class="mono"
             placeholder="LINEAR_API_KEY"
             required
           />
           <input
             v-model="secretForm.origin"
-            aria-label="Origin"
+            aria-label="Sent only to"
             placeholder="https://mcp.linear.app"
             required
           />
@@ -505,7 +535,7 @@ async function removeSecretName(
             aria-label="Description"
             placeholder="what it is for"
           />
-          <button type="submit">Bind</button>
+          <button type="submit">Add credential</button>
         </form>
       </section>
     </template>

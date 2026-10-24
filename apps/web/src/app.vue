@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 
 import KeyboardHelp from "./components/keyboard-help.vue";
+import ProgressBar from "./components/progress-bar.vue";
 import ToastHost from "./components/toast-host.vue";
 import {
   favouriteSelection,
@@ -14,7 +15,7 @@ import { loadSession, shelves, signOut, viewer, viewerName } from "./composables
 import { notifyError, undoLatest } from "./composables/toasts.ts";
 import { INITIAL_KEY_STATE, interpret } from "./lib/keys.ts";
 import type { KeyAction, KeyState } from "./lib/keys.ts";
-import { param, sectionRoute } from "./router.ts";
+import { param, sectionRoute } from "./navigation.ts";
 
 const route = useRoute();
 const router = useRouter();
@@ -135,6 +136,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
 
 <template>
   <div class="app">
+    <ProgressBar />
     <header class="app__header">
       <RouterLink class="app__brand" to="/">ShelfKit</RouterLink>
       <span class="spacer"></span>
