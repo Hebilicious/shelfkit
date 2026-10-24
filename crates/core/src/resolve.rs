@@ -183,6 +183,7 @@ pub(crate) fn resolve(shelf: &Shelf, id: &str) -> Result<ResolvedProfile, Vec<Er
                 ),
             });
         }
+        notices.extend(crate::skill::notices(loaded));
         items.push(ResolvedItem {
             id: item_id,
             kind: loaded.kind(),

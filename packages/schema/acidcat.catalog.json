@@ -1170,7 +1170,8 @@
         "code": {
           "enum": [
             "producer-nonconformant-target",
-            "unratified-lsp"
+            "unratified-lsp",
+            "skill-frontmatter"
           ],
           "type": "string"
         },
@@ -1548,7 +1549,8 @@
                     "unratified-lsp",
                     "hook-approval",
                     "hosted-mcp",
-                    "mcp-schema-mismatch"
+                    "mcp-schema-mismatch",
+                    "skill-frontmatter"
                   ],
                   "type": "string"
                 },

@@ -200,7 +200,7 @@ A **revision** is an immutable snapshot of one item: `sha256` over a canonical s
 
 #### `skill`
 
-A directory with `SKILL.md`, following [agentskills.io](https://agentskills.io/specification). Only spec frontmatter is used (`name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools`), because clients and uploaders reject unknown keys.
+A directory with `SKILL.md`, following [agentskills.io](https://agentskills.io/specification). A skill fails to load only when an agent could not use it: no frontmatter, frontmatter that is not a YAML mapping, a `name` that is not the item id, or no `description`. Every other deviation from the spec (an unknown key such as Claude Code's `disable-model-invocation`, a description over 1024 characters, nested `metadata`) is a `skill-frontmatter` notice from `check`, and the file is kept as written: harnesses read such skills, while strict clients and uploaders, such as claude.ai's skill upload, may refuse them.
 
 #### `prompt`
 
@@ -466,7 +466,7 @@ Vue 3, Vite, Vize, CSSForge. Everything goes through the same API as the CLI.
 | **Item** | Rendered content, what installing it writes, history and diffs, origin, what uses it, scans. |
 | **Profiles** | Every profile, what it installs, and the way to edit or install it. |
 | **Edit profile** | Build a profile: drag items in, see what it installs and any conflicts, see the `apm.yml` update live. Reached from a profile, not the navigation. |
-| **Install** | Pick a profile and repository, read what gets written, copy the install command. Reached from a profile. |
+| **Install** | Install a profile through the shelf's registry with stock APM: copy a prompt that has an agent do it, the terminal steps, or the ShelfKit CLI's, and see which file each item becomes for each agent. Reached from a profile. |
 | **Import** | Paste a repo, registry, catalog, or shelf URL; pick items; set pins. |
 | **Repositories** | Which repositories installed which profile version, and which are behind. |
 | **Settings** | Your passkeys and devices, people and invites, API keys for programs, sources, secret names, registry visibility. |

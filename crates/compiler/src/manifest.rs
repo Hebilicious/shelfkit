@@ -152,16 +152,19 @@ pub enum NoteCode {
     /// A `dependencies.mcp` entry uses the object form APM documents, which
     /// the published v0.1 JSON Schema rejects (see [`crate::schema`]).
     McpSchemaMismatch,
+    /// A skill's `SKILL.md` frontmatter deviates from agentskills.io.
+    SkillFrontmatter,
 }
 
 impl NoteCode {
     /// Every code, for the test that keeps the schema package's list in step.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::ProducerNonconformantTarget,
         Self::UnratifiedLsp,
         Self::HookApproval,
         Self::HostedMcp,
         Self::McpSchemaMismatch,
+        Self::SkillFrontmatter,
     ];
 }
 
@@ -170,6 +173,7 @@ impl From<NoticeCode> for NoteCode {
         match code {
             NoticeCode::ProducerNonconformantTarget => Self::ProducerNonconformantTarget,
             NoticeCode::UnratifiedLsp => Self::UnratifiedLsp,
+            NoticeCode::SkillFrontmatter => Self::SkillFrontmatter,
         }
     }
 }

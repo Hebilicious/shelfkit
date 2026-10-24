@@ -477,6 +477,88 @@ fn a_cli_only_target_on_an_item_needs_the_opt_in_and_is_reported() {
 }
 
 #[test]
+fn a_skill_off_the_agentskills_spec_loads_and_is_reported() {
+    let mut source = memory("all-kinds");
+    let path = "items/skills/review-checklist/SKILL.md";
+    let description = "word ".repeat(210);
+    source.insert(
+        path,
+        format!(
+            "---\nname: review-checklist\ndescription: >-\n  {description}\n\
+             disable-model-invocation: true\n\
+             metadata:\n  credits:\n    skill: review\n    author: someone\n---\n\nBody.\n"
+        ),
+    );
+    let shelf = load(&source).unwrap_or_else(|errors| panic!("{errors}"));
+
+    // The file is kept exactly as written.
+    assert_eq!(
+        shelf.items["review-checklist"].files["SKILL.md"],
+        source.read(path).unwrap()
+    );
+
+    let reported = |notices: &[shelfkit_core::Notice]| -> Vec<String> {
+        notices
+            .iter()
+            .filter(|notice| {
+                notice.path == path && notice.code == shelfkit_core::NoticeCode::SkillFrontmatter
+            })
+            .map(|notice| notice.message.clone())
+            .collect()
+    };
+    // Notices are sorted, so they come in message order.
+    let checked = reported(&shelf.check());
+    assert_eq!(checked.len(), 3, "{checked:?}");
+    assert!(
+        checked[0].starts_with("`description` is 1050 characters"),
+        "{checked:?}"
+    );
+    assert!(checked[2].starts_with("unknown key `disable-model-invocation`"));
+    assert!(checked[1].starts_with("`metadata` must map strings to strings"));
+    assert!(
+        checked
+            .iter()
+            .all(|message| message.contains("claude.ai's skill upload"))
+    );
+
+    // A profile that installs the skill carries the same notices into its plan,
+    // and one that does not carries none.
+    assert_eq!(reported(&shelf.resolve("full").unwrap().notices), checked);
+    assert!(reported(&shelf.resolve("minimal").unwrap().notices).is_empty());
+}
+
+#[test]
+fn a_skill_an_agent_cannot_use_still_fails_the_load() {
+    let path = "items/skills/review-checklist/SKILL.md";
+    let fails = |text: &str| {
+        let mut source = memory("all-kinds");
+        source.insert(path, text);
+        errors_of(&source)
+    };
+    let invalid = |reason: &str| vec![format!("{path}: invalid SKILL.md frontmatter: {reason}")];
+    assert_eq!(
+        fails("No frontmatter.\n"),
+        invalid("must start with a `---` YAML block")
+    );
+    assert_eq!(fails("---\n- a\n---\n"), invalid("must be a YAML mapping"));
+    assert_eq!(
+        fails("---\ndescription: A thing.\n---\n"),
+        invalid("`name` is required and must be a string")
+    );
+    assert_eq!(
+        fails("---\nname: other\ndescription: A thing.\n---\n"),
+        invalid("`name` is `other` but must equal the item id `review-checklist`")
+    );
+    assert_eq!(
+        fails("---\nname: review-checklist\ndescription: \"\"\n---\n"),
+        invalid("`description` is required and must be non-empty")
+    );
+    let unparsable = fails("---\nname: review-checklist\ndescription: Use it: when asked\n---\n");
+    assert_eq!(unparsable.len(), 1, "{unparsable:?}");
+    assert!(unparsable[0].starts_with(&format!("{path}: invalid SKILL.md frontmatter: ")));
+}
+
+#[test]
 fn a_credential_in_any_text_file_fails_the_load() {
     let mut source = memory("all-kinds");
     // Assembled at run time so the source holds no token-shaped literal.

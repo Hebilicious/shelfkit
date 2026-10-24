@@ -36,6 +36,7 @@ export const NOTE_SEVERITY: ReadonlyMap<string, ConflictSeverity> = new Map<
   ["hosted-mcp", "info"],
   ["mcp-schema-mismatch", "warning"],
   ["producer-nonconformant-target", "warning"],
+  ["skill-frontmatter", "warning"],
   ["unratified-lsp", "warning"],
 ]);
 
