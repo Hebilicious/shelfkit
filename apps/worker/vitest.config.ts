@@ -5,7 +5,7 @@ import path from "node:path";
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
-import { writeLocalConfig } from "./scripts/local-config.ts";
+import { writeTestConfig } from "./scripts/local-config.ts";
 import {
   FAKE_ACCOUNTS,
   FAKE_CLIENT,
@@ -16,8 +16,11 @@ import { TEST_OWNER_KEY } from "./test/owner-key.ts";
 
 const repository = path.resolve(import.meta.dirname, "../..");
 
-/** `wrangler.jsonc` without Artifacts, which Wrangler never simulates: the tests stand in for it themselves. */
-const configPath = writeLocalConfig();
+/**
+ * `wrangler.jsonc` without Artifacts, which Wrangler never simulates (the tests stand in for it themselves), and with no
+ * queue consumer: a test runs the jobs it means to with `runJob`, and nothing runs the rest behind its back.
+ */
+const configPath = writeTestConfig();
 
 /** Every file of a shelf directory the format reads, base64, by path from its root. */
 function shelfFiles(root: string) {
