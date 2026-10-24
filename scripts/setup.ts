@@ -7,9 +7,11 @@
  *
  * 1. the R2 bucket `shelfkit-blobs`, and a bucket lock that keeps `archives/` immutable: a published registry
  *    version cannot be overwritten or deleted at the storage layer either;
- * 2. the queue `shelfkit-jobs` and its dead-letter queue `shelfkit-jobs-dlq`, and a report on the Artifacts namespace
- *    that holds each shelf's Git repository: the binding creates it with the first shelf, without a jurisdiction, and
- *    Wrangler cannot create one, so a namespace kept in the EU or the US is made in the dashboard beforehand;
+ * 2. the queue `shelfkit-jobs` and its dead-letter queue `shelfkit-jobs-dlq`, and the Artifacts namespace that holds
+ *    each shelf's Git repository, in the jurisdiction `--artifacts-jurisdiction eu|us` names (anywhere without it). A
+ *    namespace's jurisdiction cannot change, so setup refuses to go on when the namespace exists in another one.
+ *    Wrangler has no command that creates a namespace, so setup calls Artifacts' REST API itself, with the token of
+ *    the Wrangler login it runs as (`wrangler auth token`): it makes no token of its own;
  * 3. the owner key, unless the Worker already has one: 32 random bytes, of which the Worker keeps only the SHA-256 as
  *    the secret `OWNER_KEY_HASH`. Programs use it: the CLI, agents, CI. People sign in with passkeys;
  * 4. the session secret `SESSION_SECRET`, unless the Worker has one: the HMAC key of the browser's session cookie;
@@ -42,7 +44,8 @@
  * instead, which keeps it in the OS keychain, and it is never printed. Pass the account as `CLOUDFLARE_ACCOUNT_ID` when
  * Wrangler can reach more than one.
  *
- * Options: `--dry-run` (say what would happen), `--keychain` (store a new owner key with `shelfkit login`; the binary
+ * Options: `--artifacts-jurisdiction eu|us` (keep repositories' data in the EU or the US), `--dry-run` (say what would
+ * happen), `--keychain` (store a new owner key with `shelfkit login`; the binary
  * is `--shelfkit <path>`, else `shelfkit` on PATH, else `target/debug/shelfkit`), `--rotate-owner-key` (replace it),
  * `--rotate-session-secret` (sign every browser out), `--no-open` (print the enrollment link without opening it),
  * `--no-github-sign-in` (turn GitHub sign-in off: delete its secrets; a run with neither flag leaves it as it is), and
@@ -67,6 +70,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import {
+  ensureNamespace,
+  readAccountIds,
+  readJurisdictionOption,
+  readNamespaceName,
+} from "./setup-artifacts.ts";
 import {
   callbackUrl,
   deployCommand,
@@ -127,6 +136,7 @@ function option(flag: string): string | undefined {
 }
 
 const shelfkitPath = option("--shelfkit");
+const jurisdiction = readJurisdictionOption(option("--artifacts-jurisdiction"));
 const githubOwner = option("--github-owner");
 const githubOrg = option("--github-org");
 
@@ -232,37 +242,39 @@ function ensureQueue(name: string): void {
   must(wrangler(["queues", "create", name]), `creating the queue ${name}`);
 }
 
-/** The Artifacts namespace the Worker's `ARTIFACTS` binding names in `wrangler.jsonc`. */
-function artifactsNamespace(): string {
-  const config = readFileSync(path.join(worker, "wrangler.jsonc"), "utf-8");
-  const namespace =
-    /"binding": "ARTIFACTS", "namespace": "(?<namespace>[^"]+)"/u.exec(config)
-      ?.groups?.namespace;
-  if (namespace === undefined) {
-    throw new Error("wrangler.jsonc has no ARTIFACTS binding");
+/** The account Wrangler runs against: `CLOUDFLARE_ACCOUNT_ID`, or the login's only account. */
+function accountId(): string {
+  const set = process.env.CLOUDFLARE_ACCOUNT_ID;
+  if (set !== undefined && set !== "") {
+    return set;
   }
-  return namespace;
+  const ran = wrangler(["whoami", "--json"], { quiet: true });
+  must(ran, "`wrangler whoami`");
+  const accounts = readAccountIds(ran.stdout);
+  const [only] = accounts;
+  if (only === undefined || accounts.length > 1) {
+    throw new Error(
+      "Wrangler can reach more than one account: set CLOUDFLARE_ACCOUNT_ID to the one to deploy to"
+    );
+  }
+  return only;
 }
 
-/** Say where shelves' repositories will live. Nothing is created: the binding makes the namespace when it needs it. */
-function reportArtifacts(): void {
-  const namespace = artifactsNamespace();
-  step(`Artifacts namespace ${namespace}, for each shelf's Git repository`);
-  const found = wrangler(
-    ["artifacts", "namespaces", "get", namespace, "--json"],
-    { quiet: true }
+/** The Artifacts namespace the Worker binds, in the jurisdiction asked for (`setup-artifacts.ts`). */
+async function ensureArtifactsNamespace(): Promise<void> {
+  const namespace = readNamespaceName(
+    readFileSync(path.join(worker, "wrangler.jsonc"), "utf-8")
   );
-  if (found.status !== 0) {
-    console.log(
-      "    not there yet: the first shelf creates it, with no jurisdiction. To keep repositories in the EU or the US, create it now in the dashboard (Storage & databases > Artifacts) with that jurisdiction; it cannot change later"
-    );
-    return;
-  }
-  const jurisdiction = /"jurisdiction":\s*"(?<value>[^"]+)"/u.exec(found.stdout)
-    ?.groups?.value;
-  console.log(
-    `    exists${jurisdiction === undefined ? "" : `, in the ${jurisdiction} jurisdiction`}`
+  step(
+    `Artifacts namespace ${namespace} (${jurisdiction ?? "unrestricted"}), for each shelf's Git repository`
   );
+  const done = await ensureNamespace(
+    (command) => wrangler(command, { quiet: true }),
+    accountId,
+    namespace,
+    { dryRun, jurisdiction }
+  );
+  console.log(`    ${done}`);
 }
 
 /** The Worker's name: the top-level `name` in `wrangler.jsonc`, which Wrangler names it by in its errors. */
@@ -677,7 +689,7 @@ async function main(): Promise<void> {
     ensureLock(directory);
     ensureQueue(DEAD_LETTERS);
     ensureQueue(QUEUE);
-    reportArtifacts();
+    await ensureArtifactsNamespace();
 
     const existing = workerSecrets();
     const secrets: Record<string, string> = {};
