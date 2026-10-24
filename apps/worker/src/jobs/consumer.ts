@@ -18,7 +18,6 @@ import { ArtifactsForge } from "../forge/artifacts.ts";
 import { GitHubForge } from "../forge/github.ts";
 import { indexFromForge } from "../forge/index.ts";
 import type { Forge } from "../forge/index.ts";
-import { shelfRepository } from "../repository/index.ts";
 import { resolveSecret } from "../secrets.ts";
 import type { SecretBindingRecord } from "../secrets.ts";
 import { JobMessageSchema } from "./messages.ts";
@@ -411,25 +410,15 @@ async function syncRepository(
   }
 }
 
-/**
- * The hourly cron: queue, for every shelf the deployment holds, an upstream check and a sync with its repository,
- * which indexes a push made around the Worker and gives a shelf indexed before it had a repository its first commit.
- */
+/** The hourly cron: queue an upstream check for every shelf the deployment holds. */
 export async function scheduled(env: Env): Promise<void> {
   const shelves = await listShelves(env);
-  const repositories = shelfRepository(env) !== null;
-  const messages: JobMessage[] = shelves.flatMap((shelf) =>
-    repositories
-      ? [
-          { shelf, type: "upstream.check" as const },
-          { shelf, type: "repository.sync" as const },
-        ]
-      : [{ shelf, type: "upstream.check" as const }]
-  );
-  for (let start = 0; start < messages.length; start += 100) {
+  for (let start = 0; start < shelves.length; start += 100) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- a batch holds at most 100 messages.
     await env.JOBS.sendBatch(
-      messages.slice(start, start + 100).map((body) => ({ body }))
+      shelves
+        .slice(start, start + 100)
+        .map((shelf) => ({ body: { shelf, type: "upstream.check" } }))
     );
   }
 }

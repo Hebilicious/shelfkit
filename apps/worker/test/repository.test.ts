@@ -227,6 +227,38 @@ describe("writes become commits", () => {
     });
   });
 
+  it("commits an edit in the UI as that edit, leaving the rest of item.json as it was written", async () => {
+    const written = `{
+  "id": "hello",
+  "kind": "prompt",
+  "title": "Hello",
+  "description": "Say hello",
+  "variables": [{ "name": "who", "required": false }]
+}
+`;
+    await push(
+      "kit",
+      shelfOf("kit", false, {
+        ...PROMPT,
+        "items/prompts/hello/item.json": written,
+      })
+    );
+    await data(
+      v.unknown(),
+      `mutation { updatePrompt(shelf: "kit", id: "hello", body: "Hi.\\n") { ok } }`
+    );
+    const bodyOnly = await headFiles("kit");
+    expect(bodyOnly["items/prompts/hello/item.json"]).toBe(written);
+    await data(
+      v.unknown(),
+      `mutation { updatePrompt(shelf: "kit", id: "hello", title: "Greeting") { ok } }`
+    );
+    const titled = await headFiles("kit");
+    expect(titled["items/prompts/hello/item.json"]).toBe(
+      written.replace('"title": "Hello"', '"title": "Greeting"')
+    );
+  });
+
   it("pushes nothing when the files are the same", async () => {
     await push("kit", shelfOf("kit", false, PROMPT));
     const again = await push("kit", shelfOf("kit", false, PROMPT));
@@ -312,6 +344,56 @@ describe("pushes through the Git route", () => {
       shelfOf("kit", false, withPrompt("Behind the head.\n"))
     );
     expect(blocked.ok).toBeFalsy();
+  });
+
+  it("indexes a push made around the Worker the moment the next edit meets it, and makes the edit on top of it", async () => {
+    await push("kit", shelfOf("kit", false, PROMPT));
+    const before = await headOf("kit");
+    // A push with an Artifacts token of the operator's own, straight to the repository: no sync is queued for it.
+    const repo = await fakeArtifacts.get("kit");
+    const token = await repo.createToken("write", 60);
+    const shelfEngine = await engine();
+    const planned = shelfEngine.gitCommit({
+      author: {
+        email: "ops@example.com",
+        name: "Ops",
+        offset: 0,
+        time: 1_700_000_000,
+      },
+      base: [],
+      files: Object.entries({
+        ...shelfOf("kit", false, PROMPT),
+        "README.md": "# Pushed around the Worker\n",
+      }).map(([path, contents]) => ({
+        contents: encoder.encode(contents),
+        path,
+      })),
+      message: "around the Worker",
+      parent: before.hash,
+      ref: "refs/heads/main",
+    });
+    if (!planned.ok || planned.value.request === null) {
+      throw new Error("nothing to push");
+    }
+    const { remote } = await repo.info();
+    await fakeArtifacts.fetch(`${remote}/git-receive-pack`, {
+      body: Uint8Array.from(planned.value.request),
+      headers: { authorization: `Bearer ${token.plaintext}` },
+      method: "POST",
+    });
+
+    const edited = await data(
+      v.object({ updatePrompt: v.object({ ok: v.boolean() }) }),
+      `mutation { updatePrompt(shelf: "kit", id: "hello", body: "After.\\n") { ok } }`
+    );
+    expect(edited.updatePrompt.ok).toBeTruthy();
+    const head = await headOf("kit");
+    expect(head.parents).toStrictEqual([planned.value.commit]);
+    const files = await headFiles("kit");
+    expect([
+      files["README.md"],
+      files["items/prompts/hello/prompt.md"],
+    ]).toStrictEqual(["# Pushed around the Worker\n", "After.\n"]);
   });
 
   it("lets the owner create a shelf by pushing it", async () => {

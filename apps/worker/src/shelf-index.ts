@@ -113,7 +113,9 @@ import {
   engineFiles,
   isShelfPath,
   manifestText,
+  text as textOf,
 } from "./shelf/files.ts";
+import { editJsonObject, JsonObjectSchema } from "./shelf/json-edit.ts";
 import {
   bodySnippet,
   ftsQuery,
@@ -901,13 +903,16 @@ export class ShelfIndex extends DurableObject<Env> {
     if ("ok" in granted || !granted.member) {
       return null;
     }
-    return this.db
-      .select()
-      .from(table.snapshot)
-      .orderBy(desc(table.snapshot.createdAt))
-      .limit(Math.min(limit, 200))
-      .all()
-      .map(snapshotRecord);
+    return (
+      this.db
+        .select()
+        .from(table.snapshot)
+        // Newest first; two made within the same second, in the order they were made.
+        .orderBy(desc(table.snapshot.createdAt), desc(sql`rowid`))
+        .limit(Math.min(limit, 200))
+        .all()
+        .map(snapshotRecord)
+    );
   }
 
   /** The current snapshot's files, by path and hash: what `shelfkit fetch` downloads. */
@@ -1235,6 +1240,14 @@ export class ShelfIndex extends DurableObject<Env> {
     if (repository !== null && committed === null) {
       const pushed = await this.pushFiles(repository, session, input);
       if (!pushed.ok) {
+        if (isRepositoryConflict(pushed.refused)) {
+          // Someone pushed around the Worker: index what they pushed now, so the next attempt starts from it.
+          await this.syncNow(
+            repository,
+            { job: "repository.sync", kind: "system" },
+            input.shelf
+          );
+        }
         return pushed.refused;
       }
       ({ committed } = pushed);
@@ -1441,7 +1454,8 @@ export class ShelfIndex extends DurableObject<Env> {
    * Bring the index up to the head of the shelf's repository: read the commit a Git client pushed, store the bytes of
    * every blob the index does not have yet in R2, and index the files as a snapshot. A head the engine refuses is
    * recorded, with its errors, and the index stays where it was. A shelf indexed before it had a repository has its
-   * current files committed as the repository's first commit. Run by the queue after a push and by the hourly cron.
+   * current files committed as the repository's first commit. Run by the queue after a push through the Git route, by a
+   * Git client's first read of a shelf with no repository yet, and by a write that found the repository moved on.
    */
   async syncRepository(session: Session, shelf: string): Promise<Synced> {
     if (session.kind !== "system" || !v.is(ShelfIdSchema, shelf)) {
@@ -1451,45 +1465,54 @@ export class ShelfIndex extends DurableObject<Env> {
     if (repository === null) {
       return { status: "none" };
     }
-    return await this.serially(async () => {
-      const existing = this.shelfId();
-      if (existing !== null && existing !== shelf) {
-        return { status: "none" };
+    return await this.serially(
+      async () => await this.syncNow(repository, session, shelf)
+    );
+  }
+
+  /** `syncRepository`'s work, for a caller already holding the write lock. */
+  private async syncNow(
+    repository: ShelfRepository,
+    session: Session,
+    shelf: string
+  ): Promise<Synced> {
+    const existing = this.shelfId();
+    if (existing !== null && existing !== shelf) {
+      return { status: "none" };
+    }
+    const head = await repository.head(shelf);
+    if (head === null) {
+      return await this.backfill(repository, session, shelf);
+    }
+    if (head.commit === this.metaValue("commit")) {
+      return { status: "current" };
+    }
+    const entries = await repository.entries(shelf, head.tree);
+    const read = await this.readRepository(repository, shelf, entries);
+    let errors: readonly ShelfProblem[];
+    if ("errors" in read) {
+      ({ errors } = read);
+    } else {
+      const committed = await this.commitNow(session, {
+        contents: read.contents,
+        entries: read.files,
+        from: { commit: head.commit, entries },
+        message: head.message,
+        origin: "git",
+        parent: undefined,
+        shelf,
+      });
+      if (committed.ok) {
+        return { status: "indexed" };
       }
-      const head = await repository.head(shelf);
-      if (head === null) {
-        return await this.backfill(repository, session, shelf);
-      }
-      if (head.commit === this.metaValue("commit")) {
-        return { status: "current" };
-      }
-      const entries = await repository.entries(shelf, head.tree);
-      const read = await this.readRepository(repository, shelf, entries);
-      let errors: readonly ShelfProblem[];
-      if ("errors" in read) {
-        ({ errors } = read);
-      } else {
-        const committed = await this.commitNow(session, {
-          contents: read.contents,
-          entries: read.files,
-          from: { commit: head.commit, entries },
-          message: head.message,
-          origin: "git",
-          parent: undefined,
-          shelf,
-        });
-        if (committed.ok) {
-          return { status: "indexed" };
-        }
-        ({ errors } = committed);
-      }
-      this.setMeta(
-        "repository_refused",
-        JSON.stringify({ commit: head.commit, errors })
-      );
-      this.broadcast({ at: now(), id: head.commit, kind: "snapshot" });
-      return { commit: head.commit, errors, status: "refused" };
-    });
+      ({ errors } = committed);
+    }
+    this.setMeta(
+      "repository_refused",
+      JSON.stringify({ commit: head.commit, errors })
+    );
+    this.broadcast({ at: now(), id: head.commit, kind: "snapshot" });
+    return { commit: head.commit, errors, status: "refused" };
   }
 
   /**
@@ -1780,6 +1803,28 @@ export class ShelfIndex extends DurableObject<Env> {
 
   /** Replace some of the shelf's files (or remove them, with `null`) and commit the result as a new snapshot. */
   private async edit(
+    session: Session,
+    shelf: string,
+    changesFor: () =>
+      | ReadonlyMap<string, Uint8Array | null>
+      | Promise<ReadonlyMap<string, Uint8Array | null>>,
+    message: string | null,
+    origin: SnapshotRecord["origin"]
+  ): Promise<Committed> {
+    const first = await this.editOnce(
+      session,
+      shelf,
+      await changesFor(),
+      message,
+      origin
+    );
+    // The repository had moved on, and the shelf now shows its head: make the change once more, on top of it.
+    return isRepositoryConflict(first)
+      ? await this.editOnce(session, shelf, await changesFor(), message, origin)
+      : first;
+  }
+
+  private async editOnce(
     session: Session,
     shelf: string,
     changes: ReadonlyMap<string, Uint8Array | null>,
@@ -2357,21 +2402,24 @@ export class ShelfIndex extends DurableObject<Env> {
     if ("ok" in granted) {
       return null;
     }
-    return this.db
-      .select()
-      .from(table.revision)
-      .where(eq(table.revision.itemId, id))
-      .orderBy(desc(table.revision.createdAt))
-      .all()
-      .map((row) => ({
-        createdAt: row.createdAt,
-        document: row.document,
-        files: row.files,
-        keyId: row.keyId,
-        message: row.message,
-        revision: row.revision,
-        snapshot: row.snapshot,
-      }));
+    return (
+      this.db
+        .select()
+        .from(table.revision)
+        .where(eq(table.revision.itemId, id))
+        // Newest first; two made within the same second, in the order they were made.
+        .orderBy(desc(table.revision.createdAt), desc(sql`rowid`))
+        .all()
+        .map((row) => ({
+          createdAt: row.createdAt,
+          document: row.document,
+          files: row.files,
+          keyId: row.keyId,
+          message: row.message,
+          revision: row.revision,
+          snapshot: row.snapshot,
+        }))
+    );
   }
 
   /**
@@ -2407,38 +2455,68 @@ export class ShelfIndex extends DurableObject<Env> {
       };
     }
     const document = parsed.output;
-    const existing = this.db
-      .select()
-      .from(table.item)
-      .where(eq(table.item.id, document.id))
-      .get();
-    const directory =
-      existing?.path ??
-      `items/${KIND_DIRECTORIES[document.kind]}/${document.id}`;
-    const changes = new Map<string, Uint8Array | null>();
-    for (const file of existing?.files ?? []) {
-      changes.set(`${directory}/${file}`, null);
-    }
-    changes.set(
-      `${directory}/item.json`,
-      encoder.encode(`${JSON.stringify(document, null, 2)}\n`)
-    );
-    for (const file of input.files) {
-      if (file.path === "item.json") {
-        continue;
+    // Read when the edit is made, and again if it is made a second time on top of a repository that had moved on.
+    const changesFor = async () => {
+      const existing = this.db
+        .select()
+        .from(table.item)
+        .where(eq(table.item.id, document.id))
+        .get();
+      const directory =
+        existing?.path ??
+        `items/${KIND_DIRECTORIES[document.kind]}/${document.id}`;
+      const changes = new Map<string, Uint8Array | null>();
+      for (const file of existing?.files ?? []) {
+        changes.set(`${directory}/${file}`, null);
       }
       changes.set(
-        `${directory}/${file.path}`,
-        decoded(file.contents, file.encoding)
+        `${directory}/item.json`,
+        encoder.encode(
+          await this.itemJson(`${directory}/item.json`, existing, document)
+        )
       );
-    }
+      for (const file of input.files) {
+        if (file.path !== "item.json") {
+          changes.set(
+            `${directory}/${file.path}`,
+            decoded(file.contents, file.encoding)
+          );
+        }
+      }
+      return changes;
+    };
     return await this.edit(
       session,
       shelf,
-      changes,
+      changesFor,
       input.message ?? null,
       "edit"
     );
+  }
+
+  /**
+   * The text of an item's item.json after an edit: the file as it is, with only the members whose value changed
+   * rewritten, so its history shows the edit and not a rewrite. A new item, or a file this cannot edit, is written
+   * whole.
+   */
+  private async itemJson(
+    path: string,
+    existing: { readonly document: Item } | undefined,
+    document: Item
+  ): Promise<string> {
+    const whole = `${JSON.stringify(document, null, 2)}\n`;
+    const contents = await this.contents();
+    const bytes = existing === undefined ? undefined : contents.get(path);
+    const current = bytes === undefined ? null : textOf(bytes);
+    if (existing === undefined || current === null) {
+      return whole;
+    }
+    const edited = editJsonObject(
+      current,
+      v.parse(JsonObjectSchema, existing.document),
+      v.parse(JsonObjectSchema, document)
+    );
+    return edited ?? whole;
   }
 
   /** Remove an item. The engine refuses it while a profile, a bundle, or another item still names it. */
@@ -2466,7 +2544,13 @@ export class ShelfIndex extends DurableObject<Env> {
     const changes = new Map<string, Uint8Array | null>(
       existing.files.map((file) => [`${existing.path}/${file}`, null])
     );
-    return await this.edit(session, shelf, changes, `remove ${id}`, "edit");
+    return await this.edit(
+      session,
+      shelf,
+      () => changes,
+      `remove ${id}`,
+      "edit"
+    );
   }
 
   setFavourite(
@@ -2604,18 +2688,21 @@ export class ShelfIndex extends DurableObject<Env> {
     if ("ok" in granted) {
       return null;
     }
-    return this.db
-      .select()
-      .from(table.profileRevision)
-      .where(eq(table.profileRevision.profileId, id))
-      .orderBy(desc(table.profileRevision.createdAt))
-      .all()
-      .map((row) => ({
-        createdAt: row.createdAt,
-        profile: row.document,
-        revision: row.revision,
-        snapshot: row.snapshot,
-      }));
+    return (
+      this.db
+        .select()
+        .from(table.profileRevision)
+        .where(eq(table.profileRevision.profileId, id))
+        // Newest first; two made within the same second, in the order they were made.
+        .orderBy(desc(table.profileRevision.createdAt), desc(sql`rowid`))
+        .all()
+        .map((row) => ({
+          createdAt: row.createdAt,
+          profile: row.document,
+          revision: row.revision,
+          snapshot: row.snapshot,
+        }))
+    );
   }
 
   /** Every bundle, as `bundles/<id>.json` holds it, sorted by id. */
@@ -2710,7 +2797,7 @@ export class ShelfIndex extends DurableObject<Env> {
     return await this.edit(
       session,
       shelf,
-      changes,
+      () => changes,
       message ?? `save ${path}`,
       "edit"
     );
@@ -2729,7 +2816,7 @@ export class ShelfIndex extends DurableObject<Env> {
     return await this.edit(
       session,
       shelf,
-      new Map([[path, null]]),
+      () => new Map([[path, null]]),
       `remove ${path}`,
       "edit"
     );
@@ -3028,7 +3115,7 @@ export class ShelfIndex extends DurableObject<Env> {
     return await this.edit(
       session,
       shelf,
-      new Map([["shelf.json", bytes]]),
+      () => new Map([["shelf.json", bytes]]),
       "edit shelf.json",
       "edit"
     );
@@ -3604,7 +3691,7 @@ export class ShelfIndex extends DurableObject<Env> {
     const committed = await this.edit(
       session,
       shelf,
-      changes,
+      () => changes,
       `import ${id}`,
       "import"
     );
@@ -4006,6 +4093,15 @@ function forbidden(): Committed {
     ok: false,
     reason: "forbidden",
   };
+}
+
+/** Whether a write was refused because the shelf's repository had moved on from the commit it was indexed at. */
+function isRepositoryConflict(committed: Committed): boolean {
+  return (
+    !committed.ok &&
+    committed.reason === "conflict" &&
+    committed.errors.some((error) => error.path === "<repository>")
+  );
 }
 
 /** Who a commit the Worker makes names as its author: the person, the key's name, or the owner. */
