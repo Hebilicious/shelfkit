@@ -12,7 +12,9 @@
 //! Copilot CLI 1.0.101, VS Code, and Cursor in October 2026: Claude Code,
 //! Cursor, and Copilot honour `disable-model-invocation` at the top level
 //! only, Codex ignores it, Copilot CLI refuses a description over 1024
-//! characters, and no agent acts on `metadata` beyond its own keys.
+//! characters, and no agent acts on `metadata` beyond its own keys. For
+//! Codex, [`codex_settings`] carries `disable-model-invocation` over into
+//! the `agents/openai.yaml` it reads.
 
 use crate::revision::normalize_line_endings;
 use crate::shelf::{LoadedItem, Notice, NoticeCode};
@@ -55,21 +57,73 @@ pub(crate) struct FrontmatterProblems {
     pub soft: Vec<String>,
 }
 
+/// The YAML between a `SKILL.md`'s opening `---` fences, if it has them.
+fn frontmatter_text(bytes: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(&normalize_line_endings(bytes)).into_owned();
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    text.strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---").map(|(yaml, _)| yaml.to_owned()))
+}
+
+/// Where Codex reads a skill's settings, in the skill's own folder.
+pub const CODEX_SETTINGS: &str = "agents/openai.yaml";
+
+/// The `agents/openai.yaml` a skill gets when its `SKILL.md` sets `disable-model-invocation: true` and it has no
+/// such file of its own. Claude Code, Cursor, and Copilot read that key; Codex does not, and keeps a skill out of the
+/// model's reach only through `policy.allow_implicit_invocation: false` in this file, which it still lets a person
+/// invoke as `$<name>`.
+pub fn codex_settings(loaded: &LoadedItem) -> Option<Vec<u8>> {
+    if loaded.files.contains_key(CODEX_SETTINGS) {
+        return None;
+    }
+    disables_model_invocation(loaded.files.get("SKILL.md")?).then(|| {
+        b"# Written by ShelfKit: SKILL.md sets `disable-model-invocation: true`, which Codex does not read.\n\
+          policy:\n  allow_implicit_invocation: false\n"
+            .to_vec()
+    })
+}
+
+/// Whether a `SKILL.md`'s frontmatter sets `disable-model-invocation: true`.
+fn disables_model_invocation(bytes: &[u8]) -> bool {
+    frontmatter_text(bytes)
+        .and_then(|yaml| serde_yaml::from_str::<serde_yaml::Value>(&yaml).ok())
+        .and_then(|value| {
+            value
+                .get("disable-model-invocation")
+                .and_then(serde_yaml::Value::as_bool)
+        })
+        == Some(true)
+}
+
+/// Whether a skill's own `agents/openai.yaml` lets Codex use it unasked, when `SKILL.md` says no model may.
+fn codex_settings_disagree(loaded: &LoadedItem) -> bool {
+    let (Some(skill), Some(settings)) = (
+        loaded.files.get("SKILL.md"),
+        loaded.files.get(CODEX_SETTINGS),
+    ) else {
+        return false;
+    };
+    let implicit = serde_yaml::from_slice::<serde_yaml::Value>(settings)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("policy")?
+                .get("allow_implicit_invocation")?
+                .as_bool()
+        });
+    disables_model_invocation(skill) && implicit != Some(false)
+}
+
 /// Check a `SKILL.md` for the skill `id`.
 pub(crate) fn check_frontmatter(id: &str, bytes: &[u8]) -> FrontmatterProblems {
     let mut problems = FrontmatterProblems::default();
-    let text = String::from_utf8_lossy(&normalize_line_endings(bytes)).into_owned();
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    let frontmatter = text
-        .strip_prefix("---\n")
-        .and_then(|rest| rest.split_once("\n---").map(|(yaml, _)| yaml));
-    let Some(frontmatter) = frontmatter else {
+    let Some(frontmatter) = frontmatter_text(bytes) else {
         problems
             .hard
             .push("must start with a `---` YAML block".to_owned());
         return problems;
     };
-    let mapping = match serde_yaml::from_str::<serde_yaml::Value>(frontmatter) {
+    let mapping = match serde_yaml::from_str::<serde_yaml::Value>(&frontmatter) {
         Ok(serde_yaml::Value::Mapping(mapping)) => mapping,
         Ok(_) => {
             problems.hard.push("must be a YAML mapping".to_owned());
@@ -115,8 +169,9 @@ pub(crate) fn check_frontmatter(id: &str, bytes: &[u8]) -> FrontmatterProblems {
             Some(key) if SPEC_KEYS.contains(&key) => {}
             Some("disable-model-invocation") => problems.soft.push(format!(
                 "`disable-model-invocation` is not an agentskills.io key, so {STRICT}. Claude Code, Cursor, and \
-                 Copilot honour it here at the top level and nowhere else (in `metadata` they ignore it); Codex \
-                 ignores it and reads `agents/openai.yaml` (`policy: allow_implicit_invocation: false`) instead"
+                 Copilot honour it here at the top level and nowhere else (in `metadata` they ignore it). Codex \
+                 ignores it, so the installed skill gets `{CODEX_SETTINGS}` with `policy: allow_implicit_invocation: \
+                 false`, which Codex reads instead"
             )),
             Some(key) if CLAUDE_CODE_KEYS.contains(&key) => problems.soft.push(format!(
                 "`{key}` is a Claude Code key, not an agentskills.io one, so {STRICT}. Claude Code honours it only \
@@ -165,7 +220,7 @@ pub(crate) fn notices(loaded: &LoadedItem) -> Vec<Notice> {
         return Vec::new();
     };
     let path = format!("{}/SKILL.md", loaded.path);
-    check_frontmatter(&loaded.item.id, bytes)
+    let mut notices: Vec<Notice> = check_frontmatter(&loaded.item.id, bytes)
         .soft
         .into_iter()
         .map(|problem| Notice {
@@ -173,7 +228,19 @@ pub(crate) fn notices(loaded: &LoadedItem) -> Vec<Notice> {
             code: NoticeCode::SkillFrontmatter,
             message: problem,
         })
-        .collect()
+        .collect();
+    if codex_settings_disagree(loaded) {
+        notices.push(Notice {
+            path: format!("{}/{CODEX_SETTINGS}", loaded.path),
+            code: NoticeCode::SkillFrontmatter,
+            message: format!(
+                "SKILL.md sets `disable-model-invocation: true`, but this `{CODEX_SETTINGS}` does not set \
+                 `policy: allow_implicit_invocation: false`, so Codex still uses the skill on its own. The file is \
+                 the skill's, so ShelfKit leaves it as it is"
+            ),
+        });
+    }
+    notices
 }
 
 #[cfg(test)]
@@ -214,8 +281,8 @@ mod tests {
                  Claude Code",
                 "`disable-model-invocation` is not an agentskills.io key, so strict validators and claude.ai's \
                  skill upload refuse this file. Claude Code, Cursor, and Copilot honour it here at the top level \
-                 and nowhere else (in `metadata` they ignore it); Codex ignores it and reads `agents/openai.yaml` \
-                 (`policy: allow_implicit_invocation: false`) instead",
+                 and nowhere else (in `metadata` they ignore it). Codex ignores it, so the installed skill gets \
+                 `agents/openai.yaml` with `policy: allow_implicit_invocation: false`, which Codex reads instead",
                 "`license` must be a string",
                 "`compatibility` is 501 characters; agentskills.io allows at most 500",
                 "`metadata` must map strings to strings, so strict validators and claude.ai's skill upload refuse \

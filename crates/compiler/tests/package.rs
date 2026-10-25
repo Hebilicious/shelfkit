@@ -101,7 +101,7 @@ fn a_generated_version_names_the_revision_and_changes_with_the_content() {
     assert_eq!(
         first.version,
         format!(
-            "0.0.0+sha256.{}.format3",
+            "0.0.0+sha256.{}.format4",
             first
                 .profile_revision
                 .as_str()

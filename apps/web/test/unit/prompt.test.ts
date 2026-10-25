@@ -4,6 +4,7 @@ import {
   asCommand,
   asSkill,
   copyText,
+  disablesModelInvocation,
   filledText,
   missingRequired,
   placeholders,
@@ -104,5 +105,20 @@ describe("frontmatter", () => {
       yaml: "a: b",
     });
     expect(splitFrontmatter("no\n---\n")).toBeNull();
+  });
+});
+
+describe("a skill kept from the model", () => {
+  it("is one whose SKILL.md frontmatter sets disable-model-invocation", () => {
+    expect(
+      disablesModelInvocation(
+        "---\nname: triage\ndescription: Triage.\ndisable-model-invocation: true\n---\n\nBody.\n"
+      )
+    ).toBeTruthy();
+    expect(
+      disablesModelInvocation(
+        "---\nname: triage\ndescription: Triage.\n---\n\ndisable-model-invocation: true\n"
+      )
+    ).toBeFalsy();
   });
 });

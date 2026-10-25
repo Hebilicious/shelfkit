@@ -91,8 +91,9 @@ pub fn generated_version(revision: &Revision) -> String {
 /// The package layout this compiler writes. Bump it when the files of a package change for the same profile.
 ///
 /// 2: instructions moved to `.github/instructions/`. 3: an instructions body that opens with its own top-level
-/// heading is not given the item's title above it.
-pub const FORMAT: u32 = 3;
+/// heading is not given the item's title above it. 4: a skill whose `SKILL.md` sets `disable-model-invocation` gets
+/// `agents/openai.yaml` for Codex.
+pub const FORMAT: u32 = 4;
 
 /// Package one resolved profile of `shelf`.
 pub fn package(shelf: &Shelf, resolved: &ResolvedProfile) -> Result<PackagedProfile, Errors> {

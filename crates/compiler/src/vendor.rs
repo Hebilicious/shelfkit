@@ -6,7 +6,7 @@
 //!
 //! | Kind | Written to |
 //! | --- | --- |
-//! | `skill` | `.apm/skills/<id>/`, every file of the item but `item.json` |
+//! | `skill` | `.apm/skills/<id>/`, every file of the item but `item.json`, plus `agents/openai.yaml` for Codex when `SKILL.md` sets `disable-model-invocation` |
 //! | `prompt` | `.apm/prompts/<id>.prompt.md` |
 //! | `agent` | `.apm/agents/<id>.agent.md` |
 //! | `hook` | `.apm/hooks/<id>.json` |
@@ -48,6 +48,12 @@ pub fn primitive_files(loaded: &LoadedItem) -> Result<BTreeMap<String, Vec<u8>>,
             require(loaded, "SKILL.md")?;
             for (name, bytes) in content_files(loaded) {
                 files.insert(format!(".apm/skills/{id}/{name}"), bytes);
+            }
+            if let Some(settings) = shelfkit_core::skill::codex_settings(loaded) {
+                files.insert(
+                    format!(".apm/skills/{id}/{}", shelfkit_core::skill::CODEX_SETTINGS),
+                    settings,
+                );
             }
         }
         Payload::Prompt(prompt) => {

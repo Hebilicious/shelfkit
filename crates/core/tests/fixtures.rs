@@ -530,6 +530,51 @@ fn a_skill_off_the_agentskills_spec_loads_and_is_reported() {
     // and one that does not carries none.
     assert_eq!(reported(&shelf.resolve("full").unwrap().notices), checked);
     assert!(reported(&shelf.resolve("minimal").unwrap().notices).is_empty());
+
+    // Codex reads `disable-model-invocation` from agents/openai.yaml, which the installed skill gets.
+    let settings = shelfkit_core::skill::codex_settings(&shelf.items["review-checklist"]).unwrap();
+    let settings: serde_yaml::Value = serde_yaml::from_slice(&settings).unwrap();
+    assert_eq!(
+        settings["policy"]["allow_implicit_invocation"],
+        serde_yaml::Value::Bool(false)
+    );
+}
+
+#[test]
+fn a_skills_own_codex_settings_are_kept_and_a_disagreement_reported() {
+    let mut source = memory("all-kinds");
+    source.insert(
+        "items/skills/review-checklist/SKILL.md",
+        "---\nname: review-checklist\ndescription: Review.\ndisable-model-invocation: true\n---\n\nBody.\n",
+    );
+    let settings = "items/skills/review-checklist/agents/openai.yaml";
+    source.insert(settings, "interface:\n  display_name: \"Review\"\n");
+    let shelf = load(&source).unwrap_or_else(|errors| panic!("{errors}"));
+    assert_eq!(
+        shelfkit_core::skill::codex_settings(&shelf.items["review-checklist"]),
+        None,
+        "the skill's own file is never replaced"
+    );
+    let reported: Vec<String> = shelf
+        .check()
+        .iter()
+        .filter(|notice| notice.path == settings)
+        .map(|notice| notice.message.clone())
+        .collect();
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert!(
+        reported[0].contains("Codex still uses the skill on its own"),
+        "{reported:?}"
+    );
+
+    source.insert(settings, "policy:\n  allow_implicit_invocation: false\n");
+    let agreeing = load(&source).unwrap_or_else(|errors| panic!("{errors}"));
+    assert!(
+        agreeing
+            .check()
+            .iter()
+            .all(|notice| notice.path != settings)
+    );
 }
 
 #[test]

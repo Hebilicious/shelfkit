@@ -21,6 +21,7 @@ import { useShelfId } from "../composables/shelf-context.ts";
 import { notify, notifyError } from "../composables/toasts.ts";
 import { invalidate, shelfPrefix } from "../data/cache.ts";
 import { patchIndexItem, useItem, useItemInstall, useShelfIndex } from "../data/shelf.ts";
+import { disablesModelInvocation } from "../lib/prompt.ts";
 import { param } from "../navigation.ts";
 import {
   ago,
@@ -312,6 +313,15 @@ const PROVENANCE_FIELDS = [
           class="small muted"
         >
           {{ RULES_NOTE }}
+        </p>
+        <p
+          v-if='item.kind === "skill" && disablesModelInvocation(item.body ?? "")'
+          class="small"
+          data-testid="asked-only"
+        >
+          <strong>Only when asked.</strong> SKILL.md sets <code>disable-model-invocation: true</code>, so no agent
+          uses this skill on its own; you run it by name. Claude Code, Cursor, and Copilot read that from SKILL.md, and
+          Codex from <code>agents/openai.yaml</code>, which the installed skill gets.
         </p>
         <p class="small muted">
           {{ installSentence(item.coordinate) }}

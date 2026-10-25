@@ -712,9 +712,19 @@ fn apm_install_accepts_compiled_manifests_when_apm_is_present() {
         ),
         ("items/prompts/hello/prompt.md".to_owned(), "Say hello.\n".to_owned()),
         (
+            "items/skills/ask-first/item.json".to_owned(),
+            r#"{ "id": "ask-first", "kind": "skill", "title": "Ask first" }"#.to_owned(),
+        ),
+        (
+            "items/skills/ask-first/SKILL.md".to_owned(),
+            "---\nname: ask-first\ndescription: Runs only when a person asks for it.\n\
+             disable-model-invocation: true\n---\n\nAsk before doing anything.\n"
+                .to_owned(),
+        ),
+        (
             "profiles/mixed.json".to_owned(),
-            r#"{ "id": "mixed", "title": "Mixed", "items": ["conventions", "frontend-design", "echo", "hello"],
-                 "compile": { "targets": ["claude"] } }"#
+            r#"{ "id": "mixed", "title": "Mixed", "items": ["conventions", "frontend-design", "echo", "hello", "ask-first"],
+                 "compile": { "targets": ["claude", "codex"] } }"#
                 .to_owned(),
         ),
     ] {
@@ -746,6 +756,14 @@ fn apm_install_accepts_compiled_manifests_when_apm_is_present() {
         lock.contains("dbd4588f9e1033efb41dad4bef2f7947c8993d44"),
         "{lock}"
     );
+    // Codex reads `disable-model-invocation` from the skill's agents/openai.yaml, which APM installs with the skill.
+    let codex = std::fs::read_to_string(repo.join(".agents/skills/ask-first/agents/openai.yaml"))
+        .expect("the skill Codex reads has no agents/openai.yaml");
+    assert!(
+        codex.contains("allow_implicit_invocation: false"),
+        "{codex}"
+    );
+    assert!(repo.join(".claude/skills/ask-first/SKILL.md").is_file());
 }
 
 /// A minimal OpenAPM registry on loopback, enough for `apm install`: the

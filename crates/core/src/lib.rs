@@ -23,7 +23,7 @@ pub mod resolve;
 pub mod revision;
 pub mod secret;
 pub mod shelf;
-mod skill;
+pub mod skill;
 pub mod source;
 pub mod target;
 
