@@ -14,9 +14,11 @@
 //! `version` publishes as exactly that semver. A profile without one
 //! publishes as `0.0.0+sha256.<revision hex>.format<N>`: semver build
 //! metadata that names the revision and the package [`FORMAT`]. APM's
-//! client ranks every build of `0.0.0` the same and, among equals, picks
-//! the one the registry lists last, which is the newest published, so
-//! `>=0.0.0` follows the profile.
+//! client ranks every build of `0.0.0` the same, and among equals a range
+//! picks the one the registry lists last, which is the oldest (the list is
+//! newest first). So a consumer pins the exact version, which APM matches
+//! by its text before it tries a range: `shelfkit install` writes the newest
+//! published one, and running it again moves the pin.
 //!
 //! The format is part of the version because versions are immutable: when
 //! the layout of a package changes (format 2 moved instructions to
@@ -87,7 +89,10 @@ pub fn generated_version(revision: &Revision) -> String {
 }
 
 /// The package layout this compiler writes. Bump it when the files of a package change for the same profile.
-pub const FORMAT: u32 = 2;
+///
+/// 2: instructions moved to `.github/instructions/`. 3: an instructions body that opens with its own top-level
+/// heading is not given the item's title above it.
+pub const FORMAT: u32 = 3;
 
 /// Package one resolved profile of `shelf`.
 pub fn package(shelf: &Shelf, resolved: &ResolvedProfile) -> Result<PackagedProfile, Errors> {

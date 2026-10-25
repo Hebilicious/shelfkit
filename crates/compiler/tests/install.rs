@@ -33,6 +33,8 @@ struct Machine {
     ran: RefCell<Vec<Run>>,
     /// Every HTTP request, as `METHOD url`, and whether it carried the key.
     requests: RefCell<Vec<(String, bool)>>,
+    /// The newest published version, first in the registry's list.
+    newest: RefCell<&'static str>,
 }
 
 impl Machine {
@@ -40,6 +42,7 @@ impl Machine {
         Self {
             keychain: BTreeMap::new(),
             private,
+            newest: RefCell::new("1.0.0"),
             ran: RefCell::new(Vec::new()),
             requests: RefCell::new(Vec::new()),
         }
@@ -95,7 +98,10 @@ impl System for Machine {
         match request.url.strip_prefix(URL).unwrap() {
             "/apm/v1/packages/team/web/versions" | "/apm/v1/packages/team/any/versions" => answer(
                 200,
-                &json!({ "versions": [{ "version": "1.0.0", "digest": "sha256:00", "published_at": "2026-10-25T00:00:00Z" }] }),
+                &json!({ "versions": [
+                    { "version": *self.newest.borrow(), "digest": "sha256:01", "published_at": "2026-10-25T01:00:00Z" },
+                    { "version": "0.9.0", "digest": "sha256:00", "published_at": "2026-10-25T00:00:00Z" },
+                ] }),
             ),
             "/graphql" if String::from_utf8_lossy(&request.body).contains("\"any\"") => answer(
                 200,
@@ -152,7 +158,7 @@ fn a_public_profile_goes_into_a_new_apm_yml_and_apm_installs_it() {
         manifest,
         format!(
             "name: {name}\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - codex\nregistries:\n  team:\n    url: \"{URL}/apm\"\n\
-             dependencies:\n  apm:\n    - registry: team\n      id: team/web\n      version: \">=0.0.0\"\n\
+             dependencies:\n  apm:\n    - registry: team\n      id: team/web\n      version: \"1.0.0\"\n\
              compilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section\n"
         )
     );
@@ -387,4 +393,27 @@ fn a_profile_naming_no_agents_sets_up_the_common_four_unless_the_repository_show
         !manifest.contains("targets"),
         "APM detects Cursor: {manifest}"
     );
+}
+
+#[test]
+fn the_newest_version_is_pinned_and_installing_again_moves_the_pin() {
+    let repo = scratch("pin");
+    let machine = Machine::new(false);
+    let ran = shelfkit(&repo, &machine, &["install", "team/web", "--url", URL]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let manifest = std::fs::read_to_string(repo.join("apm.yml")).unwrap();
+    assert!(
+        manifest.contains("      version: \"1.0.0\"\n"),
+        "{manifest}"
+    );
+
+    *machine.newest.borrow_mut() = "1.1.0";
+    let again = shelfkit(&repo, &machine, &["install", "team/web", "--url", URL]);
+    assert_eq!(again.code, 0, "{}", again.stderr);
+    let manifest = std::fs::read_to_string(repo.join("apm.yml")).unwrap();
+    assert!(
+        manifest.contains("      version: \"1.1.0\"\n"),
+        "{manifest}"
+    );
+    assert_eq!(manifest.matches("id: team/web").count(), 1, "{manifest}");
 }

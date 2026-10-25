@@ -1,8 +1,9 @@
 //! `shelfkit install`: put a hosted profile into a repository, and run APM there (`docs/PRD.md` section 4.2).
 //!
 //! With a profile (`<shelf>/<profile>`), the repository's apm.yml gains the shelf's registry and a dependency on the
-//! profile that follows its newest published version, beside whatever the file already declares. Without one, APM
-//! installs what apm.yml already declares. Then, in order:
+//! profile's newest published version, pinned exactly, beside whatever the file already declares; running it again
+//! moves the pin to the newest. (A range cannot follow a profile: APM ranks every generated `0.0.0+…` version the
+//! same, `crate::package`.) Without a profile, APM installs what apm.yml already declares. Then, in order:
 //!
 //! 1. APM's experimental registry support is turned on (`apm experimental enable registries`), and each private
 //!    ShelfKit registry apm.yml names is put in APM's user config, the only place APM 0.33 sends a registry key to.
@@ -113,7 +114,7 @@ fn add_profile(
     let wanted = ProfileRef::parse(profile)?;
     let url = deployment(ctx.system, url)?;
     let key = key_for(ctx.system, &url)?;
-    check_published(ctx.system, &url, key.as_deref(), &wanted)?;
+    let version = newest_version(ctx.system, &url, key.as_deref(), &wanted)?;
     let facts = profile_facts(ctx.system, &url, key.as_deref(), &wanted);
 
     let path = repo.join(APM_YML);
@@ -122,11 +123,11 @@ fn add_profile(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(format!("{}: {error}", path.display())),
     };
-    let text = with_profile(existing.as_deref(), repo, &url, &wanted, &facts)?;
+    let text = with_profile(existing.as_deref(), repo, &url, &wanted, &version, &facts)?;
     if existing.as_deref() == Some(text.as_str()) {
         let _ = writeln!(
             ctx.stderr,
-            "apm.yml already installs {} from {url}",
+            "apm.yml already installs {}@{version}, its newest version, from {url}",
             wanted.coordinate()
         );
         return Ok(());
@@ -134,7 +135,8 @@ fn add_profile(
     std::fs::write(&path, &text).map_err(|error| format!("{}: {error}", path.display()))?;
     let _ = writeln!(
         ctx.stderr,
-        "{} apm.yml: the registry `{}` ({url}/apm) and {} at its newest version",
+        "{} apm.yml: the registry `{}` ({url}/apm) and {}@{version}, its newest version. Run this again to move to \
+         a newer one.",
         if existing.is_some() {
             "Updated"
         } else {
@@ -180,13 +182,14 @@ fn get(
         .map_err(|error| format!("GET {url}: {error}"))
 }
 
-/// Ask the registry for the profile's versions, as APM will, and explain what stops APM before it runs.
-fn check_published(
+/// Ask the registry for the profile's versions, as APM will, and return the newest (the list is newest first);
+/// explain what stops APM before it runs.
+fn newest_version(
     system: &dyn System,
     url: &str,
     key: Option<&str>,
     wanted: &ProfileRef,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let versions = format!(
         "{url}/apm/v1/packages/{}/{}/versions",
         encode_segment(&wanted.shelf),
@@ -197,17 +200,14 @@ fn check_published(
     match (response.status, key) {
         (200, _) => {
             let published: Value = serde_json::from_slice(&response.body).unwrap_or(Value::Null);
-            let empty = published
-                .get("versions")
-                .and_then(Value::as_array)
-                .is_some_and(Vec::is_empty);
-            if empty {
-                Err(format!(
-                    "{coordinate} is on {url} but not published: its owner publishes it with `shelfkit push`"
-                ))
-            } else {
-                Ok(())
-            }
+            published["versions"][0]["version"]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    format!(
+                        "{coordinate} is on {url} but not published: its owner publishes it with `shelfkit push`"
+                    )
+                })
         }
         (401, None) => Err(format!(
             "the shelf `{}` on {url} is private. Once per computer, run `shelfkit login {url}` and paste a key that \
@@ -296,8 +296,8 @@ fn profile_facts(
     }
 }
 
-/// The repository's apm.yml with the profile added: the registry under the shelf's name, a dependency routed to it,
-/// and, for a profile with instructions, the `compilation` settings that put them into AGENTS.md. What the file
+/// The repository's apm.yml with the profile added: the registry under the shelf's name, a dependency on `version`
+/// routed to it, and, for a profile with instructions, the `compilation` settings that put them into AGENTS.md. What the file
 /// already declares is kept, its `targets` included; the registry entry and the dependency replace an older one of
 /// the same name.
 fn with_profile(
@@ -305,6 +305,7 @@ fn with_profile(
     repo: &Path,
     url: &str,
     wanted: &ProfileRef,
+    version: &str,
     facts: &ProfileFacts,
 ) -> Result<String, String> {
     let mut ours = Vec::new();
@@ -344,7 +345,7 @@ fn with_profile(
             Node::Seq(vec![Node::Map(vec![
                 ("registry".to_owned(), Node::string(&wanted.shelf)),
                 ("id".to_owned(), Node::string(wanted.coordinate())),
-                ("version".to_owned(), Node::string(">=0.0.0")),
+                ("version".to_owned(), Node::string(version)),
             ])]),
         )]),
     ));

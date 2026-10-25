@@ -20,6 +20,7 @@ const target: InstallTarget = {
   registryUrl: "https://shelf.example.dev/apm",
   targets: ["claude", "codex"],
   title: "ShelfKit development",
+  version: "0.0.0+sha256.abc.format3",
 };
 const secret: InstallTarget = { ...target, isPrivate: true };
 
@@ -64,7 +65,7 @@ describe("installing a profile with the ShelfKit CLI", () => {
 });
 
 describe("installing a profile with APM alone", () => {
-  it("declares a named registry and a dependency routed to it, following the newest version", () => {
+  it("declares a named registry and a dependency routed to it, pinned to the newest version", () => {
     expect(manifestEntries(target)).toBe(
       [
         "registries:",
@@ -74,7 +75,7 @@ describe("installing a profile with APM alone", () => {
         "  apm:",
         "    - registry: hebilicious",
         "      id: hebilicious/default",
-        '      version: ">=0.0.0"',
+        '      version: "0.0.0+sha256.abc.format3"',
       ].join("\n")
     );
   });

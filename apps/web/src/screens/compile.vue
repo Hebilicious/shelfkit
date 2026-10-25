@@ -5,6 +5,7 @@
  * where each agent reads it. The ShelfKit CLI is the default way there, and APM alone the other; each as a prompt for an
  * agent or commands for a terminal. Everything here is computed from the profiles and the index already in memory.
  */
+import * as v from "valibot";
 import { computed, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 
@@ -84,6 +85,13 @@ const hasRules = computed(() => groups.value.some((group) => RULE_KINDS.has(grou
 
 const published = computed(() => (profile.value?.published ?? null) !== null);
 
+/** BOUNDARY: a published profile's versions, as the Worker lists them, newest first. */
+const VersionsSchema = v.array(v.object({ version: v.string() }));
+const newestVersion = computed(() => {
+  const parsed = v.safeParse(VersionsSchema, profile.value?.published?.versions);
+  return parsed.success ? (parsed.output[0]?.version ?? null) : null;
+});
+
 const target = computed<InstallTarget | null>(() => {
   const current = profile.value;
   const summary = index.data.value;
@@ -99,6 +107,7 @@ const target = computed<InstallTarget | null>(() => {
     registryUrl: summary.registryUrl,
     targets: readProfile(current.document)?.compile.targets ?? [],
     title: current.title,
+    version: newestVersion.value,
   };
 });
 

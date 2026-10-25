@@ -122,7 +122,7 @@ One consequence to accept: because APM owns install, **an APM breaking change is
 | `shelfkit search <query>` | Search the shelf, and optionally federated sources |
 | `shelfkit serve` | Run a shelf locally as an OpenAPM registry |
 | `shelfkit compile` | Write `apm.yml` and vendored content |
-| `shelfkit install [<shelf>/<profile> --url <deployment>]` | Add a hosted profile to the repository's `apm.yml` (registry and dependency), then run APM, resolved from the path or through `uvx`, handing it the key `shelfkit login` keeps for each ShelfKit registry `apm.yml` names. Without a profile, run APM on the `apm.yml` there |
+| `shelfkit install [<shelf>/<profile> --url <deployment>]` | Add a hosted profile to the repository's `apm.yml` (its registry, and the profile pinned to its newest published version, which running it again moves), then run APM, resolved from the path or through `uvx`, handing it the key `shelfkit login` keeps for each ShelfKit registry `apm.yml` names. Without a profile, run APM on the `apm.yml` there |
 | `shelfkit check` | Validate the shelf: schemas, coordinates, references, unratified keys, target conformance |
 | `shelfkit verify` | The manifest still matches the profile it came from |
 | `shelfkit recommend` | Propose items and profiles from detected stack markers |

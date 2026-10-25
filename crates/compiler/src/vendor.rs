@@ -246,16 +246,22 @@ fn render_prompt(description: &str, prompt: &Prompt, body: &str) -> String {
 }
 
 /// An `.instructions.md` file: APM requires a `description`, and the body
-/// starts with the item's title.
+/// starts with the item's title, unless it opens with a top-level heading of
+/// its own (an AGENTS.md brought in as an item), which then stands for it.
 fn render_instructions(loaded: &LoadedItem, body: &str) -> String {
     let mut out = format!(
-        "---\ndescription: {}\n---\n\n# {}\n",
-        crate::yaml::scalar(description(loaded)),
-        loaded.item.title.trim()
+        "---\ndescription: {}\n---\n\n",
+        crate::yaml::scalar(description(loaded))
     );
+    let titled = body.trim_start().starts_with("# ");
+    if !titled {
+        let _ = writeln!(out, "# {}", loaded.item.title.trim());
+    }
     if !body.is_empty() {
-        out.push('\n');
-        out.push_str(body);
+        if !titled {
+            out.push('\n');
+        }
+        out.push_str(body.trim_start_matches('\n'));
     }
     ensure_trailing_newline(out)
 }

@@ -4,9 +4,10 @@
  *
  * - With the ShelfKit CLI (the default): `shelfkit install <shelf>/<profile> --url <deployment>` adds the profile to
  *   the repository's apm.yml and runs APM, handing it the key `shelfkit login` keeps for a private shelf.
- * - With APM alone: the repository's apm.yml names the shelf's registry and the profile, and `apm install` does the
- *   rest. Verified against APM 0.33: a named registry, a dependency that routes to it, and a `>=0.0.0` range, which
- *   follows the newest version published.
+ * - With APM alone: the repository's apm.yml names the shelf's registry and the profile's newest version, and `apm
+ *   install` does the rest. Verified against APM 0.33: a named registry, and a dependency that routes to it pinned to
+ *   an exact version. A range cannot follow a profile, since APM ranks every generated `0.0.0+…` version the same and
+ *   picks the oldest among them (`crates/compiler/src/package.rs`).
  *
  * Either way the profile comes from the shelf's registry, which `shelfkit push` publishes it to, and a profile's
  * instructions, tech stacks, and library notes go into one section of AGENTS.md, which `apm compile` writes between
@@ -32,6 +33,8 @@ export interface InstallTarget {
   readonly isPrivate: boolean;
   /** The profile has instructions, tech stacks, or library notes, which go into AGENTS.md. */
   readonly instructions: boolean;
+  /** The newest published version, which apm.yml pins; `null` before the first publish. */
+  readonly version: string | null;
 }
 
 /** The lines of AGENTS.md between which `apm compile` writes the instructions. */
@@ -113,7 +116,7 @@ export function manifestEntries(target: InstallTarget): string {
     "  apm:",
     `    - registry: ${name}`,
     `      id: ${target.coordinate}`,
-    '      version: ">=0.0.0"',
+    `      version: "${target.version ?? ">=0.0.0"}"`,
   ];
   if (target.instructions) {
     lines.push(

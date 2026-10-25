@@ -114,8 +114,9 @@ enum Command {
     /// Install a profile from a hosted shelf into a repository, or run `apm install` there.
     ///
     /// With a profile, named `<shelf>/<profile>` as the shelf's Install page shows it, the repository's apm.yml gains
-    /// the shelf's registry and a dependency on the profile that follows its newest published version (apm.yml is
-    /// created when there is none, and what it already declares is kept); then APM installs it. Without one, APM
+    /// the shelf's registry and a dependency on the profile's newest published version, pinned exactly (apm.yml is
+    /// created when there is none, and what it already declares is kept); then APM installs it. Run it again to move
+    /// to a newer version. Without one, APM
     /// installs what apm.yml declares. APM runs through `apm` on PATH or a pinned `uvx`, and the command is printed
     /// first. With neither `apm` nor `uv`, it prints the command that installs uv for this platform.
     ///
