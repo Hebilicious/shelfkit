@@ -6,12 +6,15 @@ import { SourceSchema } from "@shelfkit/schema";
 import type { Source } from "@shelfkit/schema";
 import * as v from "valibot";
 
+import { byCodePoint } from "./http.ts";
 import type {
   AdapterContext,
+  Candidate,
   ImportedFile,
   ImportedItem,
   ImportSource,
   Item,
+  Pick,
 } from "./seam.ts";
 import { ImportedItemSchema } from "./seam.ts";
 
@@ -91,4 +94,35 @@ export function importedItem(draft: ImportedDraft): ImportedItem {
 /** An item's `source`, or an empty one for an authored item. */
 export function sourceOf(item: Item): Source {
   return item.source ?? {};
+}
+
+/** One picked candidate, and the item its adapter fetched for it. */
+export interface Fetched {
+  readonly candidate: Candidate;
+  readonly pick: Pick;
+  readonly imported: ImportedItem;
+}
+
+/**
+ * The items of one import, each requiring the others it links to (`Candidate.requires`): an AGENTS.md imported with
+ * the docs it links to requires them, so a profile that selects it installs them too, and its links resolve. Only
+ * candidates picked in the same import count, under the ids they were picked as; a link to one left out stays a link.
+ */
+export function requireLinked(fetched: readonly Fetched[]): ImportedItem[] {
+  const ids = new Map(
+    fetched.map(({ candidate, imported }) => [candidate.key, imported.item.id])
+  );
+  return fetched.map(({ candidate, imported }) => {
+    const linked = (candidate.requires ?? []).flatMap((key) => {
+      const id = ids.get(key);
+      return id === undefined || id === imported.item.id ? [] : [id];
+    });
+    if (linked.length === 0) {
+      return imported;
+    }
+    const requires = [
+      ...new Set([...(imported.item.requires ?? []), ...linked]),
+    ].toSorted(byCodePoint);
+    return { ...imported, item: { ...imported.item, requires } };
+  });
 }

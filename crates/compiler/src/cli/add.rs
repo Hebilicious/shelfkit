@@ -15,17 +15,26 @@
 //! | `SKILL.md` at the root | one skill, the whole directory |
 //! | `plugin.json` or `.claude-plugin/` at the root | one plugin, the whole directory |
 //! | `skills/<n>/SKILL.md`, `hooks/*.json` | one item each |
+//! | `AGENTS.md` at the root, and the markdown files it links to | one `instructions` item, and one `doc` per file |
+//!
+//! The last row is ShelfKit's, not APM's, and follows the same rule as the
+//! hosted importer (`linked_docs.rs`): each doc's `path` is where it sits in
+//! the directory, which is how AGENTS.md links to it, and each linking item
+//! `requires` the docs it links to, so a profile that selects AGENTS.md gets
+//! them. Their ids come from their file names, kebab-cased and made unique.
 //!
 //! A single `*.prompt.md`, `*.agent.md`, or `*.instructions.md` file yields
 //! one item, and any other markdown file a doc whose `path` is where it sits
-//! in its repository, which is how that repository's instructions link to it. Every item is validated with the rest of the shelf before
-//! anything is written, and an id that is not kebab-case is refused rather
-//! than renamed.
+//! in its repository, which is how that repository's instructions link to it.
+//! Every item is validated with the rest of the shelf before anything is
+//! written, and an id from an APM layout that is not kebab-case is refused
+//! rather than renamed.
 
+use super::linked_docs;
 use crate::engine::Overlay;
 use shelfkit_core::profile::{ShelfSource, SourceKind};
 use shelfkit_core::{DirSource, Item, ItemKind, Manifest, MemorySource, load};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// One discovered primitive.
@@ -48,12 +57,15 @@ struct Found {
 pub struct Import {
     pub files: BTreeMap<String, Vec<u8>>,
     pub items: Vec<(ItemKind, String)>,
+    /// What the import left out, for the command to report.
+    pub warnings: Vec<String>,
 }
 
 pub fn import(shelf_root: &Path, target: &Path, source_id: Option<&str>) -> Result<Import, String> {
     let target = target
         .canonicalize()
         .map_err(|error| format!("{}: {error}", target.display()))?;
+    let mut warnings = Vec::new();
     let (root, found) = if target.is_file() {
         let found = single_file(&target, &file_name(&target))?;
         // A doc's source is its repository, so every doc from one repository shares one source.
@@ -64,12 +76,12 @@ pub fn import(shelf_root: &Path, target: &Path, source_id: Option<&str>) -> Resu
         };
         (root, vec![found])
     } else {
-        (target.clone(), discover(&target)?)
+        (target.clone(), discover(&target, &mut warnings)?)
     };
     if found.is_empty() {
         return Err(format!(
             "{}: found no skill, prompt, agent, instructions, hook, or plugin in an APM layout \
-             (.apm/, SKILL.md, plugin.json, skills/<name>/SKILL.md, hooks/*.json)",
+             (.apm/, SKILL.md, plugin.json, skills/<name>/SKILL.md, hooks/*.json), and no AGENTS.md",
             target.display()
         ));
     }
@@ -154,7 +166,11 @@ pub fn import(shelf_root: &Path, target: &Path, source_id: Option<&str>) -> Resu
     load(&Overlay { base: &base, extra }).map_err(|errors| {
         format!("the import would not load, so nothing was written:\n{errors}")
     })?;
-    Ok(Import { files, items })
+    Ok(Import {
+        files,
+        items,
+        warnings,
+    })
 }
 
 fn file_name(path: &Path) -> String {
@@ -257,16 +273,23 @@ fn doc(file: &Path, stem: &str) -> Result<Found, String> {
             file.display()
         )
     })?;
-    let repository = repository_of(file);
+    doc_at(file, relative(repository_of(file), file), id)
+}
+
+/// A markdown text's first top-level heading after its frontmatter.
+fn first_heading(body: &str) -> Option<String> {
+    body.lines()
+        .find_map(|line| line.strip_prefix("# "))
+        .map(|title| title.trim().to_owned())
+        .filter(|title| !title.is_empty())
+}
+
+/// The doc in `file`, at `path` in its repository, as `id`.
+fn doc_at(file: &Path, path: String, id: String) -> Result<Found, String> {
     let bytes = read(file)?;
     let text = String::from_utf8_lossy(&bytes).into_owned();
     let (map, body) = frontmatter(&text);
-    let title = body
-        .lines()
-        .find_map(|line| line.strip_prefix("# "))
-        .map(|title| title.trim().to_owned())
-        .filter(|title| !title.is_empty());
-    let path = relative(repository, file);
+    let title = first_heading(&body);
     Ok(Found {
         description: description_of(map.as_ref()),
         fields: serde_json::Map::from_iter([(
@@ -281,7 +304,130 @@ fn doc(file: &Path, stem: &str) -> Result<Found, String> {
     })
 }
 
-fn discover(root: &Path) -> Result<Vec<Found>, String> {
+/// What a directory offers: its APM layouts, then its AGENTS.md and the docs that links to.
+fn discover(root: &Path, warnings: &mut Vec<String>) -> Result<Vec<Found>, String> {
+    let mut found = layouts(root)?;
+    let linked = agents_and_docs(root, &found, warnings)?;
+    found.extend(linked);
+    Ok(found)
+}
+
+/// A name as an id: kebab-case, at most 64 characters, as the hosted importer makes one; empty when nothing is left.
+fn slug(name: &str) -> String {
+    let mut id = String::new();
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            id.push(c.to_ascii_lowercase());
+        } else if !id.is_empty() && !id.ends_with('-') {
+            id.push('-');
+        }
+    }
+    let mut id: String = id
+        .chars()
+        .take(shelfkit_core::item::MAX_ID_LENGTH)
+        .collect();
+    while id.ends_with('-') {
+        id.pop();
+    }
+    id
+}
+
+/// An id for `name` that none in `taken` has: the name's own, then with its `qualifier`, then numbered.
+fn unique_id(name: &str, fallback: &str, qualifier: &str, taken: &mut BTreeSet<String>) -> String {
+    let base = match slug(name) {
+        id if id.is_empty() => fallback.to_owned(),
+        id => id,
+    };
+    let qualified = slug(&format!("{base}-{qualifier}"));
+    let mut id = [base.clone(), qualified]
+        .into_iter()
+        .find(|id| !taken.contains(id));
+    let mut n = 2;
+    while id.is_none() {
+        let suffix = format!("-{n}");
+        let keep = shelfkit_core::item::MAX_ID_LENGTH - suffix.len();
+        let numbered = format!(
+            "{}{suffix}",
+            base.chars()
+                .take(keep)
+                .collect::<String>()
+                .trim_end_matches('-')
+        );
+        if !taken.contains(&numbered) {
+            id = Some(numbered);
+        }
+        n += 1;
+    }
+    let id = id.unwrap_or(base);
+    taken.insert(id.clone());
+    id
+}
+
+/// The directory's AGENTS.md as instructions, and every doc its links reach (`linked_docs.rs`), each requiring the
+/// docs it links to. Nothing when AGENTS.md is missing or a symbolic link (a CLAUDE.md's target, say).
+fn agents_and_docs(
+    root: &Path,
+    layouts: &[Found],
+    warnings: &mut Vec<String>,
+) -> Result<Vec<Found>, String> {
+    let agents = root.join("AGENTS.md");
+    if !std::fs::symlink_metadata(&agents).is_ok_and(|meta| meta.file_type().is_file()) {
+        return Ok(Vec::new());
+    }
+    let followed = linked_docs::follow(root);
+    if followed.truncated {
+        warnings.push(format!(
+            "AGENTS.md links to more than {0} docs; only the first {0} were imported",
+            linked_docs::MAX_DOCS
+        ));
+    }
+    let mut taken: BTreeSet<String> = layouts.iter().map(|found| found.id.clone()).collect();
+    let instructions_id = unique_id(&file_name(root), "instructions", "instructions", &mut taken);
+    let ids: BTreeMap<&str, String> = followed
+        .docs
+        .iter()
+        .map(|doc| {
+            let stem = doc.path.rsplit('/').next().unwrap_or(&doc.path);
+            let stem = stem.strip_suffix(".md").unwrap_or(stem);
+            (doc.path.as_str(), unique_id(stem, "doc", "doc", &mut taken))
+        })
+        .collect();
+    let requires = |links: &[String], own: &str| -> serde_json::Value {
+        let mut required: Vec<&str> = links
+            .iter()
+            .filter_map(|link| ids.get(link.as_str()).map(String::as_str))
+            .filter(|id| *id != own)
+            .collect();
+        required.sort_unstable();
+        required.dedup();
+        serde_json::json!(required)
+    };
+
+    let mut found = Vec::new();
+    let mut instructions = markdown(ItemKind::Instructions, &instructions_id, &agents, root)?;
+    let text = String::from_utf8_lossy(&read(&agents)?).into_owned();
+    instructions.title = first_heading(&frontmatter(&text).1);
+    if !followed.links.is_empty() {
+        instructions.fields.insert(
+            "requires".to_owned(),
+            requires(&followed.links, &instructions_id),
+        );
+    }
+    found.push(instructions);
+    for doc in &followed.docs {
+        let id = ids.get(doc.path.as_str()).cloned().unwrap_or_default();
+        let mut item = doc_at(&root.join(&doc.path), doc.path.clone(), id.clone())?;
+        if !doc.links.is_empty() {
+            item.fields
+                .insert("requires".to_owned(), requires(&doc.links, &id));
+        }
+        found.push(item);
+    }
+    Ok(found)
+}
+
+/// What APM's package layouts find in a directory.
+fn layouts(root: &Path) -> Result<Vec<Found>, String> {
     let mut found = Vec::new();
     let apm = root.join(".apm");
     if apm.is_dir() {

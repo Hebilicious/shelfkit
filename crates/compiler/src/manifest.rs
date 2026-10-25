@@ -341,6 +341,20 @@ impl Compiler<'_> {
                     Some(Err(message)) => self.fail(loaded, message),
                     Some(Ok(Some(upstream))) => self.reference(loaded, &upstream),
                     Some(Ok(None)) | None if vendor::has_content(loaded) => self.vendor(loaded),
+                    Some(Ok(None))
+                        if loaded.kind() == ItemKind::Instructions
+                            && source.is_some_and(|source| source.repo.is_some()) =>
+                    {
+                        self.fail(
+                        loaded,
+                        format!(
+                            "`{}` was imported as a link, without its text, from a file APM cannot \
+                             install instructions from (only an `.instructions.md` file is one), so there \
+                             is nothing to compile; it needs a licence that permits a copy",
+                            item.id
+                        ),
+                    )
+                    }
                     Some(Ok(None)) | None => self.fail(
                         loaded,
                         format!(
@@ -357,10 +371,16 @@ impl Compiler<'_> {
     /// A doc goes into the profile's docs skill (`docs.rs`), by its path; two docs may not share one.
     fn doc(&mut self, loaded: &LoadedItem, path: &str) {
         let Some(bytes) = loaded.files.get("doc.md") else {
-            self.fail(
-                loaded,
-                format!("`{}` has no doc.md to compile", loaded.item.id),
-            );
+            let message = if loaded.item.source.is_some() {
+                format!(
+                    "`{}` was imported as a link, without its text, so it has no doc.md to compile: APM installs no \
+                     document from upstream, so a profile can hold a doc only as a copy (its licence must permit one)",
+                    loaded.item.id
+                )
+            } else {
+                format!("`{}` has no doc.md to compile", loaded.item.id)
+            };
+            self.fail(loaded, message);
             return;
         };
         if let Some(other) = self.docs.get(path) {

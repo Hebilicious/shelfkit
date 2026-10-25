@@ -139,8 +139,18 @@ pub fn plugin_files(loaded: &LoadedItem) -> Result<BTreeMap<String, Vec<u8>>, St
 }
 
 /// Whether an item without an upstream can be vendored: it carries the
-/// content its kind compiles from.
+/// content its kind compiles from. Imported instructions with neither
+/// sections nor a copy of their text (a link-only AGENTS.md) have none.
 pub fn has_content(loaded: &LoadedItem) -> bool {
+    match &loaded.item.payload {
+        Payload::Instructions(instructions) if loaded.item.source.is_some() => {
+            !instructions.sections.is_empty() || loaded.files.contains_key("AGENTS.fragment.md")
+        }
+        _ => has_kind_content(loaded),
+    }
+}
+
+fn has_kind_content(loaded: &LoadedItem) -> bool {
     match loaded.kind() {
         ItemKind::Instructions | ItemKind::Library | ItemKind::Stack => true,
         kind => kind

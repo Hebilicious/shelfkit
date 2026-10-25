@@ -501,6 +501,125 @@ fn init_add_ls_show_and_rm_manage_a_shelf() {
 }
 
 #[test]
+fn add_imports_a_directorys_agents_md_and_every_doc_its_links_reach() {
+    let root = scratch("agents-docs");
+    let shelf = root.join("shelf");
+    assert_eq!(shelfkit(&root, &NoProcesses, &["init", "shelf"]).code, 0);
+
+    // A plain repository: no APM layout, an AGENTS.md linking two docs (one of which links a third), plus links that
+    // are no docs of it.
+    let repo = root.join("acme-app");
+    for (path, text) in [
+        (
+            "AGENTS.md",
+            "# Acme conventions\n\nRead [the domain](docs/domain.md#terms) and [the ops guide](./ops/guide.md \"Ops\").\n\
+             [Missing](docs/missing.md), [elsewhere](https://example.com/x.md), [setup](#setup), and \
+             [Claude](CLAUDE.md) are not docs of this repository.\n\n```md\n[fenced](docs/fenced.md)\n```\n\n\
+             [guide]: docs/guide.md\n",
+        ),
+        (
+            "docs/domain.md",
+            "# Domain\n\nSee [the glossary](../GLOSSARY.md).\n",
+        ),
+        (
+            "docs/guide.md",
+            "---\ndescription: How to work here.\n---\n\n# Working guide\n",
+        ),
+        ("docs/fenced.md", "# Fenced\n"),
+        ("ops/guide.md", "Deploy on Tuesdays.\n"),
+        (
+            "GLOSSARY.md",
+            "# Glossary\n\nBack to [the domain](docs/domain.md).\n",
+        ),
+    ] {
+        let file = repo.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("AGENTS.md", repo.join("CLAUDE.md")).unwrap();
+
+    let ran = shelfkit(&shelf, &NoProcesses, &["add", "../acme-app"]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let added: Vec<&str> = ran
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with("added"))
+        .collect();
+    assert_eq!(
+        added,
+        [
+            "added instructions acme-app",
+            "added doc domain",
+            "added doc guide",
+            "added doc guide-doc",
+            "added doc glossary",
+        ],
+        "{}",
+        ran.stdout
+    );
+
+    let item = |kind: &str, id: &str| -> serde_json::Value {
+        let path = shelf.join(format!("items/{kind}/{id}/item.json"));
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    let agents = item("instructions", "acme-app");
+    assert_eq!(agents["title"], "Acme conventions");
+    assert_eq!(
+        agents["requires"],
+        serde_json::json!(["domain", "guide", "guide-doc"])
+    );
+    assert_eq!(agents["source"]["path"], "AGENTS.md");
+    assert!(
+        std::fs::read_to_string(shelf.join("items/instructions/acme-app/AGENTS.fragment.md"))
+            .unwrap()
+            .contains("[the domain](docs/domain.md#terms)")
+    );
+    // Two docs named guide.md: the one linked first keeps the name.
+    assert_eq!(item("docs", "guide")["path"], "ops/guide.md");
+    let guide = item("docs", "guide-doc");
+    assert_eq!(guide["path"], "docs/guide.md");
+    assert_eq!(guide["title"], "Working guide");
+    assert_eq!(guide["description"], "How to work here.");
+    assert_eq!(
+        item("docs", "domain")["requires"],
+        serde_json::json!(["glossary"])
+    );
+    assert_eq!(
+        item("docs", "glossary")["requires"],
+        serde_json::json!(["domain"])
+    );
+    assert!(!shelf.join("items/docs/fenced").exists());
+    assert!(shelf.join("items/docs/glossary/doc.md").is_file());
+
+    // Selecting AGENTS.md brings its docs, and its links point at their installed copies.
+    std::fs::write(
+        shelf.join("profiles/default.json"),
+        r#"{ "id": "default", "title": "Default", "items": ["acme-app"] }"#,
+    )
+    .unwrap();
+    let dry = shelfkit(&shelf, &NoProcesses, &["compile", "--dry-run", "--json"]);
+    assert_eq!(dry.code, 0, "{}", dry.stderr);
+    for doc in [
+        "docs/domain.md",
+        "docs/guide.md",
+        "ops/guide.md",
+        "GLOSSARY.md",
+    ] {
+        assert!(
+            dry.stdout.contains(&format!("-docs/{doc}")),
+            "{doc}: {}",
+            dry.stdout
+        );
+    }
+    assert!(
+        dry.stdout.contains("-docs/docs/domain.md#terms"),
+        "{}",
+        dry.stdout
+    );
+}
+
+#[test]
 fn add_hands_a_source_that_is_not_local_to_the_hosted_import_and_reads_nothing_itself() {
     let root = scratch("add-remote");
     assert_eq!(shelfkit(&root, &NoProcesses, &["init"]).code, 0);

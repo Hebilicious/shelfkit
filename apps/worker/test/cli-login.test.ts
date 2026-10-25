@@ -661,7 +661,7 @@ describe("signing the CLI in is rate limited", () => {
       deviceCode: login.deviceCode,
     });
     await new Promise((settled) => {
-      setTimeout(settled, 1600);
+      setTimeout(settled, 1100);
     });
     const later = await post("/auth/cli/poll", {
       deviceCode: login.deviceCode,

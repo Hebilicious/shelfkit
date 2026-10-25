@@ -202,6 +202,19 @@ const McpSchema = v.variant("flavour", [
   }),
 ]);
 
+/**
+ * A doc's `path`: where it lives in the repository it was written for, which is how instructions link to it:
+ * relative, `/` separated, with no empty, `.`, or `..` segment and nothing a link cannot name plainly. One pattern, as
+ * the catalog's JSON Schema carries it; the Rust model checks the same (`validate_doc_path`).
+ */
+export const DocPathSchema = v.pipe(
+  v.string(),
+  v.regex(
+    /^(?!(?:.*\/)?\.\.?(?:\/|$))(?:[^/\s#?\\:]+\/)*[^/\s#?\\:]+$/u,
+    "must be a path relative to the repository's root, with no `.` or `..` segment"
+  )
+);
+
 /** An item, exactly as `items/<kind>/<id>/item.json` holds it. */
 export const ItemSchema = v.variant("kind", [
   v.strictObject({ ...common, kind: v.literal("skill") }),
@@ -257,18 +270,7 @@ export const ItemSchema = v.variant("kind", [
   v.strictObject({
     ...common,
     kind: v.literal("doc"),
-    /**
-     * Where it lives in the repository it was written for, which is how instructions link to it: relative, `/`
-     * separated, with no empty, `.`, or `..` segment and nothing a link cannot name plainly. One pattern, as the
-     * catalog's JSON Schema carries it; the Rust model checks the same.
-     */
-    path: v.pipe(
-      v.string(),
-      v.regex(
-        /^(?!(?:.*\/)?\.\.?(?:\/|$))(?:[^/\s#?\\:]+\/)*[^/\s#?\\:]+$/u,
-        "must be a path relative to the repository's root, with no `.` or `..` segment"
-      )
-    ),
+    path: DocPathSchema,
   }),
   v.strictObject({
     ...common,

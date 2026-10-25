@@ -2,7 +2,12 @@
  * The queue consumer and the cron. Each job runs with a `system` session, which only job code makes, against the
  * shelf its message names. A job that throws is retried by the queue, then dead-lettered to `shelfkit-jobs-dlq`.
  */
-import { adapterFor, adapters, scanners } from "@shelfkit/importers";
+import {
+  adapterFor,
+  adapters,
+  requireLinked,
+  scanners,
+} from "@shelfkit/importers";
 import type {
   AdapterContext,
   ImportSource,
@@ -198,15 +203,23 @@ async function applyImport(
     const candidates = new Map(
       job.candidates.map((candidate) => [candidate.key, candidate])
     );
-    const items = await Promise.all(
+    const fetched = await Promise.all(
       job.picks.map(async (pick) => {
         const candidate = candidates.get(pick.candidate);
         if (candidate === undefined) {
           throw new Error(`no candidate ${pick.candidate}`);
         }
-        return await adapter.fetch(job.source, candidate, pick, context);
+        const imported = await adapter.fetch(
+          job.source,
+          candidate,
+          pick,
+          context
+        );
+        return { candidate, imported, pick };
       })
     );
+    // An AGENTS.md picked with the docs it links to requires them, so a profile that selects it gets them.
+    const items = requireLinked(fetched);
     const committed = await stub.applyImport(
       session,
       message.shelf,

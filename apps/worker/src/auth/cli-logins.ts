@@ -54,10 +54,11 @@ export interface PendingCliLogin {
 }
 
 /**
- * The least time between two polls of one login. The CLI is told to poll every 2 seconds (`cli.ts`); this leaves it
- * half a second for a slow request, and refuses a CLI polling at twice that rate or faster.
+ * The least time between two polls of one login. The CLI is told to poll every 2 seconds (`cli.ts`) and sleeps that
+ * long between polls, but a slow answer followed by a fast one brings two arrivals closer: this leaves it a whole
+ * second for that, and refuses a CLI polling at twice its rate or faster.
  */
-const POLL_GAP_MS = 1500;
+const POLL_GAP_MS = 1000;
 
 function seconds(): number {
   return Math.floor(Date.now() / 1000);
