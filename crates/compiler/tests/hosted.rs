@@ -84,10 +84,13 @@ struct Service {
     platform: Platform,
     /// Standard input is a terminal: a person is there to sign in through the browser.
     terminal: bool,
-    /// What each poll of a browser login answers, in order: `pending`, `approved`, `denied`, or `expired`.
+    /// What each poll of a browser login answers, in order: `pending`, `approved`, `denied`, or `expired`, or
+    /// `limited` for `429` with `Retry-After: 10`, as the Worker answers a client polling too often.
     polls: RefCell<Vec<&'static str>>,
-    /// How many times the CLI waited between polls.
-    slept: RefCell<u32>,
+    /// Starting a browser login answers `429` with `Retry-After: 60`, as the Worker does past its limit.
+    start_limited: bool,
+    /// Each wait between polls, in seconds.
+    slept: RefCell<Vec<u64>>,
     /// The device name each browser login started with.
     devices: RefCell<Vec<String>>,
 }
@@ -107,7 +110,8 @@ impl Service {
             platform: Platform::Unix,
             terminal: false,
             polls: RefCell::new(Vec::new()),
-            slept: RefCell::new(0),
+            start_limited: false,
+            slept: RefCell::new(Vec::new()),
             devices: RefCell::new(Vec::new()),
         }
     }
@@ -191,6 +195,7 @@ impl Service {
 
 fn answer(status: u16, body: &[u8]) -> io::Result<HttpResponse> {
     Ok(HttpResponse {
+        headers: Vec::new(),
         body: body.to_vec(),
         status,
     })
@@ -322,8 +327,8 @@ impl System for Service {
     fn hostname(&self) -> Option<String> {
         Some("ada-laptop".to_owned())
     }
-    fn sleep(&self, _duration: std::time::Duration) {
-        *self.slept.borrow_mut() += 1;
+    fn sleep(&self, duration: std::time::Duration) {
+        self.slept.borrow_mut().push(duration.as_secs());
     }
 }
 
@@ -342,7 +347,19 @@ impl Service {
             .borrow_mut()
             .requests
             .push(format!("{} /auth/cli/{path}", request.method));
+        let limited = |seconds: &str| HttpResponse {
+            headers: vec![
+                (
+                    "Content-Type".to_owned(),
+                    "application/problem+json".to_owned(),
+                ),
+                ("Retry-After".to_owned(), seconds.to_owned()),
+            ],
+            body: br#"{"status":429,"title":"Too Many Requests"}"#.to_vec(),
+            status: 429,
+        };
         let answer = match path {
+            "start" if self.start_limited => return limited("60"),
             "start" => {
                 self.devices
                     .borrow_mut()
@@ -364,6 +381,9 @@ impl Service {
                 } else {
                     polls.remove(0)
                 };
+                if status == "limited" {
+                    return limited("10");
+                }
                 if status == "approved" {
                     json!({ "status": status, "key": KEY })
                 } else {
@@ -373,6 +393,7 @@ impl Service {
             _ => panic!("a browser-login route the stand-in does not serve: {path}"),
         };
         HttpResponse {
+            headers: Vec::new(),
             body: serde_json::to_vec(&answer).unwrap(),
             status: 200,
         }
@@ -463,7 +484,7 @@ fn login_at_a_terminal_signs_in_through_the_browser_and_keeps_the_key_it_was_giv
         vec![vec![APPROVAL_PAGE.to_owned()]]
     );
     assert_eq!(*service.devices.borrow(), vec!["ada-laptop".to_owned()]);
-    assert_eq!(*service.slept.borrow(), 3);
+    assert_eq!(*service.slept.borrow(), vec![2, 2, 2]);
     assert_eq!(
         service.state.borrow().requests,
         vec![
@@ -507,7 +528,62 @@ fn login_says_so_when_the_browser_denies_it_or_it_expires_and_keeps_nothing() {
     let ran = shelfkit(&silent, &scratch("login-silent-cwd"), &["login", URL]);
     assert_eq!(ran.code, 1);
     assert!(ran.stderr.contains("expired"), "{}", ran.stderr);
-    assert_eq!(*silent.slept.borrow(), 600 / 2 + 2);
+    assert_eq!(silent.slept.borrow().len(), 600 / 2 + 2);
+}
+
+#[test]
+fn login_waits_out_a_poll_refused_as_too_frequent_and_keeps_polling() {
+    let service = at_a_terminal(
+        "login-poll-limited",
+        vec!["pending", "limited", "limited", "pending", "approved"],
+    );
+    let ran = shelfkit(
+        &service,
+        &scratch("login-poll-limited-cwd"),
+        &["login", URL],
+    );
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    // Each refused poll waits its `Retry-After` before the next; the others wait the interval.
+    assert_eq!(*service.slept.borrow(), vec![2, 2, 10, 10, 2]);
+    assert_eq!(
+        ran.stderr
+            .matches("asked this computer to poll less often")
+            .count(),
+        1,
+        "{}",
+        ran.stderr
+    );
+    assert_eq!(
+        service.keychain.borrow().get(URL).map(String::as_str),
+        Some(KEY)
+    );
+}
+
+#[test]
+fn login_says_to_try_again_shortly_when_starting_is_refused_as_too_frequent() {
+    let mut service = at_a_terminal("login-start-limited", Vec::new());
+    service.start_limited = true;
+    let ran = shelfkit(
+        &service,
+        &scratch("login-start-limited-cwd"),
+        &["login", URL],
+    );
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.stderr.contains(
+            "has started too many logins from this address in the last minute: run `shelfkit login \
+             https://shelf.example.dev` again in 60 seconds"
+        ),
+        "{}",
+        ran.stderr
+    );
+    assert!(service.opened.borrow().is_empty());
+    assert!(service.slept.borrow().is_empty());
+    assert_eq!(
+        service.state.borrow().requests,
+        vec!["POST /auth/cli/start"]
+    );
+    assert!(service.keychain.borrow().is_empty());
 }
 
 #[test]

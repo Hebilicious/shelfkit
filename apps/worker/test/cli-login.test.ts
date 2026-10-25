@@ -10,10 +10,11 @@ import {
 } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import * as v from "valibot";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, inject, it } from "vitest";
 
 import { signSession } from "../src/auth/browser.ts";
 import type { CliLoginIndex } from "../src/auth/cli-logins.ts";
+import { CLI_RATE_LIMITS } from "../src/auth/limits.ts";
 import { TEST_SESSION_SECRET } from "./fake-github.ts";
 import { graphql, ORIGIN, push, shelfOf, TEST_OWNER_KEY } from "./helpers.ts";
 
@@ -36,10 +37,23 @@ const PollSchema = v.union([
 /** What the CLI posts: a name for its computer, or the device code it polls with. */
 type CliBody = { readonly device: string } | { readonly deviceCode: string };
 
-async function post(path: string, body: CliBody): Promise<Response> {
+/** A client address of its own for each test, in the documentation range, so no test spends another's rate limit. */
+function newAddress(): string {
+  const [high = 0, low = 0] = crypto.getRandomValues(new Uint16Array(2));
+  return `2001:db8::${high.toString(16)}:${low.toString(16)}`;
+}
+
+let address = newAddress();
+
+/** A `POST` from `from`, as Cloudflare's edge forwards it: with the client's address in `CF-Connecting-IP`. */
+async function post(
+  path: string,
+  body: CliBody,
+  from = address
+): Promise<Response> {
   return await exports.default.fetch(`${ORIGIN}${path}`, {
     body: JSON.stringify(body),
-    headers: { "content-type": "application/json" },
+    headers: { "cf-connecting-ip": from, "content-type": "application/json" },
     method: "POST",
   });
 }
@@ -143,6 +157,7 @@ async function signedInCli(cookie: string): Promise<string> {
 async function fresh(): Promise<void> {
   await reset();
   await abortAllDurableObjects();
+  address = newAddress();
 }
 
 /** The `principal` a key's viewer names. */
@@ -486,6 +501,195 @@ describe("an invited person's CLI", () => {
     expect({ removed: removed.data, viewer: viewer.status }).toStrictEqual({
       removed: { removePerson: true },
       viewer: 401,
+    });
+  });
+});
+
+const RateLimitsSchema = v.array(
+  v.object({
+    name: v.string(),
+    namespace_id: v.string(),
+    simple: v.object({ limit: v.number(), period: v.number() }),
+  })
+);
+
+/** `wrangler.jsonc`'s rate limiters: production's, and again in the `previews` block. */
+const WranglerSchema = v.object({
+  previews: v.object({ ratelimits: RateLimitsSchema }),
+  ratelimits: RateLimitsSchema,
+});
+
+/** What a limited request answers: its status, `Retry-After`, and its problem's media type and status. */
+async function refusalOf(response: Response) {
+  return {
+    problem: v.parse(v.object({ status: v.number() }), await response.json())
+      .status,
+    retryAfter: response.headers.get("retry-after"),
+    status: response.status,
+    type: response.headers.get("content-type"),
+  };
+}
+
+/**
+ * The first response of `count` calls of `send` that `refused` matches, or `null`. Rate limits count in fixed windows,
+ * so a run that starts just before a window ends may be allowed up to twice the limit: a run of `2 * limit + 1` meets
+ * the limit wherever it starts.
+ */
+async function firstRefused<T>(
+  count: number,
+  send: () => Promise<T>,
+  refused: (answer: T) => boolean
+): Promise<T | null> {
+  for (let sent = 0; sent < count; sent += 1) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- one request after another, as a client sends them.
+    const answer = await send();
+    if (refused(answer)) {
+      return answer;
+    }
+  }
+  return null;
+}
+
+describe("signing the CLI in is rate limited", () => {
+  beforeEach(fresh);
+
+  it("by the limiters wrangler.jsonc declares, for production and again for Previews, each in its own namespace", () => {
+    const config = v.parse(
+      WranglerSchema,
+      JSON.parse(inject("wranglerConfig"))
+    );
+    const production = config.ratelimits;
+    const previews = config.previews.ratelimits;
+    const settings = (entries: typeof production) =>
+      Object.fromEntries(entries.map(({ name, simple }) => [name, simple]));
+    const namespaces = [...production, ...previews].map(
+      (entry) => entry.namespace_id
+    );
+    expect({
+      distinct: new Set(namespaces).size === namespaces.length,
+      previews: settings(previews),
+      production: settings(production),
+    }).toStrictEqual({
+      distinct: true,
+      previews: CLI_RATE_LIMITS,
+      production: CLI_RATE_LIMITS,
+    });
+  });
+
+  it("starts at most 10 logins a minute from one address, answering 429 with Retry-After, and another address still starts", async () => {
+    const { limit, period } = CLI_RATE_LIMITS.CLI_START_LIMIT;
+    const allowed: number[] = [];
+    for (let sent = 0; sent < limit; sent += 1) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- one start after another.
+      const response = await post("/auth/cli/start", { device: "x" });
+      allowed.push(response.status);
+    }
+    const refused = await firstRefused(
+      limit + 1,
+      async () => await post("/auth/cli/start", { device: "x" }),
+      (response) => response.status === 429
+    );
+    const elsewhere = await post(
+      "/auth/cli/start",
+      { device: "x" },
+      newAddress()
+    );
+    expect({
+      allowed,
+      elsewhere: elsewhere.status,
+      refused: refused === null ? null : await refusalOf(refused),
+    }).toStrictEqual({
+      allowed: Array.from({ length: limit }, () => 200),
+      elsewhere: 200,
+      refused: {
+        problem: 429,
+        retryAfter: String(period),
+        status: 429,
+        type: "application/problem+json",
+      },
+    });
+  });
+
+  it("lets four CLIs behind one address poll at their interval, and answers faster polling 429 while the login waits", async () => {
+    const { limit, period } = CLI_RATE_LIMITS.CLI_POLL_LIMIT;
+    const logins = await Promise.all([start(), start(), start(), start()]);
+    // What four CLIs polling every 2 seconds send in one 10-second window, sent at once.
+    const window = logins.flatMap((login) =>
+      Array.from({ length: period / 2 }, () => login.deviceCode)
+    );
+    expect(window).toHaveLength(limit);
+    const answered: number[] = [];
+    for (const deviceCode of window) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- one poll after another.
+      const response = await post("/auth/cli/poll", { deviceCode });
+      answered.push(response.status);
+    }
+    const [first] = logins;
+    const deviceCode = first?.deviceCode ?? "";
+    const refused = await firstRefused(
+      limit + 1,
+      async () => await post("/auth/cli/poll", { deviceCode }),
+      (response) => response.status === 429
+    );
+    const elsewhere = await post(
+      "/auth/cli/poll",
+      { deviceCode },
+      newAddress()
+    );
+    expect({
+      answered,
+      elsewhere: await elsewhere.json(),
+      refused: refused === null ? null : await refusalOf(refused),
+    }).toStrictEqual({
+      answered: window.map(() => 200),
+      elsewhere: { status: "pending" },
+      refused: {
+        problem: 429,
+        retryAfter: String(period),
+        status: 429,
+        type: "application/problem+json",
+      },
+    });
+  });
+
+  it("refuses an account that looks codes up too fast, and leaves other accounts and the login alone", async () => {
+    const { limit, period } = CLI_RATE_LIMITS.CLI_APPROVAL_LIMIT;
+    await push("acme", shelfOf("acme", false));
+    const cookie = await invitedPerson("acme", ["read"]);
+    const login = await start();
+    const guesses: unknown[] = [];
+    for (let sent = 0; sent < limit; sent += 1) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- one guess after another.
+      const answer = await asBrowser(cookie, PREVIEW, { code: "ABCD-EFGH" });
+      guesses.push(answer.data);
+    }
+    const refused = await firstRefused(
+      limit + 1,
+      async () => await asBrowser(cookie, PREVIEW, { code: "ABCD-EFGH" }),
+      (answer) => answer.errors !== undefined
+    );
+    const approved = await asBrowser(cookie, APPROVE, { code: login.userCode });
+    const denied = await asBrowser(cookie, DENY, { code: login.userCode });
+    const polled = await poll(login.deviceCode);
+    const owner = await asBrowser(await ownerCookie(), APPROVE, {
+      code: login.userCode,
+    });
+    expect({
+      approved: approved.errors?.[0]?.extensions,
+      denied: denied.errors?.[0]?.extensions?.code,
+      guesses,
+      owner: owner.data,
+      polled,
+      refused: refused?.errors?.[0]?.extensions,
+    }).toStrictEqual({
+      approved: { code: "RATE_LIMITED", retryAfter: period },
+      denied: "RATE_LIMITED",
+      guesses: guesses.map(() => ({ cliLogin: null })),
+      owner: {
+        approveCliLogin: { device: "ada-laptop", name: "CLI on ada-laptop" },
+      },
+      polled: { status: "pending" },
+      refused: { code: "RATE_LIMITED", retryAfter: period },
     });
   });
 });

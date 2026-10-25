@@ -178,6 +178,7 @@ impl System for Recorded {
                 .to_vec()
         };
         Ok(HttpResponse {
+            headers: Vec::new(),
             status: u16::try_from(answer["status"].as_u64().unwrap()).unwrap(),
             body,
         })
@@ -432,6 +433,7 @@ impl System for Deployment {
             serde_json::json!({ "shelf": { "importJob": found } })
         };
         Ok(HttpResponse {
+            headers: Vec::new(),
             status: 200,
             body: serde_json::to_vec(&serde_json::json!({ "data": data })).unwrap(),
         })
@@ -568,11 +570,13 @@ impl System for Watched {
         self.sent.borrow_mut().push((request.url.clone(), carried));
         if request.method == "POST" {
             return Ok(HttpResponse {
+                headers: Vec::new(),
                 status: 200,
                 body: self.post.as_bytes().to_vec(),
             });
         }
         Ok(HttpResponse {
+            headers: Vec::new(),
             status: 404,
             body: Vec::new(),
         })

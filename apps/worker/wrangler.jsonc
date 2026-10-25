@@ -61,6 +61,26 @@
   "triggers": {
     "crons": ["0 * * * *"],
   },
+  // Signing the CLI in through the browser (`src/auth/limits.ts`, `docs/PRD.md` section 10.3): starting a login and
+  // polling it, per client address, and looking a code up to approve or deny it, per account. A namespace id is unique in the
+  // account; a Preview's limiters are namespaces of their own, so testing one never spends production's budget.
+  "ratelimits": [
+    {
+      "name": "CLI_START_LIMIT",
+      "namespace_id": "1001",
+      "simple": { "limit": 10, "period": 60 },
+    },
+    {
+      "name": "CLI_POLL_LIMIT",
+      "namespace_id": "1002",
+      "simple": { "limit": 20, "period": 10 },
+    },
+    {
+      "name": "CLI_APPROVAL_LIMIT",
+      "namespace_id": "1003",
+      "simple": { "limit": 20, "period": 60 },
+    },
+  ],
   // A branch's Worker Preview (`moon run worker:preview`). Previews inherit nothing from the settings above, so each
   // binding is named again here. Every Preview gets Durable Object namespaces of its own; R2 and the queue are shared
   // between Previews but never with production. Queue consumers and crons do not run in a Preview, so an import
@@ -75,6 +95,23 @@
     },
     "r2_buckets": [
       { "binding": "BLOBS", "bucket_name": "shelfkit-blobs-preview" },
+    ],
+    "ratelimits": [
+      {
+        "name": "CLI_START_LIMIT",
+        "namespace_id": "1101",
+        "simple": { "limit": 10, "period": 60 },
+      },
+      {
+        "name": "CLI_POLL_LIMIT",
+        "namespace_id": "1102",
+        "simple": { "limit": 20, "period": 10 },
+      },
+      {
+        "name": "CLI_APPROVAL_LIMIT",
+        "namespace_id": "1103",
+        "simple": { "limit": 20, "period": 60 },
+      },
     ],
     "queues": {
       "producers": [{ "binding": "JOBS", "queue": "shelfkit-jobs-preview" }],

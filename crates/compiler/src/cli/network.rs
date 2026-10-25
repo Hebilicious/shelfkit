@@ -28,11 +28,25 @@ pub fn send(request: &HttpRequest) -> io::Result<HttpResponse> {
         .run(built)
         .map_err(|error| io::Error::other(error.to_string()))?;
     let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_owned(), value.to_owned()))
+        })
+        .collect();
     let body = response
         .into_body()
         .with_config()
         .limit(MAX_BODY)
         .read_to_vec()
         .map_err(|error| io::Error::other(error.to_string()))?;
-    Ok(HttpResponse { status, body })
+    Ok(HttpResponse {
+        status,
+        headers,
+        body,
+    })
 }
