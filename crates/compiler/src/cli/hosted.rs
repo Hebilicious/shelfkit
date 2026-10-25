@@ -90,7 +90,7 @@ fn pretty(value: &Value) -> String {
 
 /// The deployment a command talks to: `--url`, else `SHELFKIT_URL`, else the
 /// one `login` remembered.
-fn deployment(system: &dyn System, url: Option<&str>) -> Result<String, String> {
+pub(super) fn deployment(system: &dyn System, url: Option<&str>) -> Result<String, String> {
     let chosen = url
         .map(str::to_owned)
         .or_else(|| system.var(URL_ENV))
@@ -190,7 +190,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// `+` and anything else outside the URL path's unreserved set, escaped.
-fn encode_segment(text: &str) -> String {
+pub(super) fn encode_segment(text: &str) -> String {
     text.bytes()
         .map(|byte| {
             if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
@@ -281,6 +281,19 @@ fn browser_opener(system: &dyn System) -> Option<(PathBuf, bool)> {
         .map(|path| (path, meaningful))
 }
 
+/// The path a URL names after its host, as `/shelves/x` in `https://host/shelves/x`; `None` for the bare origin.
+fn url_path(text: &str) -> Option<String> {
+    let (_, rest) = text.trim().split_once("://")?;
+    let path = rest[rest.find('/')?..].trim_end_matches('/');
+    (!path.is_empty()).then(|| path.to_owned())
+}
+
+/// A sign-in link that goes on to `path` once used: the web UI reads `?next=`, and the token stays in the fragment.
+fn continue_to(link: &str, path: &str) -> String {
+    let (base, token) = link.split_once('#').unwrap_or((link, ""));
+    format!("{base}?next={}#{token}", encode_segment(path))
+}
+
 /// `shelfkit open [URL]`: make a one-time sign-in link with the owner key and open it in the browser. The link is a
 /// credential until used, so it is printed only with `--print`; without it, a failure to open says to use `--print`.
 pub(super) fn open(ctx: &mut Context<'_>, url: Option<&str>, print: bool) -> Outcome {
@@ -299,8 +312,11 @@ pub(super) fn open(ctx: &mut Context<'_>, url: Option<&str>, print: bool) -> Out
     })?;
     let link = data["createSignInLink"]["url"]
         .as_str()
-        .ok_or_else(|| format!("{} answered with no sign-in link", remote.url()))?
-        .to_owned();
+        .ok_or_else(|| format!("{} answered with no sign-in link", remote.url()))?;
+    let link = match url.and_then(url_path) {
+        Some(path) => continue_to(link, &path),
+        None => link.to_owned(),
+    };
     if print {
         let _ = writeln!(ctx.stdout, "{link}");
         let _ = writeln!(
@@ -318,7 +334,7 @@ pub(super) fn open(ctx: &mut Context<'_>, url: Option<&str>, print: bool) -> Out
     let cwd = absolute(ctx, None);
     let code = ctx
         .system
-        .run(&program, &[link], &cwd)
+        .run(&program, &[link], &cwd, &[])
         .map_err(|error| format!("opening the browser: {error}; run `shelfkit open --print`"))?;
     if meaningful && code != 0 {
         return Err(format!(
@@ -877,6 +893,20 @@ mod tests {
         assert!(normalize_url("http://shelf.example.dev").is_err());
         assert!(normalize_url("https://user@shelf.example.dev").is_err());
         assert!(normalize_url("shelf.example.dev").is_err());
+    }
+
+    #[test]
+    fn a_sign_in_link_goes_on_to_the_page_the_url_names() {
+        assert_eq!(url_path("https://shelf.example.dev"), None);
+        assert_eq!(url_path("https://shelf.example.dev/"), None);
+        assert_eq!(
+            url_path("https://shelf.example.dev/shelves/jarettes-box/"),
+            Some("/shelves/jarettes-box".to_owned())
+        );
+        assert_eq!(
+            continue_to("https://shelf.example.dev/link#ssl_abc", "/shelves/x"),
+            "https://shelf.example.dev/link?next=%2Fshelves%2Fx#ssl_abc"
+        );
     }
 
     #[test]

@@ -140,7 +140,13 @@ impl System for Recorded {
     fn capture(&self, program: &Path, _: &[&str]) -> io::Result<(i32, String)> {
         panic!("ran {}", program.display());
     }
-    fn run(&self, program: &Path, _: &[String], _: &Path) -> io::Result<i32> {
+    fn run(
+        &self,
+        program: &Path,
+        _: &[String],
+        _: &Path,
+        _: &[(String, String)],
+    ) -> io::Result<i32> {
         panic!("ran {}", program.display());
     }
     fn platform(&self) -> Platform {
@@ -360,7 +366,13 @@ impl System for Deployment {
     fn capture(&self, program: &Path, _: &[&str]) -> io::Result<(i32, String)> {
         panic!("ran {}", program.display());
     }
-    fn run(&self, program: &Path, _: &[String], _: &Path) -> io::Result<i32> {
+    fn run(
+        &self,
+        program: &Path,
+        _: &[String],
+        _: &Path,
+        _: &[(String, String)],
+    ) -> io::Result<i32> {
         panic!("ran {}", program.display());
     }
     fn platform(&self) -> Platform {
@@ -533,7 +545,13 @@ impl System for Watched {
     fn capture(&self, program: &Path, _: &[&str]) -> io::Result<(i32, String)> {
         panic!("ran {}", program.display());
     }
-    fn run(&self, program: &Path, _: &[String], _: &Path) -> io::Result<i32> {
+    fn run(
+        &self,
+        program: &Path,
+        _: &[String],
+        _: &Path,
+        _: &[(String, String)],
+    ) -> io::Result<i32> {
         panic!("ran {}", program.display());
     }
     fn platform(&self) -> Platform {

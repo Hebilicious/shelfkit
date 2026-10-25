@@ -75,10 +75,17 @@ const github = {
   OWNER_GITHUB_ID: String(FAKE_ACCOUNTS.owner.id),
 };
 
+/** The workspace version in Cargo.toml: the CLI's, which the Worker's `SHELFKIT_VERSION` must equal. */
+const cargoVersion =
+  /^\[workspace\.package\]\nversion = "(?<version>[^"]+)"/mu.exec(
+    readFileSync(path.join(repository, "Cargo.toml"), "utf-8")
+  )?.groups?.version ?? "";
+
 const provide = {
   allKindsShelf: shelfFiles(
     path.join(repository, "crates/core/tests/fixtures/all-kinds")
   ),
+  cargoVersion,
   conformance: { archives, cases },
   ownShelf: shelfFiles(path.join(repository, "shelf")),
 };

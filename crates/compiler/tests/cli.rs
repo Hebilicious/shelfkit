@@ -37,7 +37,13 @@ impl System for NoProcesses {
     fn capture(&self, program: &Path, _: &[&str]) -> io::Result<(i32, String)> {
         panic!("ran {}", program.display());
     }
-    fn run(&self, program: &Path, _: &[String], _: &Path) -> io::Result<i32> {
+    fn run(
+        &self,
+        program: &Path,
+        _: &[String],
+        _: &Path,
+        _: &[(String, String)],
+    ) -> io::Result<i32> {
         panic!("ran {}", program.display());
     }
     fn platform(&self) -> Platform {
@@ -74,7 +80,13 @@ impl System for FakeMachine {
             "Agent Package Manager (APM) CLI version 0.33.0 (abc1234)\n".to_owned(),
         ))
     }
-    fn run(&self, program: &Path, args: &[String], dir: &Path) -> io::Result<i32> {
+    fn run(
+        &self,
+        program: &Path,
+        args: &[String],
+        dir: &Path,
+        _: &[(String, String)],
+    ) -> io::Result<i32> {
         self.ran
             .borrow_mut()
             .push((program.to_path_buf(), args.to_vec(), dir.to_path_buf()));
@@ -290,7 +302,8 @@ fn an_existing_manifest_keeps_its_own_declarations_and_conflicts_follow_on_confl
     assert_eq!(
         manifest,
         "name: my-app\nversion: \"2.0.0\"\ntargets:\n  - claude\n  - copilot\ndependencies:\n  apm:\n    \
-         - acme/standards#v1\n    - ./vendor/base\n"
+         - acme/standards#v1\n    - ./vendor/base\ncompilation:\n  strategy: single-file\n  agents_md:\n    \
+         mode: managed_section\n"
     );
 }
 
@@ -624,6 +637,34 @@ fn apm_install_accepts_compiled_manifests_when_apm_is_present() {
         own.join("apm.lock.yaml").is_file(),
         "APM wrote no lockfile for shelf/"
     );
+    // The instructions, tech stacks, and library notes reach every agent through one section of AGENTS.md, which
+    // `apm compile` wrote, and none of them is a rule file (`vendor.rs` says why).
+    let agents = std::fs::read_to_string(own.join("AGENTS.md")).expect("no AGENTS.md was compiled");
+    let start = agents.find("<!-- apm:start -->").expect(&agents);
+    let end = agents.find("<!-- apm:end -->").expect(&agents);
+    let section = &agents[start..end];
+    for text in ["The crates are the product", "Valibot"] {
+        assert!(
+            section.contains(text),
+            "AGENTS.md lacks {text:?}:\n{agents}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(own.join("CLAUDE.md")).unwrap(),
+        "@AGENTS.md\n"
+    );
+    for rules in [".claude/rules", ".cursor/rules", ".github/instructions"] {
+        assert!(
+            !own.join(rules).exists(),
+            "APM wrote rule files into {rules}"
+        );
+    }
+    assert!(
+        !own.join(".github/copilot-instructions.md").exists(),
+        "Copilot reads AGENTS.md; a second copy of the instructions is not wanted"
+    );
+    // Skills and prompts still install where each agent reads them.
+    assert!(own.join(".claude/skills/update-goldens/SKILL.md").is_file());
 
     // A registry on loopback, a Git item under its default, an MCP object.
     let port = registry::serve(&[(
@@ -988,7 +1029,7 @@ fn compile_deletes_only_inside_packages_carrying_its_marker() {
 }
 
 #[test]
-fn install_on_a_registry_manifest_explains_the_flag_and_never_sets_it() {
+fn install_on_a_registry_manifest_turns_on_apms_registry_flag_first() {
     let repo = scratch("install-registry");
     std::fs::write(
         repo.join("apm.yml"),
@@ -998,22 +1039,22 @@ fn install_on_a_registry_manifest_explains_the_flag_and_never_sets_it() {
     let machine = FakeMachine::with(&["uvx"]);
     let ran = shelfkit(&repo, &machine, &["install"]);
     assert_eq!(ran.code, 0, "{}", ran.stderr);
-    let note = ran
+    let enable = ran
         .stderr
-        .find("uvx --from apm-cli==0.33.0 apm experimental enable registries")
+        .find("$ uvx --from apm-cli==0.33.0 apm experimental enable registries")
         .unwrap();
     let command = ran
         .stderr
         .find("$ uvx --from apm-cli==0.33.0 apm install")
         .unwrap();
-    assert!(note < command, "{}", ran.stderr);
+    assert!(enable < command, "{}", ran.stderr);
     let calls = machine.ran.borrow();
+    let runs: Vec<&str> = calls.iter().map(|(_, args, _)| args[3].as_str()).collect();
     assert_eq!(
-        calls.len(),
-        1,
-        "install must not change APM's configuration"
+        runs,
+        ["experimental", "install"],
+        "no compile without instructions to compile"
     );
-    assert_eq!(calls[0].1[3], "install");
 
     let shelf = repository_root().join("crates/compiler/tests/fixtures/registry");
     let dry = shelfkit(
@@ -1029,7 +1070,7 @@ fn install_on_a_registry_manifest_explains_the_flag_and_never_sets_it() {
     );
     assert!(
         dry.stderr
-            .contains("run `apm experimental enable registries` once"),
+            .contains("`apm experimental enable registries` once per computer"),
         "{}",
         dry.stderr
     );

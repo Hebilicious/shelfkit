@@ -49,9 +49,15 @@ pub trait System {
     fn find(&self, program: &str) -> Option<PathBuf>;
     /// Run a program to completion and capture its standard output.
     fn capture(&self, program: &Path, args: &[&str]) -> io::Result<(i32, String)>;
-    /// Run a program in `dir` with this process's standard streams, and
-    /// return its exit code.
-    fn run(&self, program: &Path, args: &[String], dir: &Path) -> io::Result<i32>;
+    /// Run a program in `dir` with this process's standard streams and
+    /// environment, plus `env`, and return its exit code.
+    fn run(
+        &self,
+        program: &Path,
+        args: &[String],
+        dir: &Path,
+        env: &[(String, String)],
+    ) -> io::Result<i32>;
     fn platform(&self) -> Platform;
 
     /// Send one HTTP request and read the whole answer. A status that is not
@@ -127,10 +133,17 @@ impl System for HostSystem {
 
     // The seam itself: `clippy.toml` forbids `Command::new` everywhere else.
     #[allow(clippy::disallowed_methods)]
-    fn run(&self, program: &Path, args: &[String], dir: &Path) -> io::Result<i32> {
+    fn run(
+        &self,
+        program: &Path,
+        args: &[String],
+        dir: &Path,
+        env: &[(String, String)],
+    ) -> io::Result<i32> {
         let status = std::process::Command::new(program)
             .args(args)
             .current_dir(dir)
+            .envs(env.iter().map(|(name, value)| (name, value)))
             .status()?;
         Ok(status.code().unwrap_or(-1))
     }

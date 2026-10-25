@@ -1,0 +1,100 @@
+name: Release the CLI
+
+# Pushing a tag `v<version>`, the workspace version in Cargo.toml, builds the `shelfkit` binary for each platform the
+# install scripts know and publishes them as that tag's GitHub release, with a SHA256SUMS file. A deployment's
+# `/install.sh` and `/install.ps1` (apps/worker/src/install-script.ts) download from the release of the version the
+# deployment was built with. A version with a pre-release part (`0.1.0-rc.1`) is published as a pre-release.
+#
+# The release is created with GITHUB_TOKEN: this workflow opens no pull request and pushes no tag (the tag that
+# started it already exists), which are the two things a GITHUB_TOKEN write cannot do usefully.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Built on the oldest supported Ubuntu, so the binary needs glibc 2.35 or later and runs on most distributions.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          # One macOS runner builds both architectures: Apple's toolchain cross-compiles between them.
+          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: x86_64-apple-darwin, os: macos-15 }
+          - { target: x86_64-pc-windows-msvc, os: windows-2022 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check that the tag names the workspace version
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "The tag is $GITHUB_REF_NAME but Cargo.toml's workspace version is $version." >&2
+            exit 1
+          fi
+
+      # The pin in .prototools, through the runner's rustup, with only the target this job builds.
+      - name: Install the pinned Rust
+        shell: bash
+        run: |
+          rust="$(sed -n 's/^rust *= *"\(.*\)"/\1/p' .prototools)"
+          rustup toolchain install "$rust" --profile minimal --target "${{ matrix.target }}"
+          echo "RUSTUP_TOOLCHAIN=$rust" >> "$GITHUB_ENV"
+
+      - name: Build
+        shell: bash
+        run: cargo build --release --locked --package shelfkit-compiler --bin shelfkit --target "${{ matrix.target }}"
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          cd "target/${{ matrix.target }}/release"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "$GITHUB_WORKSPACE/dist/shelfkit-${{ matrix.target }}.zip" shelfkit.exe
+          else
+            tar -czf "$GITHUB_WORKSPACE/dist/shelfkit-${{ matrix.target }}.tar.gz" shelfkit
+          fi
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: shelfkit-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum shelfkit-* > SHA256SUMS
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in
+            *-*) prerelease="--prerelease" ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "shelfkit $GITHUB_REF_NAME" \
+            --notes "The \`shelfkit\` CLI. Install it with \`curl -fsSL https://<deployment>/install.sh | sh\`, or in PowerShell \`irm https://<deployment>/install.ps1 | iex\`." \
+            $prerelease

@@ -8,6 +8,7 @@
  *   /raw/*     a shelf's content-addressed files, for `shelfkit push` and `fetch` (`raw.ts`)
  *   /auth/passkey/*  signing the browser in with a passkey, and adding one (`auth/passkeys.ts`)
  *   /auth/github/*   signing the browser in with GitHub, when enabled (`auth/github.ts`)
+ *   /install.sh, /install.ps1  install the `shelfkit` CLI of this deployment's version (`install-script.ts`)
  *   /health    liveness
  *   /*         the SPA, from the assets binding
  *
@@ -21,6 +22,7 @@ import { authenticateHeader } from "./auth/index.ts";
 import { passkeyRoute } from "./auth/passkeys.ts";
 import { graphqlRoute } from "./graphql/route.ts";
 import { unauthorized } from "./http.ts";
+import { installScriptRoute } from "./install-script.ts";
 import { consume, scheduled } from "./jobs/consumer.ts";
 import { handleMcp } from "./mcp/index.ts";
 import { rawRoute } from "./raw.ts";
@@ -50,6 +52,10 @@ export default {
     }
     if (pathname.startsWith("/auth/passkey/")) {
       return await passkeyRoute(request, env);
+    }
+    const script = installScriptRoute(request, env.SHELFKIT_VERSION);
+    if (script !== null) {
+      return script;
     }
     if (pathname === "/mcp") {
       const session = await authenticateHeader(request, env);

@@ -195,7 +195,13 @@ impl System for Service {
     fn capture(&self, program: &Path, _: &[&str]) -> io::Result<(i32, String)> {
         panic!("ran {}", program.display());
     }
-    fn run(&self, program: &Path, args: &[String], _: &Path) -> io::Result<i32> {
+    fn run(
+        &self,
+        program: &Path,
+        args: &[String],
+        _: &Path,
+        _: &[(String, String)],
+    ) -> io::Result<i32> {
         assert_eq!(
             Some(program),
             self.opener.as_deref(),

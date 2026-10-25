@@ -13,6 +13,7 @@ pub mod add_remote;
 pub mod apm;
 pub mod doctor;
 mod hosted;
+mod install;
 mod keychain;
 mod network;
 pub mod output;
@@ -110,15 +111,22 @@ enum Command {
     /// an APM registry) and compared with what the item is pinned to; moved and gone items are listed. Nothing is
     /// written. `GITHUB_TOKEN`, when set, is sent to api.github.com only. `--offline` skips the check.
     Doctor(DoctorArgs),
-    /// Run `apm install` in a repository, through `apm` on PATH or a pinned `uvx`. Prints the command first.
+    /// Install a profile from a hosted shelf into a repository, or run `apm install` there.
     ///
-    /// With neither `apm` nor `uv`, it prints the command that installs uv for this platform and installs nothing.
-    /// Arguments after `--` are passed to `apm install`.
+    /// With a profile, named `<shelf>/<profile>` as the shelf's Install page shows it, the repository's apm.yml gains
+    /// the shelf's registry and a dependency on the profile that follows its newest published version (apm.yml is
+    /// created when there is none, and what it already declares is kept); then APM installs it. Without one, APM
+    /// installs what apm.yml declares. APM runs through `apm` on PATH or a pinned `uvx`, and the command is printed
+    /// first. With neither `apm` nor `uv`, it prints the command that installs uv for this platform.
+    ///
+    /// A private shelf needs a key that can read it, kept once per computer by `shelfkit login <url>`. ShelfKit hands
+    /// it to APM in the environment for each ShelfKit registry apm.yml names, so it is never in a file or a command
+    /// line, and never printed. Arguments after `--` are passed to `apm install`.
     Install(InstallArgs),
     /// Serve the shelf as an OpenAPM registry on http://127.0.0.1, in memory, until stopped.
     ///
     /// Every profile is packaged and published as `{registry.namespace}/{profile}` at its `version`, or at
-    /// `0.0.0+sha256.<revision>` when it has none. The three Registry HTTP API endpoints are served at the root:
+    /// `0.0.0+sha256.<revision>.format<N>` when it has none. The three Registry HTTP API endpoints are served at the root:
     /// `GET /v1/packages/{owner}/{repo}/versions`, `GET .../versions/{version}/download`, and `PUT
     /// .../versions/{version}` (tar.gz as application/gzip only; a version is immutable, so a repeat PUT is 409).
     /// Reads are anonymous when the shelf is public (`registry.public`, or --public / --private). Keys are given as
@@ -138,7 +146,8 @@ enum Command {
     /// Open the deployment's web UI in a browser, signed in as the owner.
     ///
     /// Uses the owner key it holds (`SHELFKIT_KEY`, or the keychain) to make a one-time sign-in link, which works once,
-    /// within 15 minutes, and opens it with the system's browser opener. The page then offers to add a passkey on that
+    /// within 15 minutes, and opens it with the system's browser opener. A URL with a path, such as
+    /// `https://<host>/shelves/<shelf>`, opens that page once signed in. The page then offers to add a passkey on that
     /// device, so it signs in again without a link. Only with `--print` is the link printed instead; when no opener
     /// works, rerun with `--print`. The link is a credential until used, so let nobody else see it. The key is never
     /// printed.
@@ -147,7 +156,7 @@ enum Command {
     ///
     /// Every file is uploaded once by its sha256, the set becomes the hosted shelf's snapshot (the deployment's
     /// engine validates it first), and each profile is packaged exactly as `serve` packages it and published at its
-    /// `version`, or `0.0.0+sha256.<revision>`. A hosted shelf that was changed there (in the web UI, by an import) is
+    /// `version`, or `0.0.0+sha256.<revision>.format<N>`. A hosted shelf that was changed there (in the web UI, by an import) is
     /// not overwritten without `--force`.
     Push(PushArgs),
     /// Write a hosted shelf's snapshot into a directory, removing the shelf files it no longer has.
@@ -165,7 +174,7 @@ struct LoginArgs {
 
 #[derive(Args)]
 struct OpenArgs {
-    /// The deployment, as https://<host>. Defaults to SHELFKIT_URL, then the one `login` remembered.
+    /// The deployment, as https://<host>, or a page of it. Defaults to SHELFKIT_URL, then the one `login` remembered.
     url: Option<String>,
     /// Print the link instead of opening it.
     #[arg(long)]
@@ -329,6 +338,11 @@ struct DoctorArgs {
 
 #[derive(Args)]
 struct InstallArgs {
+    /// The profile to add, as `<shelf>/<profile>`. Without it, APM installs what apm.yml already declares.
+    profile: Option<String>,
+    /// The deployment the profile is on, as https://<host>. Defaults to SHELFKIT_URL, then the one `login` remembered.
+    #[arg(long)]
+    url: Option<String>,
     /// The repository to install into. Defaults to the current directory.
     #[arg(long, value_name = "DIR")]
     repo: Option<PathBuf>,
@@ -426,7 +440,17 @@ where
         Command::Compile(args) => compile_command(ctx, shelf, &args),
         Command::Verify(args) => verify(ctx, shelf, &args),
         Command::Doctor(args) => doctor(ctx, shelf, &args),
-        Command::Install(args) => return install(ctx, &args),
+        Command::Install(args) => {
+            return install::install(
+                ctx,
+                &install::InstallRequest {
+                    apm_args: &args.apm_args,
+                    profile: args.profile.as_deref(),
+                    repo: args.repo.as_deref(),
+                    url: args.url.as_deref(),
+                },
+            );
+        }
         Command::Serve(args) => serve_command(ctx, shelf, &args),
         Command::Login(args) => hosted::login(ctx, args.url.as_deref()),
         Command::Logout(args) => hosted::logout(ctx, args.url.as_deref()),
@@ -1124,18 +1148,24 @@ fn compile_command(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &Compile
     Ok(())
 }
 
-/// What to run after compiling. A registry needs APM's experimental flag,
-/// which changes APM's own configuration, so it is a separate, one-time step
-/// that `shelfkit install` never takes for the user.
+/// What to run after compiling: `shelfkit install`, which also turns on APM's registry flag where apm.yml needs it
+/// and writes the instructions into AGENTS.md. With APM alone, each of those is a step of its own.
 fn next_steps(plan: &crate::CompiledManifest) -> String {
+    let mut steps = Vec::new();
     if declares_registries(&plan.apm_yml) {
-        "run `apm experimental enable registries` once on this machine (APM 0.33.0 reads \
-         registries only behind that flag, and `shelfkit install` does not change APM's \
-         configuration), then `apm install` or `shelfkit install`"
-            .to_owned()
-    } else {
-        "`apm install`, or `shelfkit install`".to_owned()
+        steps.push("`apm experimental enable registries` once per computer (APM 0.33.0 reads registries only behind that flag)".to_owned());
     }
+    steps.push("`apm install`".to_owned());
+    if plan.apm_yml.contains("managed_section") {
+        let (start, end) = crate::manifest::AGENTS_MD_MARKERS;
+        steps.push(format!(
+            "`apm compile --target codex`, with `{start}` and `{end}` in AGENTS.md, and `@AGENTS.md` in CLAUDE.md"
+        ));
+    }
+    format!(
+        "`shelfkit install`, or with APM alone: {}",
+        steps.join(", then ")
+    )
 }
 
 fn declares_registries(apm_yml: &str) -> bool {
@@ -1189,7 +1219,7 @@ fn verify(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &VerifyArgs) -> O
 }
 
 /// Files and directories whose presence says a harness is in use.
-const HARNESS_SIGNALS: &[(&str, &[&str])] = &[
+pub(super) const HARNESS_SIGNALS: &[(&str, &[&str])] = &[
     ("claude", &["CLAUDE.md", ".claude"]),
     (
         "copilot",
@@ -1302,68 +1332,6 @@ fn doctor(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &DoctorArgs) -> O
         }
     }
     Ok(())
-}
-
-fn install(ctx: &mut Context<'_>, args: &InstallArgs) -> u8 {
-    let repo = absolute(ctx, args.repo.as_deref());
-    if !repo.join(APM_YML).is_file() {
-        let _ = writeln!(
-            ctx.stderr,
-            "shelfkit: {} has no apm.yml; run `shelfkit compile` first",
-            repo.display()
-        );
-        return 1;
-    }
-    let runner = Runner::resolve(ctx.system);
-    if runner.supported() == Some(false) {
-        let _ = writeln!(
-            ctx.stderr,
-            "warning: this apm is outside the supported range {}; running it anyway",
-            apm::supported_range()
-        );
-    }
-    let mut apm_args = vec!["install"];
-    apm_args.extend(args.apm_args.iter().map(String::as_str));
-    let manifest = std::fs::read_to_string(repo.join(APM_YML)).unwrap_or_default();
-    if declares_registries(&manifest)
-        && let Some((program, enable)) = runner.command(&["experimental", "enable", "registries"])
-    {
-        let _ = writeln!(
-            ctx.stderr,
-            "note: this apm.yml routes dependencies through a registry, which APM 0.33.0 reads only \
-             behind its experimental `registries` flag. ShelfKit does not change APM's configuration; \
-             if APM refuses the registry, enable it once with:\n    {}",
-            apm::display_command(&program, &enable)
-        );
-    }
-    let Some((program, full)) = runner.command(&apm_args) else {
-        let _ = writeln!(
-            ctx.stderr,
-            "shelfkit: {}",
-            apm::missing_message(ctx.system.platform())
-        );
-        return 1;
-    };
-    let _ = writeln!(ctx.stderr, "$ {}", apm::display_command(&program, &full));
-    let _ = ctx.stderr.flush();
-    let code = match ctx.system.run(&program, &full, &repo) {
-        Ok(code) => code,
-        Err(error) => {
-            let _ = writeln!(
-                ctx.stderr,
-                "shelfkit: could not run {}: {error}",
-                program.display()
-            );
-            return 1;
-        }
-    };
-    if code == 0 {
-        let lock = repo.join("apm.lock.yaml");
-        if lock.is_file() {
-            let _ = writeln!(ctx.stderr, "apm.lock.yaml written by APM");
-        }
-    }
-    u8::try_from(code).unwrap_or(1)
 }
 
 fn serve_command(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &ServeArgs) -> Outcome {
