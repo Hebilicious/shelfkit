@@ -199,8 +199,8 @@ async function copy(text: string, way: Way): Promise<void> {
         <p class="small muted">
           One command adds the profile to the repository's apm.yml, keeping what is there, and runs APM. The CLI
           installs itself once per computer<template v-if="target.isPrivate">, and for this private shelf
-            <code>shelfkit login</code> keeps a key that can read it in the OS keychain, so the key is never in a file
-            or in front of an agent</template>.
+            <code>shelfkit login</code> signs the CLI in through your browser and keeps its key in the OS keychain, so
+            the key is never copied, in a file, or in front of an agent</template>.
         </p>
         <div class="tabs" role="tablist">
           <button

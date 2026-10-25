@@ -106,6 +106,51 @@ export const RemovePasskeyMutation = graphql(`
   }
 `);
 
+// Signing the CLI in through the browser: the approval page at /cli/<code>, and the keys CLIs hold.
+
+export const CliLoginQuery = graphql(`
+  query CliLogin($code: String!) {
+    cliLogin(code: $code) {
+      code
+      device
+      expiresAt
+    }
+  }
+`);
+
+export const ApproveCliLoginMutation = graphql(`
+  mutation ApproveCliLogin($code: String!) {
+    approveCliLogin(code: $code) {
+      device
+      name
+    }
+  }
+`);
+
+export const DenyCliLoginMutation = graphql(`
+  mutation DenyCliLogin($code: String!) {
+    denyCliLogin(code: $code)
+  }
+`);
+
+export const CliKeysQuery = graphql(`
+  query CliKeys {
+    cliKeys {
+      id
+      name
+      prefix
+      createdAt
+      lastUsedAt
+    }
+  }
+`);
+
+export const RevokeCliKeyMutation = graphql(`
+  mutation RevokeCliKey($id: ID!) {
+    revokeCliKey(id: $id)
+  }
+`);
+
 export const SignOutMutation = graphql(`
   mutation SignOut {
     signOut

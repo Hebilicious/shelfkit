@@ -1,5 +1,5 @@
 /**
- * The screens from `docs/PRD.md` section 9. Everything but sign-in and share pages lives under one shelf,
+ * The screens from `docs/PRD.md` section 9. Everything but sign-in, approving a CLI's login, and share pages lives under one shelf,
  * `/shelves/:shelf/...`, since every read and write happens in the context of one shelf.
  *
  * Every screen is in the main bundle rather than a chunk of its own: a section opens in the frame it is clicked,
@@ -9,6 +9,7 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import { KIND_GUIDES, KIND_ORDER } from "./lib/vocabulary.ts";
 import ActivityScreen from "./screens/activity.vue";
+import CliLoginScreen from "./screens/cli-login.vue";
 import CompileScreen from "./screens/compile.vue";
 import ComposeScreen from "./screens/compose.vue";
 import HomeScreen from "./screens/home.vue";
@@ -47,6 +48,11 @@ export const router = createRouter({
       component: LinkScreen,
       name: "link",
       path: "/link",
+    },
+    {
+      component: CliLoginScreen,
+      name: "cli-login",
+      path: "/cli/:code?",
     },
     {
       component: ShareScreen,

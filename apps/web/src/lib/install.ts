@@ -3,7 +3,8 @@
  * into a terminal, two ways:
  *
  * - With the ShelfKit CLI (the default): `shelfkit install <shelf>/<profile> --url <deployment>` adds the profile to
- *   the repository's apm.yml and runs APM, handing it the key `shelfkit login` keeps for a private shelf.
+ *   the repository's apm.yml and runs APM, handing it the key `shelfkit login` keeps for a private shelf. `shelfkit
+ *   login` signs the CLI in through the browser, so nobody copies a key; CI, which has no browser, pipes it a key.
  * - With APM alone: the repository's apm.yml names the shelf's registry and the profile's newest version, and `apm
  *   install` does the rest. Verified against APM 0.33: a named registry, and a dependency that routes to it pinned to
  *   an exact version. A range cannot follow a profile, since APM ranks every generated `0.0.0+…` version the same and
@@ -69,8 +70,9 @@ export function cliTerminalSteps(target: InstallTarget): string {
   ];
   if (target.isPrivate) {
     lines.push(
-      "# Once per computer: a key that can read this private shelf, kept in the OS keychain.",
-      "# The shelf's owner makes one in Settings → Keys; paste it when asked.",
+      "# Once per computer: sign the CLI in to read this private shelf. It opens your browser:",
+      "# approve there if the page shows the code this terminal shows. The key goes to the OS keychain.",
+      "# (In CI, with no browser, pipe it a key from Settings → Keys instead.)",
       `shelfkit login ${target.origin}`,
       ""
     );
@@ -96,7 +98,7 @@ export function cliAgentPrompt(target: InstallTarget): string {
   ];
   if (target.isPrivate) {
     lines.push(
-      `   The shelf is private. If shelfkit says it has no key for ${target.origin}, stop and ask me to run \`shelfkit login ${target.origin}\` in my own terminal, then run step 2 again. Do not ask me for the key, and never put a key in a file or a command.`
+      `   The shelf is private. If shelfkit says it has no key for ${target.origin}, stop and ask me to run \`shelfkit login ${target.origin}\` in my own terminal, where it signs the CLI in through my browser, then run step 2 again. Do not run it yourself, do not ask me for a key, and never put a key in a file or a command.`
     );
   }
   lines.push(`3. ${COMMIT_STEP}`);
