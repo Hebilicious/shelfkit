@@ -470,3 +470,61 @@ fn a_profile_with_docs_installs_the_skills_folder_its_links_name() {
     );
     assert!(manifest.contains("  resolve_links: false\n"), "{manifest}");
 }
+
+/// A machine whose keychain cannot be read, as a server or a CI runner with no Secret Service.
+struct NoKeychain(Machine);
+
+impl System for NoKeychain {
+    fn find(&self, program: &str) -> Option<PathBuf> {
+        self.0.find(program)
+    }
+    fn capture(&self, program: &Path, args: &[&str]) -> io::Result<(i32, String)> {
+        self.0.capture(program, args)
+    }
+    fn run(
+        &self,
+        program: &Path,
+        args: &[String],
+        dir: &Path,
+        env: &[(String, String)],
+    ) -> io::Result<i32> {
+        self.0.run(program, args, dir, env)
+    }
+    fn platform(&self) -> Platform {
+        Platform::Unix
+    }
+    fn keychain_get(&self, _: &str) -> io::Result<Option<String>> {
+        Err(io::Error::other(
+            "DBus error: no Secret Service on this bus",
+        ))
+    }
+    fn http(&self, request: &HttpRequest) -> io::Result<HttpResponse> {
+        self.0.http(request)
+    }
+}
+
+#[test]
+fn a_machine_without_a_keychain_installs_a_public_shelf_and_explains_a_private_one() {
+    let public = scratch("no-keychain-public");
+    let ran = shelfkit(
+        &public,
+        &NoKeychain(Machine::new(false)),
+        &["install", "team/web", "--url", URL],
+    );
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert!(public.join("apm.yml").is_file());
+
+    let private = scratch("no-keychain-private");
+    let ran = shelfkit(
+        &private,
+        &NoKeychain(Machine::new(true)),
+        &["install", "team/web", "--url", URL],
+    );
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.stderr.contains("could not be read (DBus error"),
+        "{}",
+        ran.stderr
+    );
+    assert!(ran.stderr.contains("set SHELFKIT_KEY"), "{}", ran.stderr);
+}

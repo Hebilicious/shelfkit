@@ -118,8 +118,17 @@ fn add_profile(
 ) -> Result<Option<String>, String> {
     let wanted = ProfileRef::parse(profile)?;
     let url = deployment(ctx.system, url)?;
-    let key = key_for(ctx.system, &url)?;
-    let version = newest_version(ctx.system, &url, key.as_deref(), &wanted)?;
+    let (key, keychain_problem) = key_for(ctx.system, &url);
+    let version = newest_version(ctx.system, &url, key.as_deref(), &wanted).map_err(|message| {
+        match (&key, keychain_problem) {
+            // A private shelf, and the keychain that might hold its key could not be read.
+            (None, Some(problem)) if message.contains("is private") => format!(
+                "{message}. This computer's OS keychain could not be read ({problem}); where there is none, as on a \
+                 server, set SHELFKIT_KEY to the key instead"
+            ),
+            _ => message,
+        }
+    })?;
     let facts = profile_facts(ctx.system, &url, key.as_deref(), &wanted);
 
     let path = repo.join(APM_YML);
@@ -159,18 +168,16 @@ fn add_profile(
 }
 
 /// The key to send `url`: `SHELFKIT_KEY`, else the one `shelfkit login` keeps; `None` for a public shelf's reader
-/// with neither.
-fn key_for(system: &dyn System, url: &str) -> Result<Option<String>, String> {
+/// with neither. A keychain that cannot be read (none runs on a server, in a container, or on CI) is no key, and why
+/// is returned beside it, for the message about a private shelf: a public one installs without.
+fn key_for(system: &dyn System, url: &str) -> (Option<String>, Option<String>) {
     if let Some(key) = system.var(KEY_ENV) {
-        return Ok(Some(key));
+        return (Some(key), None);
     }
     match system.keychain_get(url) {
-        Ok(key) => Ok(key),
-        // A machine with no keychain can still install a public shelf.
-        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => Ok(None),
-        Err(error) => Err(format!(
-            "reading the key for {url} from the OS keychain: {error}"
-        )),
+        Ok(key) => (key, None),
+        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => (None, None),
+        Err(error) => (None, Some(error.to_string())),
     }
 }
 
@@ -220,8 +227,8 @@ fn newest_version(
                 })
         }
         (401, None) => Err(format!(
-            "the shelf `{}` on {url} is private. Once per computer, run `shelfkit login {url}` and paste a key that \
-             can read it (its owner makes one in Settings → Keys), then run this again",
+            "the shelf `{}` on {url} is private. Once per computer, run `shelfkit login {url}`, which signs this \
+             computer in through your browser, then run this again",
             wanted.shelf
         )),
         (401, Some(_)) => Err(format!(
@@ -534,15 +541,9 @@ fn run_apm(
     let mut env = Vec::new();
     let mut private = Vec::new();
     for (name, url) in shelfkit_registries(&manifest) {
-        match key_for(ctx.system, &url) {
-            Ok(Some(key)) => {
-                env.push((token_variable(&name), key));
-                private.push((name, url));
-            }
-            Ok(None) => {}
-            Err(message) => {
-                let _ = writeln!(ctx.stderr, "warning: {message}");
-            }
+        if let (Some(key), _) = key_for(ctx.system, &url) {
+            env.push((token_variable(&name), key));
+            private.push((name, url));
         }
     }
     if manifest.get("registries").is_some() {
