@@ -57,12 +57,15 @@ struct Found {
 pub struct Import {
     pub files: BTreeMap<String, Vec<u8>>,
     pub items: Vec<(ItemKind, String)>,
+    /// What the import left out, for the command to report.
+    pub warnings: Vec<String>,
 }
 
 pub fn import(shelf_root: &Path, target: &Path, source_id: Option<&str>) -> Result<Import, String> {
     let target = target
         .canonicalize()
         .map_err(|error| format!("{}: {error}", target.display()))?;
+    let mut warnings = Vec::new();
     let (root, found) = if target.is_file() {
         let found = single_file(&target, &file_name(&target))?;
         // A doc's source is its repository, so every doc from one repository shares one source.
@@ -73,7 +76,7 @@ pub fn import(shelf_root: &Path, target: &Path, source_id: Option<&str>) -> Resu
         };
         (root, vec![found])
     } else {
-        (target.clone(), discover(&target)?)
+        (target.clone(), discover(&target, &mut warnings)?)
     };
     if found.is_empty() {
         return Err(format!(
@@ -163,7 +166,11 @@ pub fn import(shelf_root: &Path, target: &Path, source_id: Option<&str>) -> Resu
     load(&Overlay { base: &base, extra }).map_err(|errors| {
         format!("the import would not load, so nothing was written:\n{errors}")
     })?;
-    Ok(Import { files, items })
+    Ok(Import {
+        files,
+        items,
+        warnings,
+    })
 }
 
 fn file_name(path: &Path) -> String {
@@ -298,9 +305,9 @@ fn doc_at(file: &Path, path: String, id: String) -> Result<Found, String> {
 }
 
 /// What a directory offers: its APM layouts, then its AGENTS.md and the docs that links to.
-fn discover(root: &Path) -> Result<Vec<Found>, String> {
+fn discover(root: &Path, warnings: &mut Vec<String>) -> Result<Vec<Found>, String> {
     let mut found = layouts(root)?;
-    let linked = agents_and_docs(root, &found)?;
+    let linked = agents_and_docs(root, &found, warnings)?;
     found.extend(linked);
     Ok(found)
 }
@@ -358,18 +365,21 @@ fn unique_id(name: &str, fallback: &str, qualifier: &str, taken: &mut BTreeSet<S
 
 /// The directory's AGENTS.md as instructions, and every doc its links reach (`linked_docs.rs`), each requiring the
 /// docs it links to. Nothing when AGENTS.md is missing or a symbolic link (a CLAUDE.md's target, say).
-fn agents_and_docs(root: &Path, layouts: &[Found]) -> Result<Vec<Found>, String> {
+fn agents_and_docs(
+    root: &Path,
+    layouts: &[Found],
+    warnings: &mut Vec<String>,
+) -> Result<Vec<Found>, String> {
     let agents = root.join("AGENTS.md");
     if !std::fs::symlink_metadata(&agents).is_ok_and(|meta| meta.file_type().is_file()) {
         return Ok(Vec::new());
     }
     let followed = linked_docs::follow(root);
     if followed.truncated {
-        eprintln!(
-            "warning: AGENTS.md links to more than {} docs; only the first {} are imported",
-            linked_docs::MAX_DOCS,
+        warnings.push(format!(
+            "AGENTS.md links to more than {0} docs; only the first {0} were imported",
             linked_docs::MAX_DOCS
-        );
+        ));
     }
     let mut taken: BTreeSet<String> = layouts.iter().map(|found| found.id.clone()).collect();
     let instructions_id = unique_id(&file_name(root), "instructions", "instructions", &mut taken);

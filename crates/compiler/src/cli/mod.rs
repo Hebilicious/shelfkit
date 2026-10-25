@@ -628,6 +628,9 @@ fn add(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &AddArgs) -> Outcome
     for (kind, id) in &import.items {
         let _ = writeln!(ctx.stdout, "added {kind} {id}");
     }
+    for warning in &import.warnings {
+        let _ = writeln!(ctx.stderr, "warning: {warning}");
+    }
     let _ = writeln!(ctx.stdout, "Select them in a profile to compile them.");
     Ok(())
 }
