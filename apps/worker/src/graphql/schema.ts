@@ -38,7 +38,7 @@ import {
 } from "../auth/index.ts";
 import type { Session } from "../auth/index.ts";
 import { parseSecret, secretHash } from "../auth/keys.ts";
-import type { PasskeyRecord } from "../auth/principals.ts";
+import type { CliKeyRecord, PasskeyRecord } from "../auth/principals.ts";
 import type { JobMessage } from "../jobs/messages.ts";
 import type {
   GrantRecord,
@@ -1423,6 +1423,62 @@ export function buildSchema(): GraphQLSchema {
     }),
   });
 
+  const CliKey = builder.objectRef<CliKeyRecord>("CliKey").implement({
+    description:
+      "A key a CLI holds because its account's person approved `shelfkit login` in the browser. It acts as that person.",
+    fields: (t) => ({
+      createdAt: t.field({
+        resolve: (row) => row.createdAt,
+        type: "DateTime",
+      }),
+      id: t.exposeID("id"),
+      lastUsedAt: t.field({
+        nullable: true,
+        resolve: (row) => row.lastUsedAt,
+        type: "DateTime",
+      }),
+      name: t.exposeString("name", {
+        description: "`CLI on <device>`, from the name the CLI sent.",
+      }),
+      prefix: t.exposeString("prefix", {
+        description: "Enough of the key to recognise it, never to use it.",
+      }),
+    }),
+  });
+
+  const CliLogin = builder
+    .objectRef<people.CliLoginPreview>("CliLogin")
+    .implement({
+      description:
+        "A `shelfkit login` waiting for approval in the browser: the code the terminal shows, and the name its computer sent.",
+      fields: (t) => ({
+        code: t.exposeString("code", {
+          description: "The user code, as ABCD-EFGH.",
+        }),
+        device: t.exposeString("device", {
+          description:
+            "The name the CLI sent for its computer. The CLI chose it, so it proves nothing.",
+        }),
+        expiresAt: t.field({
+          resolve: (row) => row.expiresAt,
+          type: "DateTime",
+        }),
+      }),
+    });
+
+  const CliLoginApproval = builder
+    .objectRef<{ readonly device: string; readonly name: string }>(
+      "CliLoginApproval"
+    )
+    .implement({
+      fields: (t) => ({
+        device: t.exposeString("device"),
+        name: t.exposeString("name", {
+          description: "The name of the key the CLI now holds.",
+        }),
+      }),
+    });
+
   const SignInLink = builder
     .objectRef<{ readonly url: string; readonly expiresAt: string }>(
       "SignInLink"
@@ -2174,6 +2230,26 @@ export function buildSchema(): GraphQLSchema {
 
   builder.queryType({
     fields: (t) => ({
+      cliKeys: t.field({
+        description:
+          "The keys CLIs hold for your account, from approving `shelfkit login` in the browser: the owner's for the owner, else your own.",
+        resolve: async (_root, _args, context) => await people.cliKeys(context),
+        type: [CliKey],
+      }),
+      cliLogin: t.field({
+        args: {
+          code: t.arg.string({
+            description: "The user code, as ABCD-EFGH.",
+            required: true,
+          }),
+        },
+        description:
+          "A `shelfkit login` waiting for approval, for its page; null once it was approved, denied, or expired. Only a browser signed in by its cookie may ask.",
+        nullable: true,
+        resolve: async (_root, args, context) =>
+          await people.previewCliLogin(context, args.code),
+        type: CliLogin,
+      }),
       invite: t.field({
         args: { token: t.arg.string({ required: true }) },
         description:
@@ -2304,6 +2380,14 @@ export function buildSchema(): GraphQLSchema {
 
   builder.mutationType({
     fields: (t) => ({
+      approveCliLogin: t.field({
+        args: { code: t.arg.string({ required: true }) },
+        description:
+          "Approve a `shelfkit login`: its CLI gets a key, once, that acts as whoever this browser is signed in as. Only a browser signed in by its cookie may approve.",
+        resolve: async (_root, args, context) =>
+          await people.approveCli(context, args.code),
+        type: CliLoginApproval,
+      }),
       commitSnapshot: t.field({
         args: {
           files: t.arg({ required: true, type: [SnapshotFileInput] }),
@@ -2448,6 +2532,13 @@ export function buildSchema(): GraphQLSchema {
           );
         },
         type: Commit,
+      }),
+      denyCliLogin: t.boolean({
+        args: { code: t.arg.string({ required: true }) },
+        description:
+          "Deny a `shelfkit login`: its CLI stops waiting and holds nothing.",
+        resolve: async (_root, args, context) =>
+          await people.denyCli(context, args.code),
       }),
       grantAccess: t.field({
         args: {
@@ -2765,6 +2856,13 @@ export function buildSchema(): GraphQLSchema {
           const target = await held(context, shelfArg(args.shelf));
           return await target.revokeAccess(context.session, args.principal);
         },
+      }),
+      revokeCliKey: t.boolean({
+        args: { id: t.arg.id({ required: true }) },
+        description:
+          "Revoke one of your CLI keys. It fails on its next request, on every surface.",
+        resolve: async (_root, args, context) =>
+          await people.revokeCliKey(context, args.id),
       }),
       revokeInvite: t.boolean({
         args: {

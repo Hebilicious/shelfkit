@@ -7,15 +7,20 @@
  * - `sks_<shelf>_<secret>`: a scoped key, stored (hashed) in the shelf's Durable Object. A shelf id is kebab-case, so
  *   it never contains `_`, and the first `_` after it ends it.
  * - `shs_<shelf>_<secret>`: a read-only share link's token, stored (hashed) in the shelf's object.
+ * - `skc_<account>_<secret>`: a key a person gave the CLI by approving `shelfkit login` in the browser (`cli.ts`). It
+ *   acts as that person, stored (hashed) in their account object. `<account>` is `owner`, `p<32 hex>` for an invited
+ *   person, or `g<numeric id>` for a GitHub account.
  */
 import { ShelfIdSchema } from "@shelfkit/schema";
 import * as v from "valibot";
 
 import { sha256Hex } from "../storage/objects.ts";
+import { OWNER_PRINCIPAL } from "./session.ts";
 
 export const OWNER_PREFIX = "sko_";
 export const KEY_PREFIX = "sks_";
 export const SHARE_PREFIX = "shs_";
+export const CLI_PREFIX = "skc_";
 
 const SECRET = /^[A-Za-z0-9_-]{43}$/u;
 
@@ -24,9 +29,45 @@ export type ParsedSecret =
   | { readonly kind: "owner" }
   | { readonly kind: "key"; readonly shelf: string }
   | { readonly kind: "share"; readonly shelf: string }
+  | { readonly kind: "cli"; readonly principal: string }
   | { readonly kind: "malformed" };
 
+/** The principal a CLI key's `<account>` names, or `null`. */
+function cliPrincipal(subject: string): string | null {
+  if (subject === OWNER_PRINCIPAL) {
+    return OWNER_PRINCIPAL;
+  }
+  if (/^p[0-9a-f]{32}$/u.test(subject)) {
+    return `person:${subject.slice(1)}`;
+  }
+  return /^g[1-9][0-9]{0,19}$/u.test(subject)
+    ? `github:${subject.slice(1)}`
+    : null;
+}
+
+/** A CLI key's `<account>` for a principal, or `null` for one that holds no CLI keys. */
+function cliSubject(principal: string): string | null {
+  if (principal === OWNER_PRINCIPAL) {
+    return OWNER_PRINCIPAL;
+  }
+  const [kind = "", id = ""] = principal.split(":");
+  const subject = kind === "person" ? `p${id}` : `g${id}`;
+  return (kind === "person" || kind === "github") &&
+    cliPrincipal(subject) === principal
+    ? subject
+    : null;
+}
+
 export function parseSecret(text: string): ParsedSecret {
+  if (text.startsWith(CLI_PREFIX)) {
+    const rest = text.slice(CLI_PREFIX.length);
+    const separator = rest.indexOf("_");
+    const principal =
+      separator > 0 ? cliPrincipal(rest.slice(0, separator)) : null;
+    return principal !== null && SECRET.test(rest.slice(separator + 1))
+      ? { kind: "cli", principal }
+      : { kind: "malformed" };
+  }
   if (text.startsWith(OWNER_PREFIX)) {
     return SECRET.test(text.slice(OWNER_PREFIX.length))
       ? { kind: "owner" }
@@ -75,6 +116,12 @@ export function newShelfKey(shelf: string): string {
 
 export function newShareToken(shelf: string): string {
   return `${SHARE_PREFIX}${shelf}_${randomSecret()}`;
+}
+
+/** A new CLI key for `principal`, or `null` when the principal is not one that holds CLI keys. */
+export function newCliKey(principal: string): string | null {
+  const subject = cliSubject(principal);
+  return subject === null ? null : `${CLI_PREFIX}${subject}_${randomSecret()}`;
 }
 
 /** What the service stores for a key or token: the lowercase hex SHA-256 of the whole string. */

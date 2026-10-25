@@ -1,11 +1,13 @@
 /** What every GraphQL resolver gets: the request's session, the Worker's bindings, and a per-request memo. */
-import type { Session } from "../auth/index.ts";
+import type { CredentialSource, Session } from "../auth/index.ts";
 
 export interface GraphQLContext {
   readonly env: Env;
   /** Present on the Worker; absent when the schema is printed in Node. */
   readonly execution?: ExecutionContext;
   readonly session: Session;
+  /** Where the session's credential came from: the `Authorization` header, the browser's cookie, or nowhere. */
+  readonly source: CredentialSource | null;
   readonly request: Request;
   /** `Set-Cookie` values the response carries: `signOut` adds one. */
   readonly cookies: string[];
@@ -17,7 +19,8 @@ export function createContext(
   env: Env,
   request: Request,
   session: Session,
-  execution?: ExecutionContext
+  execution?: ExecutionContext,
+  source: CredentialSource | null = null
 ): GraphQLContext {
   const cache = new Map<string, Promise<unknown>>();
   return {
@@ -37,5 +40,6 @@ export function createContext(
     },
     request,
     session,
+    source,
   };
 }

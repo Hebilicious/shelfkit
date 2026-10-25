@@ -10,7 +10,11 @@
  * - `credential:<id>`: a passkey (public key, signature counter, transports, label, created and last used);
  * - `registration:<challenge>`: a registration challenge this object issued, until it is used or expires;
  * - `used:<challenge>`: an authentication challenge already spent here, until it would have expired anyway;
- * - `link:<sha256>`: a sign-in link, by the hash of its token, until it is used or expires.
+ * - `link:<sha256>`: a sign-in link, by the hash of its token, until it is used or expires;
+ * - `cli:<sha256>`: a key the person gave the CLI by approving `shelfkit login` in the browser, by its hash, until
+ *   they revoke it or the owner removes the account.
+ *
+ * A GitHub account's object (`github:<numeric id>`) holds only its CLI keys: it has no profile, passkeys, or links.
  *
  * Every check that makes something single-use reads and deletes in the same synchronous step, before any `await`, so
  * two requests racing with one challenge or one link cannot both succeed.
@@ -25,6 +29,7 @@ import * as v from "valibot";
 import { CHALLENGE_SECONDS, clientChallenge } from "./principals.ts";
 import type {
   AccountOutcome,
+  CliKeyRecord,
   PasskeyRecord,
   RelyingParty,
 } from "./principals.ts";
@@ -49,6 +54,18 @@ const CredentialSchema = v.object({
 });
 
 const ExpirySchema = v.object({ expiresAt: v.number() });
+
+const CliKeySchema = v.object({
+  createdAt: v.string(),
+  id: v.string(),
+  lastUsedAt: v.nullable(v.string()),
+  name: v.string(),
+  /** Who approved it: the principal and, for a GitHub account, which has no profile here, the name to show. */
+  person: v.object({ id: v.string(), name: v.string() }),
+  prefix: v.string(),
+});
+
+type CliKey = v.InferOutput<typeof CliKeySchema>;
 
 type Credential = v.InferOutput<typeof CredentialSchema>;
 
@@ -100,7 +117,7 @@ export class AccountIndex extends DurableObject<Env> {
   }
 
   /**
-   * Remove the account: every passkey and sign-in link goes, and its sessions end at their next request, since the
+   * Remove the account: every passkey, sign-in link, and CLI key goes, and its sessions end at their next request, since the
    * Worker asks this object on every request whether the account still exists.
    */
   remove(): boolean {
@@ -108,7 +125,7 @@ export class AccountIndex extends DurableObject<Env> {
     if (profile === null || profile.principal === OWNER_PRINCIPAL) {
       return false;
     }
-    for (const prefix of ["credential:", "registration:", "link:"]) {
+    for (const prefix of ["credential:", "registration:", "link:", "cli:"]) {
       for (const [key] of this.kv.list({ prefix })) {
         this.kv.delete(key);
       }
@@ -383,4 +400,98 @@ export class AccountIndex extends DurableObject<Env> {
     }
     return this.person();
   }
+
+  // --- CLI keys ----------------------------------------------------------------------------------------------------
+
+  /** Whether `person` is this account's, as it is now: the owner and a GitHub account always are; a person until removed. */
+  private holds(person: Person): boolean {
+    if (person.id.startsWith("person:")) {
+      return this.person()?.id === person.id;
+    }
+    return person.id === OWNER_PRINCIPAL || person.id.startsWith("github:");
+  }
+
+  private cliKeyRecords(): { readonly hash: string; readonly key: CliKey }[] {
+    const found: { readonly hash: string; readonly key: CliKey }[] = [];
+    for (const [name, value] of this.kv.list({ prefix: "cli:" })) {
+      const parsed = v.safeParse(CliKeySchema, value);
+      if (parsed.success) {
+        found.push({ hash: name.slice("cli:".length), key: parsed.output });
+      }
+    }
+    return found;
+  }
+
+  /**
+   * Keep a CLI key, by its hash, for `person`, who approved it in the browser. `null` when the account is not
+   * `person`'s, or was removed.
+   */
+  createCliKey(input: {
+    readonly hash: string;
+    readonly name: string;
+    readonly person: Person;
+    readonly prefix: string;
+  }): CliKeyRecord | null {
+    if (input.person.id === OWNER_PRINCIPAL) {
+      this.ensure({ id: OWNER_PRINCIPAL, name: "Owner" });
+    }
+    if (!this.holds(input.person)) {
+      return null;
+    }
+    const record: CliKey = {
+      createdAt: now(),
+      id: crypto.randomUUID(),
+      lastUsedAt: null,
+      name: input.name.trim().slice(0, 64) || "CLI",
+      person: { id: input.person.id, name: input.person.name.slice(0, 64) },
+      prefix: input.prefix,
+    };
+    this.kv.put(`cli:${input.hash}`, record);
+    return cliKeyRecord(record);
+  }
+
+  /**
+   * Whom a CLI key acts as, by its hash: the account's person, as they are now, or `null` for a key this account does
+   * not hold or an account the owner removed. Asked on every request, so a revoked key fails at once.
+   */
+  resolveCliKey(hash: string): Person | null {
+    const stored = v.safeParse(CliKeySchema, this.kv.get(`cli:${hash}`));
+    if (!stored.success || !this.holds(stored.output.person)) {
+      return null;
+    }
+    const used = now();
+    if (stored.output.lastUsedAt?.slice(0, 16) !== used.slice(0, 16)) {
+      this.kv.put(`cli:${hash}`, { ...stored.output, lastUsedAt: used });
+    }
+    return stored.output.person.id.startsWith("github:")
+      ? stored.output.person
+      : (this.person() ?? stored.output.person);
+  }
+
+  /** The CLI keys this account holds, oldest first. */
+  cliKeys(): CliKeyRecord[] {
+    return this.cliKeyRecords()
+      .map(({ key }) => cliKeyRecord(key))
+      .toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  /** Revoke a CLI key by its id. It fails on the next request, on every surface. */
+  revokeCliKey(id: string): boolean {
+    const found = this.cliKeyRecords().find(({ key }) => key.id === id);
+    if (found === undefined) {
+      return false;
+    }
+    this.kv.delete(`cli:${found.hash}`);
+    return true;
+  }
+}
+
+function cliKeyRecord(key: CliKey): CliKeyRecord {
+  return {
+    createdAt: key.createdAt,
+    id: key.id,
+    lastUsedAt: key.lastUsedAt,
+    name: key.name,
+    prefix: key.prefix,
+  };
 }

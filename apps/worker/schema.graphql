@@ -29,6 +29,42 @@ type ApiKey {
 }
 
 """
+A key a CLI holds because its account's person approved `shelfkit login` in the browser. It acts as that person.
+"""
+type CliKey {
+  createdAt: DateTime!
+  id: ID!
+  lastUsedAt: DateTime
+
+  """`CLI on <device>`, from the name the CLI sent."""
+  name: String!
+
+  """Enough of the key to recognise it, never to use it."""
+  prefix: String!
+}
+
+"""
+A `shelfkit login` waiting for approval in the browser: the code the terminal shows, and the name its computer sent.
+"""
+type CliLogin {
+  """The user code, as ABCD-EFGH."""
+  code: String!
+
+  """
+  The name the CLI sent for its computer. The CLI chose it, so it proves nothing.
+  """
+  device: String!
+  expiresAt: DateTime!
+}
+
+type CliLoginApproval {
+  device: String!
+
+  """The name of the key the CLI now holds."""
+  name: String!
+}
+
+"""
 What a write that changes the shelf's files answers: the new snapshot, or why it was refused (`invalid`: the engine refused the shelf; `missing`: upload these objects first; `conflict`: the shelf moved since `parent`).
 """
 type CommitResult {
@@ -315,6 +351,11 @@ type LinkRedemption {
 
 type Mutation {
   """
+  Approve a `shelfkit login`: its CLI gets a key, once, that acts as whoever this browser is signed in as. Only a browser signed in by its cookie may approve.
+  """
+  approveCliLogin(code: String!): CliLoginApproval!
+
+  """
   Make these files the shelf's snapshot, after uploading each to `/raw/{shelf}/objects/{sha256}`: `shelfkit push`. The first snapshot creates the shelf (owner only).
   """
   commitSnapshot(
@@ -360,6 +401,9 @@ type Mutation {
   createSignInLink: SignInLink!
   deleteItem(id: ID!, shelf: ID!): CommitResult!
   deleteProfile(id: ID!, shelf: ID!): CommitResult!
+
+  """Deny a `shelfkit login`: its CLI stops waiting and holds nothing."""
+  denyCliLogin(code: String!): Boolean!
 
   """
   Let a GitHub account sign in to the shelf in the browser with these scopes, replacing any it had, when GitHub sign-in is enabled. The owner only.
@@ -459,6 +503,11 @@ type Mutation {
     principal: ID!
     shelf: ID!
   ): Boolean!
+
+  """
+  Revoke one of your CLI keys. It fails on its next request, on every surface.
+  """
+  revokeCliKey(id: ID!): Boolean!
 
   """Revoke an invite nobody has used yet. The owner only."""
   revokeInvite(id: ID!, shelf: ID!): Boolean!
@@ -577,6 +626,19 @@ type ProfileRevision {
 }
 
 type Query {
+  """
+  The keys CLIs hold for your account, from approving `shelfkit login` in the browser: the owner's for the owner, else your own.
+  """
+  cliKeys: [CliKey!]!
+
+  """
+  A `shelfkit login` waiting for approval, for its page; null once it was approved, denied, or expired. Only a browser signed in by its cookie may ask.
+  """
+  cliLogin(
+    """The user code, as ABCD-EFGH."""
+    code: String!
+  ): CliLogin
+
   """
   What an invite offers, before it is accepted; null when it was used, revoked, or has expired.
   """

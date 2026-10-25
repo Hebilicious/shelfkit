@@ -25,6 +25,16 @@ export interface PasskeyRecord {
   readonly lastUsedAt: string | null;
 }
 
+/** A key the CLI holds for an account, as its person sees it: never the key itself. */
+export interface CliKeyRecord {
+  readonly id: string;
+  readonly name: string;
+  /** Enough of the key to recognise it, never enough to use it. */
+  readonly prefix: string;
+  readonly createdAt: string;
+  readonly lastUsedAt: string | null;
+}
+
 /** Why a ceremony or a link was refused. */
 export type AccountRefusal =
   | "removed"
