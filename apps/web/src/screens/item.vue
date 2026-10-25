@@ -304,7 +304,7 @@ const PROVENANCE_FIELDS = [
       </div>
       <section v-if='tab === "installs"' class="stack" data-testid="coordinate">
         <p class="small">
-          <code>apm install</code> puts it in these files of a repository whose profile includes it:
+          Installing a profile that includes it puts it in these files of the repository:
         </p>
         <InstallPlaces :id="item.id" :kind="item.kind" />
         <p

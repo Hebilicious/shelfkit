@@ -1,9 +1,16 @@
 /**
- * The words and commands that install a profile into a repository: a prompt to hand an agent, the commands to paste
- * into a terminal, and the ShelfKit CLI's. Each installs through the shelf's registry with stock APM, which the
- * profile was published to by `shelfkit push`: the repository's apm.yml names the registry and the profile, and
- * `apm install` does the rest. Verified against APM 0.33: a named registry, a dependency that routes to it, and a
- * `>=0.0.0` range, which follows the newest version published.
+ * The words and commands that install a profile into a repository, as a prompt to hand an agent or commands to paste
+ * into a terminal, two ways:
+ *
+ * - With the ShelfKit CLI (the default): `shelfkit install <shelf>/<profile> --url <deployment>` adds the profile to
+ *   the repository's apm.yml and runs APM, handing it the key `shelfkit login` keeps for a private shelf.
+ * - With APM alone: the repository's apm.yml names the shelf's registry and the profile, and `apm install` does the
+ *   rest. Verified against APM 0.33: a named registry, a dependency that routes to it, and a `>=0.0.0` range, which
+ *   follows the newest version published.
+ *
+ * Either way the profile comes from the shelf's registry, which `shelfkit push` publishes it to, and a profile's
+ * instructions, tech stacks, and library notes go into one section of AGENTS.md, which `apm compile` writes between
+ * two marker lines and CLAUDE.md imports (`crates/compiler/src/cli/install.rs` does the same steps).
  */
 
 /** The pinned APM, run through uv so nothing has to be installed first. */
@@ -15,13 +22,23 @@ export interface InstallTarget {
   readonly profile: string;
   /** The registry package: `<namespace>/<profile>`. */
   readonly coordinate: string;
+  /** The deployment, `https://<host>`: where the CLI's install script and the shelf are. */
+  readonly origin: string;
   /** The shelf's registry, `https://<host>/apm`. */
   readonly registryUrl: string;
   /** The agents the profile sets up, as APM's target slugs. */
   readonly targets: readonly string[];
   /** A private shelf's registry needs a key with read scope. */
   readonly isPrivate: boolean;
+  /** The profile has instructions, tech stacks, or library notes, which go into AGENTS.md. */
+  readonly instructions: boolean;
 }
+
+/** The lines of AGENTS.md between which `apm compile` writes the instructions. */
+export const MARKERS = ["<!-- apm:start -->", "<!-- apm:end -->"] as const;
+
+/** `apm compile` for AGENTS.md alone: Codex's output is that file and nothing else (see install.rs). */
+const COMPILE = "compile --target codex";
 
 /** The registry's name in apm.yml: the namespace, which is also what APM names the token variable after. */
 export function registryName(target: InstallTarget): string {
@@ -33,10 +50,62 @@ export function tokenVariable(target: InstallTarget): string {
   return `APM_REGISTRY_TOKEN_${registryName(target).toUpperCase().replaceAll(/[-.]/gu, "_")}`;
 }
 
-/** The two declarations a repository's apm.yml needs, as YAML. */
+/** The one command that installs the profile, once the CLI is there. */
+export function cliCommand(target: InstallTarget): string {
+  return `shelfkit install ${target.coordinate} --url ${target.origin}`;
+}
+
+/** Commands to paste in the repository's folder: install the CLI, sign it in for a private shelf, install. */
+export function cliTerminalSteps(target: InstallTarget): string {
+  const lines = [
+    "# Once per computer: the ShelfKit CLI, into ~/.local/bin, which this shell then finds it in.",
+    `# On Windows, in PowerShell: irm ${target.origin}/install.ps1 | iex`,
+    `curl -fsSL ${target.origin}/install.sh | sh`,
+    'export PATH="$HOME/.local/bin:$PATH"',
+    "",
+  ];
+  if (target.isPrivate) {
+    lines.push(
+      "# Once per computer: a key that can read this private shelf, kept in the OS keychain.",
+      "# The shelf's owner makes one in Settings → Keys; paste it when asked.",
+      `shelfkit login ${target.origin}`,
+      ""
+    );
+  }
+  lines.push(
+    "# In the repository: adds the profile to apm.yml, and APM installs it.",
+    cliCommand(target)
+  );
+  return lines.join("\n");
+}
+
+const COMMIT_STEP =
+  "Tell me which files were written. Commit apm.yml, apm.lock.yaml, and those files, but do not edit the installed files: the next install writes them again from the shelf.";
+
+/** A prompt that has an agent install the CLI if it is missing, then the profile with it. */
+export function cliAgentPrompt(target: InstallTarget): string {
+  const lines = [
+    `Install the ShelfKit profile "${target.title}" (${target.coordinate}) into this repository with the ShelfKit CLI.`,
+    "",
+    `1. If \`shelfkit --version\` fails, install the CLI: \`curl -fsSL ${target.origin}/install.sh | sh\` (on Windows, in PowerShell: \`irm ${target.origin}/install.ps1 | iex\`). It goes into ~/.local/bin; when that is not on PATH, run it as \`~/.local/bin/shelfkit\`.`,
+    `2. At the repository root, run \`${cliCommand(target)}\`. It adds the profile to apm.yml, keeping what is already there, and runs APM, which writes the files each agent reads.`,
+  ];
+  if (target.isPrivate) {
+    lines.push(
+      `   The shelf is private. If shelfkit says it has no key for ${target.origin}, stop and ask me to run \`shelfkit login ${target.origin}\` in my own terminal, then run step 2 again. Do not ask me for the key, and never put a key in a file or a command.`
+    );
+  }
+  lines.push(`3. ${COMMIT_STEP}`);
+  return lines.join("\n");
+}
+
+/**
+ * What a repository's apm.yml needs, as YAML: the registry, the dependency on the profile, and, for a profile with
+ * instructions, the `compilation` settings that have `apm compile` write them into AGENTS.md between the markers.
+ */
 export function manifestEntries(target: InstallTarget): string {
   const name = registryName(target);
-  return [
+  const lines = [
     "registries:",
     `  ${name}:`,
     `    url: ${target.registryUrl}`,
@@ -45,47 +114,65 @@ export function manifestEntries(target: InstallTarget): string {
     `    - registry: ${name}`,
     `      id: ${target.coordinate}`,
     '      version: ">=0.0.0"',
-  ].join("\n");
+  ];
+  if (target.instructions) {
+    lines.push(
+      "compilation:",
+      "  strategy: single-file",
+      "  agents_md:",
+      "    mode: managed_section"
+    );
+  }
+  return lines.join("\n");
 }
 
+/**
+ * The agents a new apm.yml sets up: the profile's, or, when it names none, the four most repositories use. APM 0.33
+ * refuses to install into a repository with neither `targets` nor a harness's files (`shelfkit install` checks for
+ * those; pasted steps cannot).
+ */
 function targetList(target: InstallTarget): string {
-  return target.targets.length === 0
-    ? "claude, codex, copilot, cursor"
-    : target.targets.join(", ");
+  return target.targets.length > 0
+    ? target.targets.join(", ")
+    : "claude, codex, copilot, cursor";
 }
 
-/** A prompt that has an agent install the profile into the repository it works in. */
-export function agentPrompt(target: InstallTarget): string {
+/** A prompt that has an agent install the profile with APM alone. */
+export function apmAgentPrompt(target: InstallTarget): string {
   const lines = [
     `Install the ShelfKit profile "${target.title}" (${target.coordinate}) into this repository with APM.`,
     "",
     `1. Turn on APM's registry support once on this machine: \`${APM} experimental enable registries\`. If \`apm\` is installed, use \`apm\` in place of \`${APM}\` everywhere.`,
-    `2. Edit apm.yml at the repository root. If there is none, create it with \`name:\` set to the repository's directory name, \`version: 0.0.0\`, and \`targets: [${targetList(target)}]\`. Keep everything already in it, and add these two entries, merging them into an existing \`registries:\` map and \`dependencies.apm:\` list:`,
+    `2. Edit apm.yml at the repository root. If there is none, create it with \`name:\` set to the repository's directory name, \`version: 0.0.0\`, and \`targets: [${targetList(target)}]\`. Keep everything already in it, and add these entries, merging them into what it has (its \`registries:\` map, its \`dependencies.apm:\` list${target.instructions ? ", its `compilation:` settings" : ""}):`,
     "",
     "```yaml",
     manifestEntries(target),
     "```",
     "",
   ];
+  const steps: string[] = [];
   if (target.isPrivate) {
-    lines.push(
-      `3. The shelf is private. APM sends a key only to a registry its user config names, so run \`${APM} config set registry.${registryName(target)}.url ${target.registryUrl}\`. Then ask me for a ShelfKit key with read scope (the shelf's owner makes one in Settings), and run the install with it in \`${tokenVariable(target)}\`. Never write the key into a file.`,
-      `4. Run \`${APM} install\`.`,
-      "5. Tell me which files APM wrote. Commit apm.yml, apm.lock.yaml, and those files, but do not edit the installed files: they are regenerated from the shelf on the next install."
+    steps.push(
+      `The shelf is private. APM sends a key only to a registry its user config names, so run \`${APM} config set registry.${registryName(target)}.url ${target.registryUrl}\`. Then ask me for a ShelfKit key with read scope (the shelf's owner makes one in Settings → Keys), and run the install with it in \`${tokenVariable(target)}\`. Never write the key into a file.`
     );
-  } else {
-    lines.push(
-      `3. Run \`${APM} install\`.`,
-      "4. Tell me which files APM wrote. Commit apm.yml, apm.lock.yaml, and those files, but do not edit the installed files: they are regenerated from the shelf on the next install."
+  }
+  steps.push(`Run \`${APM} install\`.`);
+  if (target.instructions) {
+    steps.push(
+      `Put the instructions into AGENTS.md, which every agent reads. AGENTS.md needs the two lines \`${MARKERS[0]}\` and \`${MARKERS[1]}\`: add them at its end if they are missing, or create it with just them, and leave everything else in it as it is. CLAUDE.md needs a line \`@AGENTS.md\`, so Claude Code reads AGENTS.md too: add it, or create CLAUDE.md with just it. Then run \`${APM} ${COMPILE}\`, which writes the instructions between the two lines.`
     );
+  }
+  steps.push(COMMIT_STEP);
+  for (const [at, step] of steps.entries()) {
+    lines.push(`${at + 3}. ${step}`);
   }
   return lines.join("\n");
 }
 
-/** Commands to paste in the repository's directory, for a repository with no apm.yml yet. */
-export function terminalSteps(target: InstallTarget): string {
+/** Commands to paste in the repository's folder that install the profile with APM alone, for a repository with no apm.yml yet. */
+export function apmTerminalSteps(target: InstallTarget): string {
   const lines = [
-    "# Once per machine: APM's registry support is behind a flag.",
+    "# Once per computer: APM's registry support is behind a flag.",
     `${APM} experimental enable registries`,
     "",
     "# In the repository: an apm.yml that installs the profile.",
@@ -100,27 +187,22 @@ export function terminalSteps(target: InstallTarget): string {
   if (target.isPrivate) {
     lines.push(
       "# The shelf is private. APM sends a key only to a registry its user config names,",
-      "# and reads the key (one with read scope, from the shelf's Settings) from the environment.",
+      "# and reads the key (one with read scope, from the shelf's Settings → Keys) from the environment.",
       `${APM} config set registry.${registryName(target)}.url ${target.registryUrl}`,
       `read -rs ${tokenVariable(target)} && export ${tokenVariable(target)}`,
       ""
     );
   }
   lines.push(`${APM} install`);
+  if (target.instructions) {
+    lines.push(
+      "",
+      "# The instructions go into AGENTS.md, which every agent reads, between two lines APM writes within;",
+      "# CLAUDE.md brings AGENTS.md in for Claude Code. What either file already says is kept.",
+      `grep -qF '${MARKERS[0]}' AGENTS.md 2>/dev/null || printf '\\n%s\\n%s\\n' '${MARKERS[0]}' '${MARKERS[1]}' >> AGENTS.md`,
+      "grep -qx '@AGENTS.md' CLAUDE.md 2>/dev/null || printf '\\n@AGENTS.md\\n' >> CLAUDE.md",
+      `${APM} ${COMPILE}`
+    );
+  }
   return lines.join("\n");
-}
-
-/** The ShelfKit CLI's way, from a clone of the shelf's own repository: compile, then let APM install. */
-export function cliSteps(
-  target: InstallTarget,
-  repository = "path/to/your/repo"
-): string {
-  return [
-    "# In a clone of the shelf's repository. Writes apm.yml and copies the items",
-    "# written on the shelf into vendor/ in your repository; runs nothing.",
-    `shelfkit compile ${target.profile} --repo ${repository}`,
-    "",
-    "# Runs apm install there, through uvx when apm is not installed.",
-    `shelfkit install --repo ${repository}`,
-  ].join("\n");
 }

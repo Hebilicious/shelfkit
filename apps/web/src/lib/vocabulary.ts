@@ -37,7 +37,7 @@ export const KINDS: Readonly<Record<ItemKind, KindWords>> = {
   instructions: {
     about: "Project conventions the agent follows in every session.",
     installs:
-      "An instructions file, which APM writes into each harness's rules (CLAUDE.md, AGENTS.md, …).",
+      "A section of the repository's AGENTS.md, which every agent reads in every session.",
     label: "Instructions",
     plural: "Instructions",
   },
@@ -45,7 +45,7 @@ export const KINDS: Readonly<Record<ItemKind, KindWords>> = {
     about:
       "What an agent needs to know to use one library or tool the way this shelf wants it used.",
     installs:
-      "An instructions file with these notes, which the agent reads in every session.",
+      "These notes, in the repository's AGENTS.md, which every agent reads in every session.",
     label: "Library notes",
     plural: "Library notes",
   },
@@ -88,7 +88,7 @@ export const KINDS: Readonly<Record<ItemKind, KindWords>> = {
     about:
       "The conventions for a combination of tools (a tech stack), and how to recognise a repository that uses it.",
     installs:
-      "An instructions file with these conventions, which the agent reads in every session.",
+      "These conventions, in the repository's AGENTS.md, which every agent reads in every session.",
     label: "Tech stack",
     plural: "Tech stacks",
   },
@@ -316,14 +316,14 @@ export const KIND_GUIDES: Readonly<Record<ItemKind, KindGuide>> = {
   instructions: {
     example:
       "“The crates are the product: keep them free of Cloudflare and network dependencies.”",
-    gets: "A rule file of its own for each agent (.claude/rules/, .cursor/rules/, .github/instructions/), which the agent loads in every session.",
+    gets: "The text, in a section of the repository's AGENTS.md that APM writes. Every agent reads AGENTS.md in every session: Codex, Cursor, and Copilot directly, Claude Code through CLAUDE.md's `@AGENTS.md`.",
     slug: "instructions",
     what: "The rules of one project or team, written for the agent. Unlike library notes and tech stacks, they are not about a particular tool.",
   },
   library: {
     example:
       "Drizzle ORM: “Migrations are generated, never hand-written. Prefer db.query over db.select.”",
-    gets: "Exactly what instructions get: the notes become a rule file of their own for each agent, loaded in every session. The difference is that ShelfKit suggests them to a repository that depends on the library.",
+    gets: "Exactly what instructions get: the notes go into the AGENTS.md section every agent reads in every session. The difference is that ShelfKit suggests them to a repository that depends on the library.",
     slug: "library-notes",
     what: "What an agent should know to use one library or tool well: the patterns to follow and the mistakes to avoid. Not the library itself; APM and your package manager install that.",
   },
@@ -362,7 +362,7 @@ export const KIND_GUIDES: Readonly<Record<ItemKind, KindGuide>> = {
   stack: {
     example:
       "TypeScript on Cloudflare Workers with a Rust core: where code goes, which runtime rules apply, which other items go with it.",
-    gets: "Exactly what instructions get: the conventions become a rule file of their own for each agent, loaded in every session. The difference is that ShelfKit recognises a repository built on the stack from its files and dependencies, and suggests the stack and the items it recommends.",
+    gets: "Exactly what instructions get: the conventions go into the AGENTS.md section every agent reads in every session. The difference is that ShelfKit recognises a repository built on the stack from its files and dependencies, and suggests the stack and the items it recommends.",
     slug: "tech-stacks",
     what: "The conventions for a combination of tools a project is built with.",
   },
@@ -396,13 +396,15 @@ export interface Place {
   readonly path: string;
 }
 
-const RULES: readonly Place[] = [
-  { agent: "Claude Code", path: ".claude/rules/{id}.md" },
-  { agent: "Cursor", path: ".cursor/rules/{id}.mdc" },
-  { agent: "Copilot", path: ".github/instructions/{id}.instructions.md" },
+/** Instructions, tech stacks, and library notes: one section of AGENTS.md, which `apm compile` writes. */
+const AGENTS_MD: readonly Place[] = [
   {
-    agent: "Codex",
-    path: "AGENTS.md, only if `apm compile` writes it (it never overwrites one you wrote)",
+    agent: "Codex, Cursor, Copilot",
+    path: "AGENTS.md, between <!-- apm:start --> and <!-- apm:end -->",
+  },
+  {
+    agent: "Claude Code",
+    path: "CLAUDE.md, which imports AGENTS.md with @AGENTS.md",
   },
 ];
 
@@ -423,8 +425,8 @@ export const PLACES: Readonly<Record<ItemKind, readonly Place[]>> = {
     { agent: "Copilot", path: ".github/hooks/<profile>-{id}.json" },
     { agent: "Codex", path: ".codex/hooks.json" },
   ],
-  instructions: RULES,
-  library: RULES,
+  instructions: AGENTS_MD,
+  library: AGENTS_MD,
   lsp: [
     {
       agent: "Claude Code",
@@ -456,7 +458,7 @@ export const PLACES: Readonly<Record<ItemKind, readonly Place[]>> = {
       path: ".agents/skills/{id}/ (the whole folder)",
     },
   ],
-  stack: RULES,
+  stack: AGENTS_MD,
 };
 
 /** The places of one item, with its id filled in. */
@@ -468,9 +470,9 @@ export function placesOf(kind: ItemKind, id: string): Place[] {
 }
 
 /**
- * Instructions, tech stacks, and library notes all install the same way: one rule file per item, for each agent, that
- * the agent loads in every session. What differs is only how they are written, and that a tech stack and library
- * notes are suggested to a repository that uses the tool.
+ * Instructions, tech stacks, and library notes all install the same way: into one section of AGENTS.md, which every
+ * agent reads in every session. What differs is only how they are written, and that a tech stack and library notes
+ * are suggested to a repository that uses the tool.
  */
 export const RULES_NOTE =
-  "They do not replace AGENTS.md or CLAUDE.md: those stay yours, and each item becomes a rule file of its own beside them. Codex reads only AGENTS.md, so it gets them only if APM writes that file (`apm compile`), which APM refuses to do over one you wrote.";
+  "An AGENTS.md you wrote stays yours: APM writes only between the two marker lines ShelfKit adds at its end, and keeps the rest as it is. Claude Code reads CLAUDE.md rather than AGENTS.md, so CLAUDE.md gets one line, @AGENTS.md, that brings AGENTS.md in. None of them becomes a rule file.";

@@ -2,8 +2,8 @@
 /**
  * Install a profile into a repository. The profile is in the shelf's registry (`shelfkit push` publishes it), so stock
  * APM installs it: the repository's apm.yml names the registry and the profile, and `apm install` puts each item
- * where each agent reads it. Three ways to get there: a prompt for an agent, commands for a terminal, or the ShelfKit
- * CLI from a clone of the shelf. Everything here is computed from the profiles and the index already in memory.
+ * where each agent reads it. The ShelfKit CLI is the default way there, and APM alone the other; each as a prompt for an
+ * agent or commands for a terminal. Everything here is computed from the profiles and the index already in memory.
  */
 import { computed, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
@@ -16,7 +16,12 @@ import { useShelfId } from "../composables/shelf-context.ts";
 import { notify, notifyError } from "../composables/toasts.ts";
 import { useProfiles, useShelfIndex } from "../data/shelf.ts";
 import type { IndexItem, ItemKind } from "../data/shelf.ts";
-import { agentPrompt, cliSteps, terminalSteps } from "../lib/install.ts";
+import {
+  apmAgentPrompt,
+  apmTerminalSteps,
+  cliAgentPrompt,
+  cliTerminalSteps,
+} from "../lib/install.ts";
 import type { InstallTarget } from "../lib/install.ts";
 import { KIND_ORDER, KINDS, RULES_NOTE } from "../lib/vocabulary.ts";
 import { param } from "../navigation.ts";
@@ -73,6 +78,7 @@ const groups = computed(() => {
   })).filter((group) => group.items.length > 0);
 });
 
+/** The kinds that go into AGENTS.md. */
 const RULE_KINDS: ReadonlySet<ItemKind> = new Set(["instructions", "stack", "library"]);
 const hasRules = computed(() => groups.value.some((group) => RULE_KINDS.has(group.kind)));
 
@@ -86,7 +92,9 @@ const target = computed<InstallTarget | null>(() => {
   }
   return {
     coordinate: current.apmCoordinate,
+    instructions: hasRules.value,
     isPrivate: !summary.public,
+    origin: new URL(summary.registryUrl).origin,
     profile: current.id,
     registryUrl: summary.registryUrl,
     targets: readProfile(current.document)?.compile.targets ?? [],
@@ -94,39 +102,41 @@ const target = computed<InstallTarget | null>(() => {
   };
 });
 
-type Way = "agent" | "terminal" | "cli";
-const way = ref<Way>("agent");
+/** Who runs the install: an agent given a prompt, or you in a terminal. */
+type Way = "agent" | "terminal";
 const WAYS: readonly { way: Way; label: string }[] = [
   { label: "Ask your agent", way: "agent" },
   { label: "Terminal", way: "terminal" },
-  { label: "ShelfKit CLI", way: "cli" },
 ];
+/** What installs: the ShelfKit CLI (the default), or APM alone. */
+type Tool = "cli" | "apm";
 
-const text = computed(() => {
+const cliWay = ref<Way>("agent");
+/** APM alone is the other way, shown on request. */
+const showApm = ref(false);
+const apmWay = ref<Way>("agent");
+
+function textFor(tool: Tool, way: Way): string {
   const current = target.value;
   if (current === null) {
     return "";
   }
-  switch (way.value) {
-    case "agent": {
-      return agentPrompt(current);
-    }
-    case "terminal": {
-      return terminalSteps(current);
-    }
-    default: {
-      return cliSteps(current);
-    }
+  if (tool === "cli") {
+    return way === "agent" ? cliAgentPrompt(current) : cliTerminalSteps(current);
   }
-});
+  return way === "agent" ? apmAgentPrompt(current) : apmTerminalSteps(current);
+}
 
-async function copy(): Promise<void> {
+const cliText = computed(() => textFor("cli", cliWay.value));
+const apmText = computed(() => textFor("apm", apmWay.value));
+
+async function copy(text: string, way: Way): Promise<void> {
   try {
-    await copyToClipboard(text.value);
+    await copyToClipboard(text);
     notify(
-      way.value === "agent"
+      way === "agent"
         ? "Prompt copied: paste it to your agent in the repository."
-        : "Commands copied.",
+        : "Commands copied: paste them in the repository's folder.",
     );
   } catch (error) {
     notifyError(error);
@@ -160,7 +170,8 @@ async function copy(): Promise<void> {
       </div>
       <p class="muted">
         Installing puts each item of this profile into a repository, in the files each agent reads. APM does the
-        installing; you, your agent, or the ShelfKit CLI only tell it which profile to fetch.
+        installing, from this shelf's registry; the ShelfKit CLI, your agent, or you only tell it which profile to
+        fetch.
       </p>
     </header>
     <QueryState
@@ -170,47 +181,110 @@ async function copy(): Promise<void> {
       empty-text="This shelf has no such profile."
     />
     <template v-if="profile !== null && target !== null">
-      <section class="stack">
+      <p v-if="!published" class="severity-warning small" role="alert">
+        This profile is not in the shelf's registry yet, so nothing below can fetch it. <code>shelfkit push</code>
+        publishes it.
+      </p>
+      <section class="stack" data-testid="install-cli">
+        <h2>With the ShelfKit CLI</h2>
+        <p class="small muted">
+          One command adds the profile to the repository's apm.yml, keeping what is there, and runs APM. The CLI
+          installs itself once per computer<template v-if="target.isPrivate">, and for this private shelf
+            <code>shelfkit login</code> keeps a key that can read it in the OS keychain, so the key is never in a file
+            or in front of an agent</template>.
+        </p>
         <div class="tabs" role="tablist">
           <button
             v-for="entry in WAYS"
             :key="entry.way"
             role="tab"
             type="button"
-            :aria-selected="way === entry.way"
-            :data-testid="`install-${entry.way}`"
-            @click="way = entry.way"
+            :aria-selected="cliWay === entry.way"
+            :data-testid="`install-cli-${entry.way}`"
+            @click="cliWay = entry.way"
           >
             {{ entry.label }}
           </button>
         </div>
-        <p v-if='way === "agent"' class="small muted">
-          Paste this to Claude Code, Codex, or any agent working in the repository. It edits apm.yml, runs APM, and
-          tells you what it installed.
-        </p>
-        <p v-else-if='way === "terminal"' class="small muted">
-          Run these in the repository's folder; uv runs the pinned APM, so nothing needs installing first. Already have
-          an apm.yml? Add its <code>registries</code> entry and the dependency to yours instead of the
-          <code>cat</code>.
-        </p>
-        <p v-else class="small muted">
-          The CLI compiles from a clone of the shelf's own repository. It copies the items written on the shelf into
-          <code>vendor/{{ profile.id }}/</code> in your repository instead of fetching them from the registry.
-        </p>
-        <p v-if='!published && way !== "cli"' class="severity-warning small" role="alert">
-          This profile is not in the registry yet. <code>shelfkit push</code> publishes it; until then, use the ShelfKit
-          CLI.
-        </p>
         <div class="panel copy-block">
           <div class="row copy-block__bar">
-            <span class="small muted">{{ way === "agent" ? "Prompt" : "Shell" }}</span>
+            <span class="small muted">
+              {{
+                cliWay === "agent"
+                  ? "Paste to Claude Code, Codex, or any agent working in the repository"
+                  : "Run in the repository's folder"
+              }}
+            </span>
             <span class="spacer"></span>
-            <button class="primary" data-testid="copy-install" type="button" @click="copy">
-              {{ way === "agent" ? "Copy prompt" : "Copy" }}
+            <button
+              class="primary"
+              data-testid="copy-install"
+              type="button"
+              @click="copy(cliText, cliWay)"
+            >
+              {{ cliWay === "agent" ? "Copy prompt" : "Copy" }}
             </button>
           </div>
-          <pre class="copy-block__text" data-testid="install-text">{{ text }}</pre>
+          <pre class="copy-block__text" data-testid="install-text">{{ cliText }}</pre>
         </div>
+      </section>
+      <section class="stack" data-testid="install-apm">
+        <div class="row">
+          <h2>With APM alone</h2>
+          <span class="small muted">no ShelfKit CLI</span>
+          <span class="spacer"></span>
+          <button
+            class="quiet"
+            type="button"
+            :aria-expanded="showApm"
+            data-testid="install-apm-toggle"
+            @click="showApm = !showApm"
+          >
+            {{ showApm ? "Hide" : "Show" }}
+          </button>
+        </div>
+        <template v-if="showApm">
+          <p class="small muted">
+            The repository's apm.yml names the shelf's registry and the profile, and APM, run through uv, installs it.
+            <template v-if="target.isPrivate">
+              For a private shelf, APM needs the registry in its user config and a key in the environment.
+            </template>
+          </p>
+          <div class="tabs" role="tablist">
+            <button
+              v-for="entry in WAYS"
+              :key="entry.way"
+              role="tab"
+              type="button"
+              :aria-selected="apmWay === entry.way"
+              :data-testid="`install-apm-${entry.way}`"
+              @click="apmWay = entry.way"
+            >
+              {{ entry.label }}
+            </button>
+          </div>
+          <div class="panel copy-block">
+            <div class="row copy-block__bar">
+              <span class="small muted">
+                {{
+                  apmWay === "agent"
+                    ? "Paste to an agent working in the repository"
+                    : "Run in the repository's folder, which has no apm.yml yet"
+                }}
+              </span>
+              <span class="spacer"></span>
+              <button
+                class="primary"
+                data-testid="copy-install-apm"
+                type="button"
+                @click="copy(apmText, apmWay)"
+              >
+                {{ apmWay === "agent" ? "Copy prompt" : "Copy" }}
+              </button>
+            </div>
+            <pre class="copy-block__text" data-testid="install-text-apm">{{ apmText }}</pre>
+          </div>
+        </template>
       </section>
       <section class="stack">
         <h2>What lands in the repository</h2>
@@ -219,8 +293,8 @@ async function copy(): Promise<void> {
           everyone working in the repository gets the same.
         </p>
         <p v-if="hasRules" class="small">
-          <strong>Instructions, tech stacks, and library notes</strong> install the same way: each becomes a rule
-          file of its own for each agent, loaded in every session. {{ RULES_NOTE }}
+          <strong>Instructions, tech stacks, and library notes</strong> install the same way: together, into one
+          section of the repository's AGENTS.md, which every agent reads in every session. {{ RULES_NOTE }}
         </p>
         <details v-for="group in groups" :key="group.kind" class="panel">
           <summary>

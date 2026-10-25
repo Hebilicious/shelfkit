@@ -75,7 +75,7 @@ test("finds a prompt, copies it filled in, composes a profile and copies how to 
   await page.getByTestId("copy-install").click();
   await expect
     .poll(async () => await clipboard(page))
-    .toContain(`id: ${SHELF}/my-app`);
+    .toContain(`shelfkit install ${SHELF}/my-app --url`);
 
   // 4. The agent reports the install, and Repositories shows which repository runs which profile.
   await reportActivityAsOwner(page.request, {

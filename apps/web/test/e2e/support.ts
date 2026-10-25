@@ -59,7 +59,8 @@ export { BASE_URL, PORT } from "./ports.ts";
 export const OWNER_KEY = "sko_e2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee2ee";
 
 export const REPOSITORY = path.resolve(import.meta.dirname, "../../../..");
-const BINARY = path.join(
+/** The CLI built from this checkout. */
+export const BINARY = path.join(
   REPOSITORY,
   "target/debug",
   process.platform === "win32" ? "shelfkit.exe" : "shelfkit"
