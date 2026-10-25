@@ -45,6 +45,11 @@ function newAddress(): string {
 
 let address = newAddress();
 
+/** A poll for a code no login holds: it counts against the address, and against no login's interval. */
+function unknown(): CliBody {
+  return { deviceCode: `${"A".repeat(8)}.${"x".repeat(43)}` };
+}
+
 /** A `POST` from `from`, as Cloudflare's edge forwards it: with the client's address in `CF-Connecting-IP`. */
 async function post(
   path: string,
@@ -615,13 +620,11 @@ describe("signing the CLI in is rate limited", () => {
     // Four CLIs polling every 2 seconds send this many polls in one window. Codes no login holds count against the
     // address the same, and leave the per-login interval out of it.
     expect((4 * period) / 2).toBe(limit);
-    const unknown = () => ({
-      deviceCode: `${"A".repeat(8)}.${"x".repeat(43)}`,
-    });
     const answered: number[] = [];
     for (let sent = 0; sent < limit; sent += 1) {
       // oxlint-disable-next-line eslint/no-await-in-loop -- one poll after another.
-      answered.push((await post("/auth/cli/poll", unknown())).status);
+      const response = await post("/auth/cli/poll", unknown());
+      answered.push(response.status);
     }
     const refused = await firstRefused(
       limit + 1,
@@ -660,9 +663,7 @@ describe("signing the CLI in is rate limited", () => {
     const again = await post("/auth/cli/poll", {
       deviceCode: login.deviceCode,
     });
-    await new Promise((settled) => {
-      setTimeout(settled, 1100);
-    });
+    await scheduler.wait(1100);
     const later = await post("/auth/cli/poll", {
       deviceCode: login.deviceCode,
     });
