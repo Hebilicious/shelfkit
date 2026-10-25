@@ -13,6 +13,9 @@
 //!   human decides, `shelf-wins` replaces the repository's declaration, and
 //!   `local-wins` keeps it and drops the shelf's. Never a partial merge of one
 //!   declaration.
+//! - `compilation` is merged key by key: the settings the compiler makes
+//!   (how instructions go into AGENTS.md) replace the repository's own, and
+//!   every other setting it has is kept.
 //! - Everything else in the repository's manifest (its own dependencies,
 //!   `scripts`, the `executables` that `apm approve` writes, `x-` keys) is
 //!   kept, in its order. The exception is a package ShelfKit vendored for
@@ -76,6 +79,7 @@ pub fn merge(
                 }
             }
             "targets" => merger.targets(&mut base, value),
+            "compilation" => overlay(take_or_insert(&mut base, &key), value),
             "registries" | "dependencies" => {
                 let block = take_or_insert(&mut base, &key);
                 merger.block(&key, block, value);
@@ -183,6 +187,18 @@ impl Merger<'_> {
                 }
             }
         }
+    }
+}
+
+/// `ours` laid over `base`: a map key by key, recursively, and anything else replaced.
+fn overlay(base: &mut Node, ours: Node) {
+    match (base, ours) {
+        (Node::Map(entries), Node::Map(ours)) => {
+            for (key, value) in ours {
+                overlay(take_or_insert(entries, &key), value);
+            }
+        }
+        (slot, value) => *slot = value,
     }
 }
 
@@ -464,5 +480,17 @@ mod tests {
             merge("a: [\n", COMPILED, &none(), OnConflict::Fail),
             Err(MergeError::Unreadable(_))
         ));
+    }
+
+    #[test]
+    fn compilation_settings_are_laid_over_the_repositorys_own() {
+        let existing = "name: app\ncompilation:\n  output: AGENTS.md\n  agents_md:\n    mode: full\n    start_marker: \"<!-- a -->\"\n";
+        let compiled = "name: shelf\ncompilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section\n";
+        let merged = merge(existing, compiled, &none(), OnConflict::Fail).unwrap();
+        assert_eq!(
+            merged.text,
+            "name: app\ncompilation:\n  output: AGENTS.md\n  agents_md:\n    mode: managed_section\n    start_marker: \"<!-- a -->\"\n  strategy: single-file\n"
+        );
+        assert!(merged.conflicts.is_empty());
     }
 }

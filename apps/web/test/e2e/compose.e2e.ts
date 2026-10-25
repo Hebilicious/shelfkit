@@ -150,7 +150,7 @@ test("an edit marks the preview as updating until the draft is compiled again", 
   await page.getByRole("tab", { name: "Plan JSON" }).click();
   const after = await settledPreview(page);
   expect(after.planJson).toContain(
-    '"vendor/minimal/.apm/instructions/drizzle.instructions.md"'
+    '"vendor/minimal/.github/instructions/drizzle.instructions.md"'
   );
 });
 

@@ -8,3 +8,7 @@ targets:
 dependencies:
   apm:
     - ./vendor/default
+compilation:
+  strategy: single-file
+  agents_md:
+    mode: managed_section

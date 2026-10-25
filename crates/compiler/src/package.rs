@@ -12,9 +12,17 @@
 //! A profile's identity is its revision, a hash; a version exists only for
 //! publishing (`docs/PRD.md` section 13, question 1). A profile with a
 //! `version` publishes as exactly that semver. A profile without one
-//! publishes as `0.0.0+sha256.<revision hex>`: semver build metadata that
-//! names the revision, which APM's client exact-matches (and never treats
-//! as newer than another build of `0.0.0`, so pin it exactly).
+//! publishes as `0.0.0+sha256.<revision hex>.format<N>`: semver build
+//! metadata that names the revision and the package [`FORMAT`]. APM's
+//! client ranks every build of `0.0.0` the same and, among equals, picks
+//! the one the registry lists last, which is the newest published, so
+//! `>=0.0.0` follows the profile.
+//!
+//! The format is part of the version because versions are immutable: when
+//! the layout of a package changes (format 2 moved instructions to
+//! `.github/instructions/`, `docs/PRD.md` section 4.2), an unchanged profile
+//! publishes its new archive as a new version instead of colliding with the
+//! old one.
 //!
 //! Versions are immutable, so publishing a version twice fails with `409`
 //! even when the bytes are the same: an unchanged profile without a
@@ -75,8 +83,11 @@ pub fn generated_version(revision: &Revision) -> String {
         .as_str()
         .strip_prefix("sha256-")
         .unwrap_or(revision.as_str());
-    format!("0.0.0+sha256.{hex}")
+    format!("0.0.0+sha256.{hex}.format{FORMAT}")
 }
+
+/// The package layout this compiler writes. Bump it when the files of a package change for the same profile.
+pub const FORMAT: u32 = 2;
 
 /// Package one resolved profile of `shelf`.
 pub fn package(shelf: &Shelf, resolved: &ResolvedProfile) -> Result<PackagedProfile, Errors> {

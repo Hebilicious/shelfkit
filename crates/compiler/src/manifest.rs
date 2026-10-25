@@ -601,6 +601,16 @@ impl Compiler<'_> {
         if !dependencies.is_empty() {
             root.push(("dependencies".to_owned(), Node::Map(dependencies)));
         }
+        // Vendored instructions reach the agents through AGENTS.md, which `apm compile` writes (`vendor.rs`).
+        let instructions = self.packages.values().any(|package| {
+            package
+                .files
+                .keys()
+                .any(|path| path.starts_with(vendor::INSTRUCTIONS_DIR))
+        });
+        if matches!(shape, Shape::Repository) && instructions {
+            root.push(("compilation".to_owned(), compilation()));
+        }
         let manifest = Node::Map(root);
 
         #[cfg(feature = "schema")]
@@ -627,6 +637,22 @@ impl Compiler<'_> {
             uses_registry: !self.registries.is_empty(),
         })
     }
+}
+
+/// The lines of AGENTS.md between which `apm compile` writes the instructions, leaving the rest of the file as it is.
+pub const AGENTS_MD_MARKERS: (&str, &str) = ("<!-- apm:start -->", "<!-- apm:end -->");
+
+/// The `compilation` settings of a repository whose instructions go into AGENTS.md: every instruction in the one
+/// root file (a scoped one as a section naming its files, not a file of its own in a source directory), written
+/// between [`AGENTS_MD_MARKERS`] so a hand-written AGENTS.md keeps everything outside them.
+pub fn compilation() -> Node {
+    Node::Map(vec![
+        ("strategy".to_owned(), Node::string("single-file")),
+        (
+            "agents_md".to_owned(),
+            Node::Map(vec![("mode".to_owned(), Node::string("managed_section"))]),
+        ),
+    ])
 }
 
 /// `sha256:<lowercase hex>`, the digest form the registry and `shelf.report` use.

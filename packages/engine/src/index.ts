@@ -104,7 +104,7 @@ export interface PackagedProfile {
   readonly package: string;
   readonly owner: string;
   readonly repo: string;
-  /** The profile's `version`, or `0.0.0+sha256.<revision hex>`. */
+  /** The profile's `version`, or `0.0.0+sha256.<revision hex>.format<N>`. */
   readonly version: string;
   readonly profileRevision: string;
   /** `sha256:<hex>` over `archive`. */

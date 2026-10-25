@@ -1,15 +1,15 @@
 {
   "profile": "base",
   "profileRevision": "sha256-59edd61460ec961e5d6a5b9e5e0c27f00cb9246694ba35f35cbb1db784a9e9df",
-  "apmYml": "name: base\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - copilot\ndependencies:\n  apm:\n    - ./vendor/base\n",
-  "apmYmlDigest": "sha256:14aacfe76e4d98589331f04888badb681240b47f4d1d7f86927b404d6b1dc997",
+  "apmYml": "name: base\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - copilot\ndependencies:\n  apm:\n    - ./vendor/base\ncompilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section\n",
+  "apmYmlDigest": "sha256:e0738e6c447bd0fecd0dcf7c4453233a10a2305bbb152cd8c59c9b273a05c8a0",
   "files": [
     {
-      "path": "vendor/base/.apm/instructions/drizzle.instructions.md",
+      "path": "vendor/base/.github/instructions/drizzle.instructions.md",
       "contents": "---\ndescription: \"Schema-first ORM. Use the relational query builder, not string SQL.\"\n---\n\n# Drizzle ORM\n\nDocumentation: https://orm.drizzle.team/docs/overview\n\n- Migrations are generated, never hand-written.\n- Prefer `db.query` over `db.select`.\n"
     },
     {
-      "path": "vendor/base/.apm/instructions/vue-cloudflare.instructions.md",
+      "path": "vendor/base/.github/instructions/vue-cloudflare.instructions.md",
       "contents": "---\ndescription: Vue on Cloudflare Workers\n---\n\n# Vue on Cloudflare Workers\n\n## Runtime\n\nWorkers. No Node built-ins.\n"
     },
     {

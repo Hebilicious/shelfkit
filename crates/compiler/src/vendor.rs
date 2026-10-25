@@ -10,7 +10,18 @@
 //! | `prompt` | `.apm/prompts/<id>.prompt.md` |
 //! | `agent` | `.apm/agents/<id>.agent.md` |
 //! | `hook` | `.apm/hooks/<id>.json` |
-//! | `instructions`, `library`, `stack` | `.apm/instructions/<id>.instructions.md` |
+//! | `instructions`, `library`, `stack` | `.github/instructions/<id>.instructions.md` |
+//!
+//! Instructions are the exception to `.apm/`, on purpose. APM 0.33's
+//! installer turns `.apm/instructions/` into a rule file per item per agent
+//! (`.claude/rules/`, `.cursor/rules/`, `.github/instructions/`), which Codex
+//! never reads and which Cursor and Copilot then also get from AGENTS.md.
+//! It does not deploy a package's `.github/instructions/`, while `apm
+//! compile` reads both directories. So a package that keeps its
+//! instructions there installs no rule files, and `apm compile` writes them
+//! into one section of the repository's AGENTS.md, which every agent reads
+//! (`docs/PRD.md` section 4.2). The compiler's APM test installs a compiled
+//! package to hold APM to this.
 //!
 //! A `plugin` is a package layout of its own, not a primitive under `.apm/`,
 //! so each one is vendored beside that package as its own directory, with
@@ -131,8 +142,11 @@ pub fn has_content(loaded: &LoadedItem) -> bool {
     }
 }
 
+/// Where a package keeps its instructions: the directory `apm compile` reads and `apm install` leaves alone.
+pub const INSTRUCTIONS_DIR: &str = ".github/instructions/";
+
 fn instructions_path(id: &str) -> String {
-    format!(".apm/instructions/{id}.instructions.md")
+    format!("{INSTRUCTIONS_DIR}{id}.instructions.md")
 }
 
 /// Every file of the item except `item.json`, text normalized to LF.
