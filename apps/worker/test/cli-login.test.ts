@@ -610,45 +610,77 @@ describe("signing the CLI in is rate limited", () => {
     });
   });
 
-  it("lets four CLIs behind one address poll at their interval, and answers faster polling 429 while the login waits", async () => {
+  it("lets an address poll as often as four CLIs do, and answers more 429 while another address polls on", async () => {
     const { limit, period } = CLI_RATE_LIMITS.CLI_POLL_LIMIT;
-    const logins = await Promise.all([start(), start(), start(), start()]);
-    // What four CLIs polling every 2 seconds send in one 10-second window, sent at once.
-    const window = logins.flatMap((login) =>
-      Array.from({ length: period / 2 }, () => login.deviceCode)
-    );
-    expect(window).toHaveLength(limit);
+    // Four CLIs polling every 2 seconds send this many polls in one window. Codes no login holds count against the
+    // address the same, and leave the per-login interval out of it.
+    expect((4 * period) / 2).toBe(limit);
+    const unknown = () => ({
+      deviceCode: `${"A".repeat(8)}.${"x".repeat(43)}`,
+    });
     const answered: number[] = [];
-    for (const deviceCode of window) {
+    for (let sent = 0; sent < limit; sent += 1) {
       // oxlint-disable-next-line eslint/no-await-in-loop -- one poll after another.
-      const response = await post("/auth/cli/poll", { deviceCode });
-      answered.push(response.status);
+      answered.push((await post("/auth/cli/poll", unknown())).status);
     }
-    const [first] = logins;
-    const deviceCode = first?.deviceCode ?? "";
     const refused = await firstRefused(
       limit + 1,
-      async () => await post("/auth/cli/poll", { deviceCode }),
+      async () => await post("/auth/cli/poll", unknown()),
       (response) => response.status === 429
     );
-    const elsewhere = await post(
-      "/auth/cli/poll",
-      { deviceCode },
-      newAddress()
-    );
+    const elsewhere = await post("/auth/cli/poll", unknown(), newAddress());
     expect({
       answered,
-      elsewhere: await elsewhere.json(),
+      elsewhere: elsewhere.status,
       refused: refused === null ? null : await refusalOf(refused),
     }).toStrictEqual({
-      answered: window.map(() => 200),
-      elsewhere: { status: "pending" },
+      answered: answered.map(() => 200),
+      elsewhere: 200,
       refused: {
         problem: 429,
         retryAfter: String(period),
         status: 429,
         type: "application/problem+json",
       },
+    });
+  });
+
+  it("tells a CLI polling its login faster than every 2 seconds to slow down, counting only polls with its secret", async () => {
+    const login = await start();
+    const [code = ""] = login.deviceCode.split(".");
+    // A poll with the wrong secret, as from someone who saw the code, does not move the login's clock.
+    const stranger = await post(
+      "/auth/cli/poll",
+      { deviceCode: `${code}.${"y".repeat(43)}` },
+      newAddress()
+    );
+    const first = await post("/auth/cli/poll", {
+      deviceCode: login.deviceCode,
+    });
+    const again = await post("/auth/cli/poll", {
+      deviceCode: login.deviceCode,
+    });
+    await new Promise((settled) => {
+      setTimeout(settled, 1600);
+    });
+    const later = await post("/auth/cli/poll", {
+      deviceCode: login.deviceCode,
+    });
+    expect({
+      again: await refusalOf(again),
+      first: await first.json(),
+      later: await later.json(),
+      stranger: await stranger.json(),
+    }).toStrictEqual({
+      again: {
+        problem: 429,
+        retryAfter: "2",
+        status: 429,
+        type: "application/problem+json",
+      },
+      first: { status: "pending" },
+      later: { status: "pending" },
+      stranger: { status: "expired" },
     });
   });
 

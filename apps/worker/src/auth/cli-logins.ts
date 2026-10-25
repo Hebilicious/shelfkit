@@ -22,6 +22,8 @@ import { accountStub } from "./principals.ts";
 const LoginSchema = v.object({
   device: v.string(),
   expiresAt: v.number(),
+  /** When its CLI last polled, in milliseconds: polls closer than `POLL_GAP_MS` are told to slow down. */
+  polledAt: v.optional(v.number()),
   secretHash: v.string(),
   state: v.variant("status", [
     v.object({ status: v.literal("pending") }),
@@ -40,6 +42,7 @@ type Login = v.InferOutput<typeof LoginSchema>;
 /** What the CLI's poll learns. A wrong secret learns what an unknown or expired code does. */
 export type CliLoginPoll =
   | { readonly status: "pending" }
+  | { readonly status: "slow_down" }
   | { readonly status: "denied" }
   | { readonly status: "expired" }
   | { readonly status: "approved"; readonly key: string };
@@ -49,6 +52,12 @@ export interface PendingCliLogin {
   readonly device: string;
   readonly expiresAt: number;
 }
+
+/**
+ * The least time between two polls of one login. The CLI is told to poll every 2 seconds (`cli.ts`); this leaves it
+ * half a second for a slow request, and refuses a CLI polling at twice that rate or faster.
+ */
+const POLL_GAP_MS = 1500;
 
 function seconds(): number {
   return Math.floor(Date.now() / 1000);
@@ -154,6 +163,13 @@ export class CliLoginIndex extends DurableObject<Env> {
     }
     const { state } = login;
     if (state.status === "pending") {
+      // RFC 8628's `slow_down`, counted exactly here: the address limit in front of this is approximate, and only a
+      // poll that holds the secret moves the clock, so seeing the code is not enough to slow its CLI down.
+      const now = Date.now();
+      if (login.polledAt !== undefined && now - login.polledAt < POLL_GAP_MS) {
+        return { status: "slow_down" };
+      }
+      this.kv.put("login", { ...login, polledAt: now });
       return { status: "pending" };
     }
     // Spent now, before any await: a second poll finds nothing.

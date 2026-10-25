@@ -161,7 +161,14 @@ async function poll(request: Request, env: Env): Promise<Response> {
   if (input === null || !CODE.test(code) || !SECRET.test(secret)) {
     return answer({ status: "expired" } satisfies CliLoginPoll);
   }
-  return answer(await cliLoginStub(env, code).poll(await sha256Hex(secret)));
+  const polled = await cliLoginStub(env, code).poll(await sha256Hex(secret));
+  if (polled.status === "slow_down") {
+    return tooManyRequests(
+      CLI_POLL_SECONDS,
+      `this login was polled again too soon: poll it every ${CLI_POLL_SECONDS} seconds`
+    );
+  }
+  return answer(polled);
 }
 
 /** `/auth/cli/start` and `/auth/cli/poll`. */
