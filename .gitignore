@@ -40,3 +40,6 @@ dist-worker/
 
 # Task worktrees, one for each branch.
 .worktrees/
+
+# playwright-cli writes page snapshots into the directory it runs in.
+.playwright-cli/
