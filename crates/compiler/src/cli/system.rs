@@ -10,6 +10,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
@@ -96,6 +97,20 @@ pub trait System {
     fn read_secret(&self, _prompt: &str) -> io::Result<String> {
         Err(unavailable("reading a secret"))
     }
+
+    /// Whether standard input is a terminal, so a person is there to sign in
+    /// through the browser. `false` by default, as in CI.
+    fn stdin_is_terminal(&self) -> bool {
+        false
+    }
+
+    /// This computer's name, to show on the page that approves a login.
+    fn hostname(&self) -> Option<String> {
+        None
+    }
+
+    /// Wait between two polls of the hosted service.
+    fn sleep(&self, _duration: Duration) {}
 }
 
 /// The real machine.
@@ -184,6 +199,34 @@ impl System for HostSystem {
             .filter(|dir| !dir.is_empty())
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+    }
+
+    fn stdin_is_terminal(&self) -> bool {
+        use std::io::IsTerminal as _;
+        io::stdin().is_terminal()
+    }
+
+    fn hostname(&self) -> Option<String> {
+        let named = |text: String| {
+            let name = text.trim().to_owned();
+            (!name.is_empty()).then_some(name)
+        };
+        if cfg!(windows) {
+            return std::env::var("COMPUTERNAME").ok().and_then(named);
+        }
+        std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .ok()
+            .and_then(named)
+            .or_else(|| std::env::var("HOSTNAME").ok().and_then(named))
+            .or_else(|| {
+                let program = self.find("hostname")?;
+                let (code, output) = self.capture(&program, &[]).ok()?;
+                (code == 0).then_some(output).and_then(named)
+            })
+    }
+
+    fn sleep(&self, duration: Duration) {
+        std::thread::sleep(duration);
     }
 
     fn read_secret(&self, prompt: &str) -> io::Result<String> {

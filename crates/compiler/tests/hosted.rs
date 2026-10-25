@@ -17,6 +17,9 @@ use std::path::{Path, PathBuf};
 
 const URL: &str = "https://shelf.example.dev";
 const KEY: &str = "sko_secretsecretsecretsecretsecretsecretsecr";
+/// The device code a browser login polls with: the CLI's own secret, never printed.
+const DEVICE_CODE: &str = "ABCDEFGH.devicedevicedevicedevicedevicedevicedev";
+const APPROVAL_PAGE: &str = "https://shelf.example.dev/cli/ABCD-EFGH";
 const SIGN_IN_LINK: &str =
     "https://shelf.example.dev/link#ssl_owner_linklinklinklinklinklinklinklinklinklinklin";
 
@@ -79,6 +82,14 @@ struct Service {
     /// The machine has no browser opener on PATH.
     opener_missing: bool,
     platform: Platform,
+    /// Standard input is a terminal: a person is there to sign in through the browser.
+    terminal: bool,
+    /// What each poll of a browser login answers, in order: `pending`, `approved`, `denied`, or `expired`.
+    polls: RefCell<Vec<&'static str>>,
+    /// How many times the CLI waited between polls.
+    slept: RefCell<u32>,
+    /// The device name each browser login started with.
+    devices: RefCell<Vec<String>>,
 }
 
 impl Service {
@@ -94,6 +105,10 @@ impl Service {
             opener_exit: 0,
             opener_missing: false,
             platform: Platform::Unix,
+            terminal: false,
+            polls: RefCell::new(Vec::new()),
+            slept: RefCell::new(0),
+            devices: RefCell::new(Vec::new()),
         }
     }
 
@@ -216,6 +231,9 @@ impl System for Service {
     }
 
     fn http(&self, request: &HttpRequest) -> io::Result<HttpResponse> {
+        if let Some(path) = request.url.strip_prefix(&format!("{URL}/auth/cli/")) {
+            return Ok(self.browser_login(path, request));
+        }
         let authorization = request
             .headers
             .iter()
@@ -298,6 +316,67 @@ impl System for Service {
     fn read_secret(&self, _prompt: &str) -> io::Result<String> {
         Ok(self.typed_key.clone())
     }
+    fn stdin_is_terminal(&self) -> bool {
+        self.terminal
+    }
+    fn hostname(&self) -> Option<String> {
+        Some("ada-laptop".to_owned())
+    }
+    fn sleep(&self, _duration: std::time::Duration) {
+        *self.slept.borrow_mut() += 1;
+    }
+}
+
+impl Service {
+    /// `/auth/cli/start` and `/auth/cli/poll`, which take no key.
+    fn browser_login(&self, path: &str, request: &HttpRequest) -> HttpResponse {
+        assert!(
+            request
+                .headers
+                .iter()
+                .all(|(name, _)| name != "authorization"),
+            "a browser login sent a key"
+        );
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        self.state
+            .borrow_mut()
+            .requests
+            .push(format!("{} /auth/cli/{path}", request.method));
+        let answer = match path {
+            "start" => {
+                self.devices
+                    .borrow_mut()
+                    .push(body["device"].as_str().unwrap().to_owned());
+                json!({
+                    "userCode": "ABCD-EFGH",
+                    "deviceCode": DEVICE_CODE,
+                    "verificationUrl": APPROVAL_PAGE,
+                    "expiresAt": "2026-10-25T12:10:00.000Z",
+                    "expiresIn": 600,
+                    "interval": 2,
+                })
+            }
+            "poll" => {
+                assert_eq!(body["deviceCode"], DEVICE_CODE);
+                let mut polls = self.polls.borrow_mut();
+                let status = if polls.is_empty() {
+                    "pending"
+                } else {
+                    polls.remove(0)
+                };
+                if status == "approved" {
+                    json!({ "status": status, "key": KEY })
+                } else {
+                    json!({ "status": status })
+                }
+            }
+            _ => panic!("a browser-login route the stand-in does not serve: {path}"),
+        };
+        HttpResponse {
+            body: serde_json::to_vec(&answer).unwrap(),
+            status: 200,
+        }
+    }
 }
 
 struct Ran {
@@ -327,6 +406,10 @@ fn shelfkit(system: &Service, cwd: &Path, args: &[&str]) -> Ran {
         !ran.stdout.contains(KEY) && !ran.stderr.contains(KEY),
         "a key was printed"
     );
+    assert!(
+        !ran.stdout.contains(DEVICE_CODE) && !ran.stderr.contains(DEVICE_CODE),
+        "the device code was printed"
+    );
     ran
 }
 
@@ -352,6 +435,113 @@ fn login_keeps_the_key_in_the_keychain_and_remembers_the_deployment() {
     let out = shelfkit(&service, &scratch("logout-cwd"), &["logout"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert!(service.keychain.borrow().is_empty());
+}
+
+/// A machine with a person at its terminal and a browser opener.
+fn at_a_terminal(name: &str, polls: Vec<&'static str>) -> Service {
+    let mut service = Service::new(name);
+    service.terminal = true;
+    service.opener = Some(PathBuf::from("/usr/bin/xdg-open"));
+    service.typed_key = String::new();
+    *service.polls.borrow_mut() = polls;
+    service
+}
+
+#[test]
+fn login_at_a_terminal_signs_in_through_the_browser_and_keeps_the_key_it_was_given() {
+    let service = at_a_terminal("login-browser", vec!["pending", "pending", "approved"]);
+    let ran = shelfkit(&service, &scratch("login-browser-cwd"), &["login", URL]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert!(ran.stderr.contains("ABCD-EFGH"), "{}", ran.stderr);
+    assert!(ran.stderr.contains(APPROVAL_PAGE), "{}", ran.stderr);
+    assert!(
+        ran.stdout
+            .contains("Logged in to https://shelf.example.dev as the owner")
+    );
+    assert_eq!(
+        *service.opened.borrow(),
+        vec![vec![APPROVAL_PAGE.to_owned()]]
+    );
+    assert_eq!(*service.devices.borrow(), vec!["ada-laptop".to_owned()]);
+    assert_eq!(*service.slept.borrow(), 3);
+    assert_eq!(
+        service.state.borrow().requests,
+        vec![
+            "POST /auth/cli/start",
+            "POST /auth/cli/poll",
+            "POST /auth/cli/poll",
+            "POST /auth/cli/poll",
+            "POST /graphql",
+        ]
+    );
+    assert_eq!(
+        service.keychain.borrow().get(URL).map(String::as_str),
+        Some(KEY)
+    );
+}
+
+#[test]
+fn login_says_so_when_the_browser_denies_it_or_it_expires_and_keeps_nothing() {
+    let denied = at_a_terminal("login-denied", vec!["pending", "denied"]);
+    let ran = shelfkit(&denied, &scratch("login-denied-cwd"), &["login", URL]);
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.stderr.contains("denied in the browser"),
+        "{}",
+        ran.stderr
+    );
+    assert!(denied.keychain.borrow().is_empty());
+
+    let expired = at_a_terminal("login-expired", vec!["expired"]);
+    let ran = shelfkit(&expired, &scratch("login-expired-cwd"), &["login", URL]);
+    assert_eq!(ran.code, 1);
+    assert!(
+        ran.stderr.contains("expired before it was approved"),
+        "{}",
+        ran.stderr
+    );
+    assert!(expired.keychain.borrow().is_empty());
+
+    // A deployment that never answers stops being asked once the login would have expired.
+    let silent = at_a_terminal("login-silent", Vec::new());
+    let ran = shelfkit(&silent, &scratch("login-silent-cwd"), &["login", URL]);
+    assert_eq!(ran.code, 1);
+    assert!(ran.stderr.contains("expired"), "{}", ran.stderr);
+    assert_eq!(*silent.slept.borrow(), 600 / 2 + 2);
+}
+
+#[test]
+fn login_shows_the_page_when_no_browser_opens() {
+    let mut service = at_a_terminal("login-no-opener", vec!["approved"]);
+    service.opener_missing = true;
+    let ran = shelfkit(&service, &scratch("login-no-opener-cwd"), &["login", URL]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert!(
+        ran.stderr.contains("Open the page in a browser"),
+        "{}",
+        ran.stderr
+    );
+    assert!(ran.stderr.contains(APPROVAL_PAGE), "{}", ran.stderr);
+}
+
+#[test]
+fn login_reads_a_key_with_key_or_without_a_terminal() {
+    let mut asked = at_a_terminal("login-key", Vec::new());
+    asked.typed_key = KEY.to_owned();
+    let ran = shelfkit(&asked, &scratch("login-key-cwd"), &["login", "--key", URL]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(asked.state.borrow().requests, vec!["POST /graphql"]);
+    assert!(asked.opened.borrow().is_empty());
+
+    // Piped standard input, as in CI: the key is read from it, and no browser is involved.
+    let piped = Service::new("login-piped");
+    let ran = shelfkit(&piped, &scratch("login-piped-cwd"), &["login", URL]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(piped.state.borrow().requests, vec!["POST /graphql"]);
+    assert_eq!(
+        piped.keychain.borrow().get(URL).map(String::as_str),
+        Some(KEY)
+    );
 }
 
 #[test]
