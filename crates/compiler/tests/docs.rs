@@ -129,3 +129,74 @@ fn two_docs_at_one_path_are_refused() {
         "{errors}"
     );
 }
+
+/// What the hosted importer writes for a repository's AGENTS.md and a doc it links to (`packages/importers`), each
+/// pinned to its file upstream, with or without the copies a licence permits.
+fn imported(copied: bool) -> MemorySource {
+    let source = r#""source": { "repo": "https://github.com/acme/app", "path": "AGENTS.md", "resolvedCommit": "c1" }"#;
+    let doc_source = r#""source": { "repo": "https://github.com/acme/app", "path": "docs/domain.md", "resolvedCommit": "c1" }"#;
+    let mut files = vec![
+        ("shelf.json", SHELF.to_owned()),
+        (
+            "items/instructions/app/item.json",
+            format!(
+                r#"{{ "id": "app", "kind": "instructions", "title": "App", "requires": ["domain"], {source} }}"#
+            ),
+        ),
+        (
+            "items/docs/domain/item.json",
+            format!(
+                r#"{{ "id": "domain", "kind": "doc", "title": "Domain", "path": "docs/domain.md", {doc_source} }}"#
+            ),
+        ),
+        (
+            "profiles/p.json",
+            r#"{ "id": "p", "title": "P", "items": ["app"], "compile": { "targets": ["codex"] } }"#
+                .to_owned(),
+        ),
+    ];
+    if copied {
+        files.push((
+            "items/instructions/app/AGENTS.fragment.md",
+            "# App\n\nRead [the domain](docs/domain.md).\n".to_owned(),
+        ));
+        files.push(("items/docs/domain/doc.md", "# Domain\n".to_owned()));
+    }
+    files.into_iter().collect()
+}
+
+#[test]
+fn an_imported_agents_md_compiles_from_its_copy_with_its_links_pointed_at_the_docs() {
+    let compiled = plan(&imported(true), &Request::default()).unwrap();
+    // APM installs instructions only from an `.instructions.md` file, so AGENTS.md is no upstream reference.
+    assert!(
+        !compiled.apm_yml.contains("acme/app"),
+        "{}",
+        compiled.apm_yml
+    );
+    let rules = compiled
+        .files
+        .iter()
+        .find(|file| file.path == "vendor/p/.github/instructions/app.instructions.md")
+        .expect("AGENTS.md was not vendored");
+    let rules = text(rules.bytes().unwrap().as_slice());
+    assert!(
+        rules.contains("[the domain](.agents/skills/box-p-docs/docs/domain.md)"),
+        "{rules}"
+    );
+}
+
+#[test]
+fn an_agents_md_or_a_doc_imported_as_a_link_says_why_it_cannot_compile() {
+    let errors = plan(&imported(false), &Request::default())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        errors.contains("`app` was imported as a link, without its text"),
+        "{errors}"
+    );
+    assert!(
+        errors.contains("`domain` was imported as a link, without its text"),
+        "{errors}"
+    );
+}
