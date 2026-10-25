@@ -1,8 +1,8 @@
 {
   "profile": "agent-tools",
   "profileRevision": "sha256-7d2741ddaf84f6ab1680c0ac0a68db290ac4187070ba269b01f3741cdbf34006",
-  "apmYml": "name: shelfkit-agent-tools\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - codex\n  - copilot\n  - cursor\ndependencies:\n  apm:\n    - ./vendor/agent-tools\n  mcp:\n    - name: io.github.upstash/context7\n      registry: false\n      transport: http\n      url: \"https://mcp.context7.com/mcp\"\n    - name: microsoft/playwright-mcp\n      registry: false\n      transport: stdio\n      command: npx\n      args:\n        - \"-y\"\n        - \"@playwright/mcp@latest\"\ncompilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section\n",
-  "apmYmlDigest": "sha256:c044a8a01beb36d67f6734f3d51d2d1987b91127377d5ec013283c3bb80b2568",
+  "apmYml": "name: shelfkit-agent-tools\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - codex\n  - copilot\n  - cursor\ndependencies:\n  apm:\n    - ./vendor/agent-tools\n  mcp:\n    - name: io.github.upstash/context7\n      registry: false\n      transport: http\n      url: \"https://mcp.context7.com/mcp\"\n    - name: microsoft/playwright-mcp\n      registry: false\n      transport: stdio\n      command: npx\n      args:\n        - \"-y\"\n        - \"@playwright/mcp@latest\"\ncompilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section\n  resolve_links: false\n",
+  "apmYmlDigest": "sha256:e2e63738536d64ebe209b9cd6ac46acdfc1c9e7c29459074ba06530791434a44",
   "files": [
     {
       "path": "vendor/agent-tools/.apm/agents/registry-reviewer.agent.md",

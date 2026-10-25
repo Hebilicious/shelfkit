@@ -252,6 +252,8 @@ struct ProfileFacts {
     /// Whether it has instructions, tech stacks, or library notes: what goes into AGENTS.md. True when the
     /// deployment does not say.
     instructions: bool,
+    /// Whether it has docs, which install into `.agents/skills/` (`crate::docs`).
+    docs: bool,
 }
 
 fn profile_facts(
@@ -261,6 +263,7 @@ fn profile_facts(
     wanted: &ProfileRef,
 ) -> ProfileFacts {
     let unknown = ProfileFacts {
+        docs: false,
         instructions: true,
         targets: Vec::new(),
     };
@@ -287,6 +290,9 @@ fn profile_facts(
         return unknown;
     };
     ProfileFacts {
+        docs: items
+            .iter()
+            .any(|item| item["kind"].as_str() == Some("doc")),
         instructions: items.iter().any(|item| {
             matches!(
                 item["kind"].as_str(),
@@ -327,7 +333,7 @@ fn with_profile(
             .unwrap_or_else(|| "repository".to_owned());
         ours.push(("name".to_owned(), Node::string(name)));
         ours.push(("version".to_owned(), Node::string("0.0.0")));
-        let targets: Vec<String> = if !facts.targets.is_empty() {
+        let mut targets: Vec<String> = if !facts.targets.is_empty() {
             facts.targets.clone()
         } else if uses_a_harness(repo) {
             Vec::new()
@@ -337,6 +343,9 @@ fn with_profile(
                 .map(|&target| target.to_owned())
                 .collect()
         };
+        if facts.docs {
+            reach_skills_folder(&mut targets);
+        }
         if !targets.is_empty() {
             ours.push(("targets".to_owned(), Node::strings(&targets)));
         }
@@ -366,14 +375,53 @@ fn with_profile(
     let Some(existing) = existing else {
         return Ok(compiled);
     };
-    merge(existing, &compiled, &BTreeSet::new(), OnConflict::ShelfWins)
+    let merged = merge(existing, &compiled, &BTreeSet::new(), OnConflict::ShelfWins)
         .map(|merged| merged.text)
         .map_err(|error| match error {
             MergeError::Unreadable(why) => {
                 format!("the repository's apm.yml cannot be read: {why}")
             }
             MergeError::Conflicts(conflicts) => conflicts.join(", "),
-        })
+        })?;
+    Ok(if facts.docs {
+        with_skills_folder(&merged)
+    } else {
+        merged
+    })
+}
+
+/// Docs are linked at their copy in `.agents/skills/`: add `agent-skills` to targets that install no skills there.
+/// Empty targets are left empty: APM then detects the agents, and every one but Claude Code uses that folder.
+fn reach_skills_folder(targets: &mut Vec<String>) {
+    if !targets.is_empty()
+        && !targets
+            .iter()
+            .any(|target| crate::docs::DEPLOYING_TARGETS.contains(&target.as_str()))
+    {
+        targets.push("agent-skills".to_owned());
+    }
+}
+
+/// apm.yml with `agent-skills` in its `targets` list, when they install no skills into `.agents/skills/`.
+fn with_skills_folder(manifest: &str) -> String {
+    let Ok(Node::Map(mut entries)) = Node::parse(manifest) else {
+        return manifest.to_owned();
+    };
+    let Some((_, Node::Seq(targets))) = entries.iter_mut().find(|(key, _)| key == "targets") else {
+        return manifest.to_owned();
+    };
+    let mut slugs: Vec<String> = targets
+        .iter()
+        .filter_map(Node::as_str)
+        .map(str::to_owned)
+        .collect();
+    let before = slugs.len();
+    reach_skills_folder(&mut slugs);
+    if slugs.len() == before {
+        return manifest.to_owned();
+    }
+    *targets = slugs.into_iter().map(Node::String).collect();
+    yaml::render(&Node::Map(entries))
 }
 
 /// The agents a new apm.yml sets up when the profile names none and the repository shows none: without `targets` or

@@ -50,7 +50,7 @@ pub struct Context<'a> {
     about = "A shelf of agent context, compiled to APM.",
     long_about = "A shelf of agent context, compiled to APM.\n\n\
         A shelf is a directory of curated items (skills, prompts, instructions, agents, hooks, plugins, \
-        MCP and LSP servers, libraries, stacks) and profiles that select them. `compile` turns a profile \
+        MCP and LSP servers, libraries, stacks, docs) and profiles that select them. `compile` turns a profile \
         into an apm.yml plus vendored content and stops; APM installs it. ShelfKit never writes a lockfile \
         and runs APM only when `install` is asked for.\n\n\
         Not in this build: `search`.",
@@ -73,7 +73,8 @@ enum Command {
     ///
     /// A local directory or file (the `path` source kind) is read here, by APM's package layouts: `.apm/` primitives,
     /// a root SKILL.md, a plugin, `skills/<name>/SKILL.md`, and `hooks/*.json`, or one `.prompt.md`, `.agent.md`, or
-    /// `.instructions.md` file. Items are copied into the shelf with no upstream, their `source` naming a `path`
+    /// `.instructions.md` file, or any other markdown file, which becomes a doc at its path in its repository. Items
+    /// are copied into the shelf with no upstream, their `source` naming a `path`
     /// source in shelf.json.
     ///
     /// Anything else (a GitHub repository as a URL or `owner/repo`, a ClawHub listing, an MCP registry, another

@@ -205,7 +205,7 @@ describe("the web UI's shelf index query", () => {
     const single = vi.spyOn(ShelfIndex.prototype, "itemDetail");
     const head = vi.spyOn(env.BLOBS, "head");
     const index = await shelfIndex(key);
-    expect(index.total).toBe(13);
+    expect(index.total).toBe(14);
     expect(details).toHaveBeenCalledOnce();
     expect(bodies).toHaveBeenCalledOnce();
     expect(single).not.toHaveBeenCalled();

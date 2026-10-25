@@ -135,6 +135,7 @@ export function bodyText(
 /** The main text of an item: the one markdown file its kind is defined by, when it has one. */
 export const PRIMARY_FILE: ReadonlyMap<string, string> = new Map([
   ["agent", "agent.md"],
+  ["doc", "doc.md"],
   ["instructions", "AGENTS.fragment.md"],
   ["prompt", "prompt.md"],
   ["skill", "SKILL.md"],

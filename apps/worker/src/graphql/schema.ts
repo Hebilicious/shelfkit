@@ -352,7 +352,7 @@ export function buildSchema(): GraphQLSchema {
   });
 
   const ItemKind = builder.enumType("ItemKind", {
-    description: "The ten item kinds (`docs/PRD.md` section 5.2).",
+    description: "The eleven item kinds (`docs/PRD.md` section 5.2).",
     values: [
       "skill",
       "prompt",
@@ -364,6 +364,7 @@ export function buildSchema(): GraphQLSchema {
       "lsp",
       "library",
       "stack",
+      "doc",
     ] as const,
   });
 

@@ -24,7 +24,7 @@ import {
   cliTerminalSteps,
 } from "../lib/install.ts";
 import type { InstallTarget } from "../lib/install.ts";
-import { KIND_ORDER, KINDS, RULES_NOTE } from "../lib/vocabulary.ts";
+import { KIND_ORDER, KINDS, RULES_NOTE, docsFolder } from "../lib/vocabulary.ts";
 import { param } from "../navigation.ts";
 
 const shelf = useShelfId();
@@ -79,6 +79,12 @@ const groups = computed(() => {
   })).filter((group) => group.items.length > 0);
 });
 
+/** Where this profile's docs install: `.agents/skills/<this>/`. */
+const profileDocsFolder = computed(() => {
+  const [namespace = "", id = ""] = (profile.value?.apmCoordinate ?? "").split("/");
+  return namespace === "" || id === "" ? "" : docsFolder(namespace, id);
+});
+
 /** The kinds that go into AGENTS.md. */
 const RULE_KINDS: ReadonlySet<ItemKind> = new Set(["instructions", "stack", "library"]);
 const hasRules = computed(() => groups.value.some((group) => RULE_KINDS.has(group.kind)));
@@ -100,6 +106,7 @@ const target = computed<InstallTarget | null>(() => {
   }
   return {
     coordinate: current.apmCoordinate,
+    docs: groups.value.some((group) => group.kind === "doc"),
     instructions: hasRules.value,
     isPrivate: !summary.public,
     origin: new URL(summary.registryUrl).origin,
@@ -313,6 +320,7 @@ async function copy(text: string, way: Way): Promise<void> {
           <InstallPlaces
             :id='group.items.length === 1 ? (group.items[0]?.id ?? "<id>") : "<id>"'
             :kind="group.kind"
+            :docs-folder="profileDocsFolder"
           />
         </details>
       </section>

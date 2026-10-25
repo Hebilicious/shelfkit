@@ -21,7 +21,7 @@ items/skills/bad-frontmatter/SKILL.md: invalid SKILL.md frontmatter: `name` is `
 items/stacks/broken-json/item.json: invalid JSON: EOF while parsing a value at line 2 column 0
 items/stacks/no-markers/item.json: `recommends` references unknown item `phantom`
 items/stacks/no-markers/item.json: a stack needs at least one marker: markers are what make it detectable
-items/widgets: unknown kind directory `widgets`; expected one of skills, prompts, instructions, agents, hooks, plugins, mcp, lsp, libraries, stacks
+items/widgets: unknown kind directory `widgets`; expected one of skills, prompts, instructions, agents, hooks, plugins, mcp, lsp, libraries, stacks, docs
 profiles/a.json: `extends` cycle: a -> b -> a
 profiles/cli.json: `bundles` references unknown bundle `no-bundle`
 profiles/cli.json: `extends` references unknown profile `nowhere`

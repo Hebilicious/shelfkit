@@ -96,12 +96,21 @@ impl System for Machine {
             return answer(401, &json!({ "status": 401, "title": "Unauthorized" }));
         }
         match request.url.strip_prefix(URL).unwrap() {
-            "/apm/v1/packages/team/web/versions" | "/apm/v1/packages/team/any/versions" => answer(
+            "/apm/v1/packages/team/web/versions"
+            | "/apm/v1/packages/team/any/versions"
+            | "/apm/v1/packages/team/docs/versions" => answer(
                 200,
                 &json!({ "versions": [
                     { "version": *self.newest.borrow(), "digest": "sha256:01", "published_at": "2026-10-25T01:00:00Z" },
                     { "version": "0.9.0", "digest": "sha256:00", "published_at": "2026-10-25T00:00:00Z" },
                 ] }),
+            ),
+            "/graphql" if String::from_utf8_lossy(&request.body).contains("\"docs\"") => answer(
+                200,
+                &json!({ "data": { "shelf": { "profile": { "resolution": {
+                    "compile": { "targets": ["claude"] },
+                    "items": [{ "kind": "instructions" }, { "kind": "doc" }],
+                } } } } }),
             ),
             "/graphql" if String::from_utf8_lossy(&request.body).contains("\"any\"") => answer(
                 200,
@@ -159,7 +168,7 @@ fn a_public_profile_goes_into_a_new_apm_yml_and_apm_installs_it() {
         format!(
             "name: {name}\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - codex\nregistries:\n  team:\n    url: \"{URL}/apm\"\n\
              dependencies:\n  apm:\n    - registry: team\n      id: team/web\n      version: \"1.0.0\"\n\
-             compilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section\n"
+             compilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section\n  resolve_links: false\n"
         )
     );
     let ran_apm = machine.ran.borrow();
@@ -428,4 +437,36 @@ fn the_newest_version_is_pinned_and_installing_again_moves_the_pin() {
         "{manifest}"
     );
     assert_eq!(manifest.matches("id: team/web").count(), 1, "{manifest}");
+}
+
+#[test]
+fn a_profile_with_docs_installs_the_skills_folder_its_links_name() {
+    let fresh = scratch("docs-fresh");
+    let machine = Machine::new(false);
+    let ran = shelfkit(&fresh, &machine, &["install", "team/docs", "--url", URL]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let manifest = std::fs::read_to_string(fresh.join("apm.yml")).unwrap();
+    assert!(
+        manifest.contains("targets:\n  - claude\n  - agent-skills\n"),
+        "{manifest}"
+    );
+
+    let claude_only = scratch("docs-existing");
+    std::fs::write(
+        claude_only.join("apm.yml"),
+        "name: app\nversion: 1.0.0\ntargets:\n  - claude\n",
+    )
+    .unwrap();
+    let ran = shelfkit(
+        &claude_only,
+        &machine,
+        &["install", "team/docs", "--url", URL],
+    );
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let manifest = std::fs::read_to_string(claude_only.join("apm.yml")).unwrap();
+    assert!(
+        manifest.contains("targets:\n  - claude\n  - agent-skills\n"),
+        "{manifest}"
+    );
+    assert!(manifest.contains("  resolve_links: false\n"), "{manifest}");
 }

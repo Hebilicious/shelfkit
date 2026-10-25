@@ -121,7 +121,8 @@ pub fn primitive_files(loaded: &LoadedItem) -> Result<BTreeMap<String, Vec<u8>>,
                 render_instructions(loaded, &body).into_bytes(),
             );
         }
-        Payload::Plugin(_) | Payload::Mcp(_) | Payload::Lsp(_) => {
+        // A doc goes into the profile's docs skill, which `crate::docs` writes for all of them at once.
+        Payload::Plugin(_) | Payload::Mcp(_) | Payload::Lsp(_) | Payload::Doc(_) => {
             return Err(format!(
                 "a `{}` item does not compile into the `.apm/` package",
                 item.kind()

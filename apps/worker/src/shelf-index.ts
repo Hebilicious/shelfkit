@@ -3725,6 +3725,7 @@ const IMPORT_STATUS = v.picklist([
 /** The directory under `items/` each kind lives in (`docs/PRD.md` section 5). */
 const KIND_DIRECTORIES: Readonly<Record<Item["kind"], string>> = {
   agent: "agents",
+  doc: "docs",
   hook: "hooks",
   instructions: "instructions",
   library: "libraries",

@@ -70,7 +70,7 @@ describe("a push", () => {
     if (!summary.ok) {
       throw new Error(summary.failure.message);
     }
-    expect(summary.value.itemCount).toBe(13);
+    expect(summary.value.itemCount).toBe(14);
     expect(summary.value.profileCount).toBe(3);
     expect(summary.value.snapshot?.origin).toBe("push");
     const version = await runInDurableObject(
@@ -95,7 +95,7 @@ describe("a push", () => {
       "profiles/broken.json"
     );
     const summary = await stub().summary(owner, "kit");
-    expect(summary.ok && summary.value.itemCount).toBe(13);
+    expect(summary.ok && summary.value.itemCount).toBe(14);
   });
 
   it("whose namespace is another shelf's is refused", async () => {
@@ -556,7 +556,7 @@ describe("the GraphQL API", () => {
       }
     `);
     const found = v.parse(Inventory, answer.data);
-    expect(found.shelf).toStrictEqual({ activity: [], items: { total: 13 } });
+    expect(found.shelf).toStrictEqual({ activity: [], items: { total: 14 } });
   });
 
   it("starts an import job, which fails plainly while there is no importer for the source", async () => {

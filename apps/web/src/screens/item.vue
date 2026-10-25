@@ -8,7 +8,7 @@ import { computed, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import { execute } from "../api/graphql.ts";
-import { pretty, readSource } from "../api/json.ts";
+import { pretty, readItem, readSource } from "../api/json.ts";
 import { DeleteItemMutation, SetFavouriteMutation, WriteItemMutation } from "../api/operations.ts";
 import DiffView from "../components/diff-view.vue";
 import ExternalLink from "../components/external-link.ts";
@@ -49,6 +49,11 @@ const titles = computed(
 const detail = useItem(shelf, id);
 const install = useItemInstall(shelf, item);
 const source = computed(() => readSource(item.value?.source ?? null));
+/** A doc's `path`, which instructions link to and its installed copy keeps. */
+const docPath = computed(() => {
+  const parsed = readItem(item.value?.document ?? null);
+  return parsed?.kind === "doc" ? parsed.path : undefined;
+});
 
 type Tab = "installs" | "history" | "origin" | "used" | "scans" | "files";
 const tab = ref<Tab>("installs");
@@ -307,7 +312,7 @@ const PROVENANCE_FIELDS = [
         <p class="small">
           Installing a profile that includes it puts it in these files of the repository:
         </p>
-        <InstallPlaces :id="item.id" :kind="item.kind" />
+        <InstallPlaces :id="item.id" :kind="item.kind" :path="docPath" />
         <p
           v-if='item.kind === "instructions" || item.kind === "stack" || item.kind === "library"'
           class="small muted"

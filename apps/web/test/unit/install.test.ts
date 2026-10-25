@@ -13,6 +13,7 @@ import type { InstallTarget } from "../../src/lib/install.ts";
 
 const target: InstallTarget = {
   coordinate: "hebilicious/default",
+  docs: false,
   instructions: false,
   isPrivate: false,
   origin: "https://shelf.example.dev",
@@ -83,7 +84,7 @@ describe("installing a profile with APM alone", () => {
   it("puts a profile's instructions into AGENTS.md between the markers, and has CLAUDE.md import it", () => {
     const withRules = { ...target, instructions: true };
     expect(manifestEntries(withRules)).toContain(
-      "compilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section"
+      "compilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section\n  resolve_links: false"
     );
     const steps = apmTerminalSteps(withRules);
     expect(steps).toContain("<!-- apm:start -->");
@@ -97,6 +98,16 @@ describe("installing a profile with APM alone", () => {
     expect(apmTerminalSteps(target)).toContain(
       "apm update --yes hebilicious/default"
     );
+  });
+
+  it("installs the skills folder a profile's docs are linked at", () => {
+    const claudeOnly = { ...target, docs: true, targets: ["claude"] };
+    expect(apmTerminalSteps(claudeOnly)).toContain(
+      "targets: [claude, agent-skills]"
+    );
+    expect(
+      apmTerminalSteps({ ...claudeOnly, targets: ["claude", "codex"] })
+    ).toContain("targets: [claude, codex]\n");
   });
 
   it("compiles only a profile that has instructions", () => {

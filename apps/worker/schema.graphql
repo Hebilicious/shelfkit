@@ -254,9 +254,10 @@ input ItemFileInput {
   path: String!
 }
 
-"""The ten item kinds (`docs/PRD.md` section 5.2)."""
+"""The eleven item kinds (`docs/PRD.md` section 5.2)."""
 enum ItemKind {
   agent
+  doc
   hook
   instructions
   library

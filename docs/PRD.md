@@ -11,7 +11,7 @@
 
 ShelfKit is a registry and curation layer for agent context, built on [APM](https://github.com/microsoft/apm) and [OpenAPM](https://microsoft.github.io/apm/specs/openapm-v01/).
 
-A **shelf** is a Git repository of selected context: skills, prompts, instructions, agents, hooks, plugins, MCP servers, LSP servers, libraries, and tech stacks. A **profile** is a named selection from a shelf. Compiling a profile writes an `apm.yml`, which `apm install` turns into a configured repository.
+A **shelf** is a Git repository of selected context: skills, prompts, instructions, agents, hooks, plugins, MCP servers, LSP servers, libraries, tech stacks, and docs. A **profile** is a named selection from a shelf. Compiling a profile writes an `apm.yml`, which `apm install` turns into a configured repository.
 
 ShelfKit does three things APM does not:
 
@@ -137,6 +137,8 @@ APM decides where each kind lands, and for most kinds its choice is the only sen
 - The repository's `apm.yml` gets `compilation: { strategy: single-file, agents_md: { mode: managed_section } }`: `apm compile` writes every instruction into the root AGENTS.md, a scoped one as a section naming the files it applies to, between `<!-- apm:start -->` and `<!-- apm:end -->`, and keeps the rest of the file byte for byte.
 - `shelfkit install` adds those two lines to the end of an AGENTS.md that lacks them (or writes a file with only them), makes CLAUDE.md import AGENTS.md with `@AGENTS.md` (appending the line to a CLAUDE.md that lacks it, writing one that is only it, and leaving a symbolic link alone), and runs `apm compile --target codex`, whose only output is AGENTS.md. Codex, Cursor, and Copilot read AGENTS.md; Claude Code reads CLAUDE.md and, through the import, AGENTS.md. Not compiling for `claude` or `copilot` keeps APM from writing CLAUDE.md or `.github/copilot-instructions.md` copies of the same text.
 - These marker and import lines are the only lines ShelfKit writes outside `apm.yml`, and only to make APM's own managed-section mode work; the instructions themselves are written by APM.
+
+Docs, the longer documents instructions link to, travel the same way through a skill folder of the profile's, with the instructions' links pointed at it (section 5.2, `doc`).
 
 Two limits. This rests on APM 0.33's installer and compiler reading different directories, which nothing in APM promises; the compiler's APM test installs ShelfKit's own shelf and fails if a rule file appears or AGENTS.md lacks the instructions, so an APM release that changes it is caught before the pin moves. And an instruction that is an upstream dependency (a file in another repository, pinned) is installed by APM as a package of its own, so it still becomes rule files.
 
@@ -319,6 +321,22 @@ A tech stack: markers for detection plus the conventions that follow from it.
 ```
 
 `markers` are what make `shelfkit recommend` work, and they are the difference between a stack item and an instructions item.
+
+#### `doc`
+
+A reference document that instructions link to: a glossary, a guide to one subsystem, a runbook. It is longer than an instruction and read only when an instruction or the task points to it, so it costs an agent nothing until then. `path` is where it lives in the repository it was written for, which is how that repository's instructions link to it; `doc.md` is the document.
+
+```json
+{
+  "id": "domain",
+  "kind": "doc",
+  "title": "Domain docs",
+  "description": "The words the code uses, and what each means.",
+  "path": "docs/agents/domain.md"
+}
+```
+
+A profile's docs install together as one skill, `<namespace>-<profile>-docs`, each at its `path` inside the skill's folder, so links between docs keep working; the skill's `SKILL.md`, which the compiler writes, lists them, so an agent sees them among its skills. A link in an instruction to a doc of the profile, written `docs/agents/domain.md` or `./docs/agents/domain.md`, with or without a `#fragment`, is pointed at the installed copy, `.agents/skills/<namespace>-<profile>-docs/docs/agents/domain.md`; a link to anything else is left as written. APM 0.33 has no primitive for a document and installs no loose file, but it copies a skill folder whole into `.agents/skills/` and `.claude/skills/`, which a repository commits. The compiled `apm.yml` therefore sets `compilation.resolve_links: false`, without which `apm compile` would paste every linked document into AGENTS.md, and adds `agent-skills` to `targets` that install no skills into `.agents/skills/` (only `claude` does not). An instruction that needs a doc lists it in `requires`, so a profile that selects the instruction gets the doc. `shelfkit add <file>.md` imports any other markdown file as a doc, its `path` taken from where it sits in its repository.
 
 ### 5.3 Profiles
 
@@ -644,7 +662,7 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 
 ### M1: Format, compiler, CLI, and local registry
 
-- [ ] Shelf format: ten kinds, profiles, bundles, revisions, hashing
+- [ ] Shelf format: eleven kinds, profiles, bundles, revisions, hashing
 - [ ] Rust compiler: profile to `apm.yml` and vendored `.apm/` content
 - [ ] Validation against the OpenAPM published JSON Schema
 - [ ] `init`, `add`, `search`, `compile`, `verify`, `doctor`

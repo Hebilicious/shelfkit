@@ -26,6 +26,7 @@
 //! filesystem, or a process.
 
 pub mod coordinate;
+pub mod docs;
 pub mod engine;
 pub mod manifest;
 pub mod merge;

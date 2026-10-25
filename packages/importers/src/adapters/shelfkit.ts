@@ -138,6 +138,7 @@ const ITEM_REVISION_QUERY = `query ItemRevision($shelf: ID!, $item: ID!) {
 
 /** The fields each kind cannot be without; a link keeps these and nothing else of the document. */
 const REQUIRED_FIELDS = new Map<ItemKind, readonly string[]>([
+  ["doc", ["path"]],
   ["lsp", ["command", "name", "extensionToLanguage", "transport"]],
   ["mcp", ["flavour", "name", "url", "transport", "command", "args"]],
   ["stack", ["markers"]],

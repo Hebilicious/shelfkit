@@ -423,6 +423,11 @@ impl Loader<'_> {
                 }
                 self.sections(&path, "conventions", &stack.conventions);
             }
+            Payload::Doc(doc) => {
+                if let Err(why) = item::validate_doc_path(&doc.path) {
+                    self.invalid(&path, format!("doc `path` `{}` {why}", doc.path));
+                }
+            }
         }
     }
 

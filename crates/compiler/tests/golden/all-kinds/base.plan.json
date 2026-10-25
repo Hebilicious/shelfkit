@@ -1,8 +1,8 @@
 {
   "profile": "base",
   "profileRevision": "sha256-59edd61460ec961e5d6a5b9e5e0c27f00cb9246694ba35f35cbb1db784a9e9df",
-  "apmYml": "name: base\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - copilot\ndependencies:\n  apm:\n    - ./vendor/base\ncompilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section\n",
-  "apmYmlDigest": "sha256:e0738e6c447bd0fecd0dcf7c4453233a10a2305bbb152cd8c59c9b273a05c8a0",
+  "apmYml": "name: base\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - copilot\ndependencies:\n  apm:\n    - ./vendor/base\ncompilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section\n  resolve_links: false\n",
+  "apmYmlDigest": "sha256:7ed87357643aa727d798ef988cde332d5fc2696be115e597fc7a2d39ca90f29c",
   "files": [
     {
       "path": "vendor/base/.github/instructions/drizzle.instructions.md",

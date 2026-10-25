@@ -33,6 +33,8 @@ export interface InstallTarget {
   readonly isPrivate: boolean;
   /** The profile has instructions, tech stacks, or library notes, which go into AGENTS.md. */
   readonly instructions: boolean;
+  /** The profile has docs, which install into `.agents/skills/` and which the instructions link to. */
+  readonly docs: boolean;
   /** The newest published version, which apm.yml pins; `null` before the first publish. */
   readonly version: string | null;
 }
@@ -124,7 +126,8 @@ export function manifestEntries(target: InstallTarget): string {
       "compilation:",
       "  strategy: single-file",
       "  agents_md:",
-      "    mode: managed_section"
+      "    mode: managed_section",
+      "  resolve_links: false"
     );
   }
   return lines.join("\n");
@@ -136,10 +139,32 @@ export function manifestEntries(target: InstallTarget): string {
  * those; pasted steps cannot).
  */
 function targetList(target: InstallTarget): string {
-  return target.targets.length > 0
-    ? target.targets.join(", ")
-    : "claude, codex, copilot, cursor";
+  const targets =
+    target.targets.length > 0
+      ? [...target.targets]
+      : ["claude", "codex", "copilot", "cursor"];
+  // Docs are linked at their copy in .agents/skills/, which every one of these targets but Claude Code installs into.
+  if (
+    target.docs &&
+    targets.every((slug) => !SKILLS_FOLDER_TARGETS.has(slug))
+  ) {
+    targets.push("agent-skills");
+  }
+  return targets.join(", ");
 }
+
+/** The targets that install skills into `.agents/skills/` (`crates/compiler/src/docs.rs`, `DEPLOYING_TARGETS`). */
+const SKILLS_FOLDER_TARGETS: ReadonlySet<string> = new Set([
+  "agent-skills",
+  "all",
+  "antigravity",
+  "codex",
+  "copilot",
+  "cursor",
+  "gemini",
+  "opencode",
+  "windsurf",
+]);
 
 /** A prompt that has an agent install the profile with APM alone. */
 export function apmAgentPrompt(target: InstallTarget): string {

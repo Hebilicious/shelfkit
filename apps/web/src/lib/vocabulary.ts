@@ -26,6 +26,14 @@ export const KINDS: Readonly<Record<ItemKind, KindWords>> = {
     label: "Agent",
     plural: "Agents",
   },
+  doc: {
+    about:
+      "A reference document an instruction links to, such as a glossary or a guide, which the agent reads when it needs it rather than in every session.",
+    installs:
+      "A copy in the profile's docs folder, which the links in AGENTS.md point to.",
+    label: "Doc",
+    plural: "Docs",
+  },
   hook: {
     about:
       "A command the harness runs on agent events, such as before a tool call.",
@@ -101,6 +109,7 @@ export const KIND_ORDER: readonly ItemKind[] = [
   "stack",
   "library",
   "skill",
+  "doc",
   "mcp",
   "agent",
   "hook",
@@ -307,6 +316,13 @@ export const KIND_GUIDES: Readonly<Record<ItemKind, KindGuide>> = {
     slug: "agents",
     what: "A specialised agent with its own role, instructions, and tools.",
   },
+  doc: {
+    example:
+      "A glossary of the domain's words, or a guide to the integration pipeline, that AGENTS.md links to.",
+    gets: "The document, at the same path inside the profile's docs folder: a skill that lists every doc of the profile. Links in AGENTS.md point at that copy, so the agent opens a doc when an instruction sends it there. A link to a file the profile does not hold is left as it is.",
+    slug: "docs",
+    what: "A longer document instructions point to. It costs the agent nothing until it reads it.",
+  },
   hook: {
     example: "Format the repository after the agent edits a file.",
     gets: "A command the harness runs on an event, such as after every edit. It runs code, so APM asks before installing it.",
@@ -375,7 +391,7 @@ export const KIND_GROUPS: readonly {
 }[] = [
   { kinds: ["prompt"], title: "For you" },
   {
-    kinds: ["instructions", "stack", "library", "skill"],
+    kinds: ["instructions", "stack", "library", "skill", "doc"],
     title: "What the agent knows",
   },
   {
@@ -418,6 +434,17 @@ export const PLACES: Readonly<Record<ItemKind, readonly Place[]>> = {
     { agent: "Cursor", path: ".cursor/agents/{id}.md" },
     { agent: "Copilot", path: ".github/agents/{id}.agent.md" },
     { agent: "Codex", path: ".codex/agents/{id}.toml" },
+  ],
+  doc: [
+    {
+      agent:
+        "Codex, Cursor, Copilot, and Claude Code (through AGENTS.md's links)",
+      path: ".agents/skills/<shelf>-<profile>-docs/{path}",
+    },
+    {
+      agent: "Claude Code",
+      path: ".claude/skills/<shelf>-<profile>-docs/{path} (a second copy)",
+    },
   ],
   hook: [
     { agent: "Claude Code", path: ".claude/settings.json" },
@@ -462,10 +489,22 @@ export const PLACES: Readonly<Record<ItemKind, readonly Place[]>> = {
 };
 
 /** The places of one item, with its id filled in. */
-export function placesOf(kind: ItemKind, id: string): Place[] {
+/**
+ * The skill folder a profile's docs install as, `<namespace>-<profile>-docs`, spelled as the compiler spells it
+ * (`crates/compiler/src/docs.rs`, `skill_name`): lowercase letters, digits, and single hyphens, at most 64.
+ */
+export function docsFolder(namespace: string, profile: string): string {
+  const name = `${namespace}-${profile}-docs`
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/gu, "-")
+    .replaceAll(/^-+|-+$/gu, "");
+  return name.slice(0, 64).replace(/-+$/u, "");
+}
+
+export function placesOf(kind: ItemKind, id: string, path = "<path>"): Place[] {
   return PLACES[kind].map((place) => ({
     ...place,
-    path: place.path.replaceAll("{id}", id),
+    path: place.path.replaceAll("{id}", id).replaceAll("{path}", path),
   }));
 }
 

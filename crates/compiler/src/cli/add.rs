@@ -17,7 +17,8 @@
 //! | `skills/<n>/SKILL.md`, `hooks/*.json` | one item each |
 //!
 //! A single `*.prompt.md`, `*.agent.md`, or `*.instructions.md` file yields
-//! one item. Every item is validated with the rest of the shelf before
+//! one item, and any other markdown file a doc whose `path` is where it sits
+//! in its repository, which is how that repository's instructions link to it. Every item is validated with the rest of the shelf before
 //! anything is written, and an id that is not kebab-case is refused rather
 //! than renamed.
 
@@ -37,6 +38,10 @@ struct Found {
     path: String,
     /// The item's content files, relative to its directory.
     files: BTreeMap<String, Vec<u8>>,
+    /// The title, when the file names one (a doc's first heading); else the id.
+    title: Option<String>,
+    /// What the kind adds to the common fields of `item.json` (a doc's `path`).
+    fields: serde_json::Map<String, serde_json::Value>,
 }
 
 /// The files to write into the shelf, relative to its root, and the ids added.
@@ -50,9 +55,14 @@ pub fn import(shelf_root: &Path, target: &Path, source_id: Option<&str>) -> Resu
         .canonicalize()
         .map_err(|error| format!("{}: {error}", target.display()))?;
     let (root, found) = if target.is_file() {
-        let root = target.parent().map(Path::to_path_buf).unwrap_or_default();
-        let name = file_name(&target);
-        (root, vec![single_file(&target, &name)?])
+        let found = single_file(&target, &file_name(&target))?;
+        // A doc's source is its repository, so every doc from one repository shares one source.
+        let root = if found.kind == ItemKind::Doc {
+            repository_of(&target).to_path_buf()
+        } else {
+            target.parent().map(Path::to_path_buf).unwrap_or_default()
+        };
+        (root, vec![found])
     } else {
         (target.clone(), discover(&target)?)
     };
@@ -110,14 +120,18 @@ pub fn import(shelf_root: &Path, target: &Path, source_id: Option<&str>) -> Resu
                 found.id
             ));
         }
-        let item = Item::from_value(serde_json::json!({
+        let mut document = serde_json::json!({
             "id": found.id,
             "kind": found.kind,
-            "title": found.id,
+            "title": found.title.as_deref().unwrap_or(&found.id),
             "description": found.description,
             "source": { "id": source_id, "path": found.path },
-        }))
-        .map_err(|error| format!("{}: {error}", found.path))?;
+        });
+        if let Some(object) = document.as_object_mut() {
+            object.extend(found.fields);
+        }
+        let item =
+            Item::from_value(document).map_err(|error| format!("{}: {error}", found.path))?;
         files.insert(
             format!("{directory}/item.json"),
             item.to_json().into_bytes(),
@@ -215,10 +229,56 @@ fn single_file(path: &Path, name: &str) -> Result<Found, String> {
     if name == "SKILL.md" {
         return skill(root, root.parent().unwrap_or(root));
     }
+    if let Some(stem) = name.strip_suffix(".md") {
+        return doc(path, stem);
+    }
     Err(format!(
-        "{}: a single file must be a `.prompt.md`, `.agent.md`, or `.instructions.md`, or a SKILL.md",
+        "{}: a single file must be a `.prompt.md`, `.agent.md`, or `.instructions.md`, a SKILL.md, or another \
+         markdown file, which becomes a doc",
         path.display()
     ))
+}
+
+/// The repository a file is in: the nearest directory up with a `.git`, else the file's own directory.
+fn repository_of(file: &Path) -> &Path {
+    file.ancestors()
+        .skip(1)
+        .find(|dir| dir.join(".git").exists())
+        .or_else(|| file.parent())
+        .unwrap_or(file)
+}
+
+/// Any other markdown file is a doc. Its `path` is where it sits in its repository (the nearest directory up with a
+/// `.git`), which is how that repository's instructions link to it; its title is its first top-level heading.
+fn doc(file: &Path, stem: &str) -> Result<Found, String> {
+    let id = kebab(stem).ok_or_else(|| {
+        format!(
+            "{}: cannot name a doc after `{stem}`; rename the file to kebab-case to import it",
+            file.display()
+        )
+    })?;
+    let repository = repository_of(file);
+    let bytes = read(file)?;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let (map, body) = frontmatter(&text);
+    let title = body
+        .lines()
+        .find_map(|line| line.strip_prefix("# "))
+        .map(|title| title.trim().to_owned())
+        .filter(|title| !title.is_empty());
+    let path = relative(repository, file);
+    Ok(Found {
+        description: description_of(map.as_ref()),
+        fields: serde_json::Map::from_iter([(
+            "path".to_owned(),
+            serde_json::Value::String(path.clone()),
+        )]),
+        files: BTreeMap::from([("doc.md".to_owned(), bytes)]),
+        id,
+        kind: ItemKind::Doc,
+        path,
+        title,
+    })
 }
 
 fn discover(root: &Path) -> Result<Vec<Found>, String> {
@@ -255,6 +315,8 @@ fn discover(root: &Path) -> Result<Vec<Found>, String> {
             description: String::new(),
             path: ".".to_owned(),
             files: tree(root)?,
+            title: None,
+            fields: serde_json::Map::new(),
         }]);
     }
     for dir in sorted_dirs(&root.join("skills")) {
@@ -276,6 +338,8 @@ fn hooks(dir: &Path, root: &Path) -> Result<Vec<Found>, String> {
                 description: String::new(),
                 path: relative(root, &file),
                 files: BTreeMap::from([("hook.json".to_owned(), read(&file)?)]),
+                title: None,
+                fields: serde_json::Map::new(),
             });
         }
     }
@@ -298,6 +362,8 @@ fn skill(dir: &Path, root: &Path) -> Result<Found, String> {
         description: description_of(map.as_ref()),
         path: relative(root, dir),
         files: tree(dir)?,
+        title: None,
+        fields: serde_json::Map::new(),
     })
 }
 
@@ -326,6 +392,8 @@ fn markdown(kind: ItemKind, id: &str, file: &Path, root: &Path) -> Result<Found,
         description,
         path: relative(root, file),
         files,
+        title: None,
+        fields: serde_json::Map::new(),
     })
 }
 

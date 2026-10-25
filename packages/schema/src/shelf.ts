@@ -16,6 +16,7 @@ export const ItemKindSchema = v.picklist([
   "lsp",
   "library",
   "stack",
+  "doc",
 ]);
 
 /** `sha256-<64 lowercase hex>`: the content address of an item or of a resolved profile. */
@@ -252,6 +253,22 @@ export const ItemSchema = v.variant("kind", [
     docs: v.optional(v.string()),
     kind: v.literal("library"),
     notes: v.optional(v.array(v.string())),
+  }),
+  v.strictObject({
+    ...common,
+    kind: v.literal("doc"),
+    /**
+     * Where it lives in the repository it was written for, which is how instructions link to it: relative, `/`
+     * separated, with no empty, `.`, or `..` segment and nothing a link cannot name plainly. One pattern, as the
+     * catalog's JSON Schema carries it; the Rust model checks the same.
+     */
+    path: v.pipe(
+      v.string(),
+      v.regex(
+        /^(?!(?:.*\/)?\.\.?(?:\/|$))(?:[^/\s#?\\:]+\/)*[^/\s#?\\:]+$/u,
+        "must be a path relative to the repository's root, with no `.` or `..` segment"
+      )
+    ),
   }),
   v.strictObject({
     ...common,

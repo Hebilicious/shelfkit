@@ -1,8 +1,8 @@
 {
   "profile": "default",
   "profileRevision": "sha256-12ebd22a9edafa5b20be2b3390817d9131f8e8c82994fc9b38f1e207ea410360",
-  "apmYml": "name: shelfkit\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - codex\n  - copilot\n  - cursor\ndependencies:\n  apm:\n    - ./vendor/default\ncompilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section\n",
-  "apmYmlDigest": "sha256:c6a4f3ae8b3a65d1ea9193e841efe83d21cea4e6a641a9d63f9092e72e5f2158",
+  "apmYml": "name: shelfkit\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - codex\n  - copilot\n  - cursor\ndependencies:\n  apm:\n    - ./vendor/default\ncompilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section\n  resolve_links: false\n",
+  "apmYmlDigest": "sha256:cc13a18914ed3e34065860e537c3ed952ff8c60e9ff9534891d33370a1411844",
   "files": [
     {
       "path": "vendor/default/.apm/agents/registry-reviewer.agent.md",

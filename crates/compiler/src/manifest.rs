@@ -18,11 +18,13 @@
 //!   does not define, and says so in a note.
 
 use crate::coordinate::{self, Upstream};
+use crate::docs;
 use crate::vendor;
 use crate::yaml::{self, Node};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use shelfkit_core::item::{Lsp, LspTransport, Mcp, RemoteTransport};
+use shelfkit_core::revision::normalize_line_endings;
 use shelfkit_core::secret::SecretValue;
 use shelfkit_core::{
     Error, ErrorKind, Errors, ItemKind, LoadedItem, NoticeCode, Payload, ResolvedProfile, Revision,
@@ -247,6 +249,7 @@ pub(crate) fn render(
         packages: BTreeMap::new(),
         mcp: Vec::new(),
         lsp: Vec::new(),
+        docs: BTreeMap::new(),
         notes: resolved
             .notices
             .iter()
@@ -288,6 +291,8 @@ struct Compiler<'a> {
     mcp: Vec<Node>,
     lsp: Vec<Node>,
     notes: Vec<Note>,
+    /// The profile's docs, by their `path`.
+    docs: BTreeMap<String, docs::Doc>,
 }
 
 impl Compiler<'_> {
@@ -318,6 +323,7 @@ impl Compiler<'_> {
                 self.vendor(loaded);
             }
             Payload::Library(_) | Payload::Stack(_) => self.vendor(loaded),
+            Payload::Doc(doc) => self.doc(loaded, &doc.path),
             _ => {
                 let source = item.source.as_ref();
                 let found = source.map(|source| {
@@ -343,6 +349,63 @@ impl Compiler<'_> {
                 }
             }
         }
+    }
+
+    /// A doc goes into the profile's docs skill (`docs.rs`), by its path; two docs may not share one.
+    fn doc(&mut self, loaded: &LoadedItem, path: &str) {
+        let Some(bytes) = loaded.files.get("doc.md") else {
+            self.fail(
+                loaded,
+                format!("`{}` has no doc.md to compile", loaded.item.id),
+            );
+            return;
+        };
+        if let Some(other) = self.docs.get(path) {
+            let message = format!(
+                "`{}` and `{}` are both the doc at `{path}`; a profile holds one doc per path",
+                other.id, loaded.item.id
+            );
+            self.fail(loaded, message);
+            return;
+        }
+        self.docs.insert(
+            path.to_owned(),
+            docs::Doc {
+                bytes: normalize_line_endings(bytes),
+                description: loaded.item.description.clone(),
+                id: loaded.item.id.clone(),
+                title: loaded.item.title.clone(),
+            },
+        );
+    }
+
+    /// Put the docs skill into the profile's own package, and point the instructions' links to a doc at its copy.
+    fn place_docs(&mut self) {
+        if self.docs.is_empty() {
+            return;
+        }
+        let namespace = self
+            .shelf
+            .manifest
+            .registry
+            .as_ref()
+            .map(|registry| registry.namespace.as_str());
+        let skill = docs::skill_name(namespace, &self.resolved.id);
+        let paths: Vec<String> = self.docs.keys().cloned().collect();
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        for package in self.packages.values_mut() {
+            for (path, bytes) in &mut package.files {
+                if path.starts_with(vendor::INSTRUCTIONS_DIR)
+                    && let Ok(text) = std::str::from_utf8(bytes)
+                {
+                    *bytes = docs::rewrite_links(text, &paths, &skill).into_bytes();
+                }
+            }
+        }
+        let own = self.packages.entry(self.resolved.id.clone()).or_default();
+        own.files.extend(docs::skill_files(&skill, &self.docs));
+        own.items
+            .extend(self.docs.values().map(|doc| doc.id.clone()));
     }
 
     fn reference(&mut self, loaded: &LoadedItem, upstream: &Upstream) {
@@ -461,6 +524,7 @@ impl Compiler<'_> {
     }
 
     fn finish(mut self, shape: &Shape) -> Result<Rendered, Errors> {
+        self.place_docs();
         let profile_path = self.resolved.path.clone();
         let settings = &self.resolved.compile;
 
@@ -577,9 +641,18 @@ impl Compiler<'_> {
                 ("description".to_owned(), Node::string(description)),
             ],
         };
-        // A package does not choose its consumer's targets.
+        // A package does not choose its consumer's targets. Docs are linked at their copy in `.agents/skills/`, so
+        // some target must install skills there (`docs.rs`).
         if matches!(shape, Shape::Repository) && !settings.targets.is_empty() {
-            root.push(("targets".to_owned(), Node::strings(&settings.targets)));
+            let mut targets = settings.targets.clone();
+            if !self.docs.is_empty()
+                && !targets
+                    .iter()
+                    .any(|target| docs::DEPLOYING_TARGETS.contains(&target.as_str()))
+            {
+                targets.push("agent-skills".to_owned());
+            }
+            root.push(("targets".to_owned(), Node::strings(&targets)));
         }
         // APM 0.33.0 refuses any key in a registry entry but `url`.
         if let Some((name, url)) = self.registries.iter().next() {
@@ -644,7 +717,8 @@ pub const AGENTS_MD_MARKERS: (&str, &str) = ("<!-- apm:start -->", "<!-- apm:end
 
 /// The `compilation` settings of a repository whose instructions go into AGENTS.md: every instruction in the one
 /// root file (a scoped one as a section naming its files, not a file of its own in a source directory), written
-/// between [`AGENTS_MD_MARKERS`] so a hand-written AGENTS.md keeps everything outside them.
+/// between [`AGENTS_MD_MARKERS`] so a hand-written AGENTS.md keeps everything outside them, with their links left
+/// as links.
 pub fn compilation() -> Node {
     Node::Map(vec![
         ("strategy".to_owned(), Node::string("single-file")),
@@ -652,6 +726,8 @@ pub fn compilation() -> Node {
             "agents_md".to_owned(),
             Node::Map(vec![("mode".to_owned(), Node::string("managed_section"))]),
         ),
+        // On, `apm compile` pastes every linked document it finds into AGENTS.md; the links are for the agent.
+        ("resolve_links".to_owned(), Node::Bool(false)),
     ])
 }
 

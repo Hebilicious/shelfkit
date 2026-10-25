@@ -303,7 +303,7 @@ fn an_existing_manifest_keeps_its_own_declarations_and_conflicts_follow_on_confl
         manifest,
         "name: my-app\nversion: \"2.0.0\"\ntargets:\n  - claude\n  - copilot\ndependencies:\n  apm:\n    \
          - acme/standards#v1\n    - ./vendor/base\ncompilation:\n  strategy: single-file\n  agents_md:\n    \
-         mode: managed_section\n"
+         mode: managed_section\n  resolve_links: false\n"
     );
 }
 
@@ -712,6 +712,23 @@ fn apm_install_accepts_compiled_manifests_when_apm_is_present() {
         ),
         ("items/prompts/hello/prompt.md".to_owned(), "Say hello.\n".to_owned()),
         (
+            "items/instructions/house-rules/item.json".to_owned(),
+            r#"{ "id": "house-rules", "kind": "instructions", "title": "House rules", "requires": ["glossary"] }"#
+                .to_owned(),
+        ),
+        (
+            "items/instructions/house-rules/AGENTS.fragment.md".to_owned(),
+            "Use the words in [the glossary](docs/GLOSSARY.md#terms).\n".to_owned(),
+        ),
+        (
+            "items/docs/glossary/item.json".to_owned(),
+            r#"{ "id": "glossary", "kind": "doc", "title": "Glossary", "path": "docs/GLOSSARY.md" }"#.to_owned(),
+        ),
+        (
+            "items/docs/glossary/doc.md".to_owned(),
+            "# Glossary\n\n- **Widget**: the thing we sell.\n".to_owned(),
+        ),
+        (
             "items/skills/ask-first/item.json".to_owned(),
             r#"{ "id": "ask-first", "kind": "skill", "title": "Ask first" }"#.to_owned(),
         ),
@@ -723,7 +740,7 @@ fn apm_install_accepts_compiled_manifests_when_apm_is_present() {
         ),
         (
             "profiles/mixed.json".to_owned(),
-            r#"{ "id": "mixed", "title": "Mixed", "items": ["conventions", "frontend-design", "echo", "hello", "ask-first"],
+            r#"{ "id": "mixed", "title": "Mixed", "items": ["conventions", "frontend-design", "echo", "hello", "ask-first", "house-rules"],
                  "compile": { "targets": ["claude", "codex"] } }"#
                 .to_owned(),
         ),
@@ -764,6 +781,23 @@ fn apm_install_accepts_compiled_manifests_when_apm_is_present() {
         "{codex}"
     );
     assert!(repo.join(".claude/skills/ask-first/SKILL.md").is_file());
+
+    // A doc installs in the profile's docs skill, and AGENTS.md links to that copy rather than pasting it in.
+    let agents =
+        std::fs::read_to_string(repo.join("AGENTS.md")).expect("no AGENTS.md was compiled");
+    assert!(
+        agents.contains("[the glossary](.agents/skills/mixed-docs/docs/GLOSSARY.md#terms)"),
+        "{agents}"
+    );
+    assert!(
+        !agents.contains("the thing we sell"),
+        "the doc was pasted into AGENTS.md:\n{agents}"
+    );
+    assert!(
+        repo.join(".agents/skills/mixed-docs/docs/GLOSSARY.md")
+            .is_file()
+    );
+    assert!(repo.join(".agents/skills/mixed-docs/SKILL.md").is_file());
 }
 
 /// A minimal OpenAPM registry on loopback, enough for `apm install`: the

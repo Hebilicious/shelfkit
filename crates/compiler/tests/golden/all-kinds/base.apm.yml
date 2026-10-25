@@ -10,3 +10,4 @@ compilation:
   strategy: single-file
   agents_md:
     mode: managed_section
+  resolve_links: false

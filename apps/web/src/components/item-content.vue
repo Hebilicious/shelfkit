@@ -158,6 +158,10 @@ const recommends = computed(() =>
         <MarkdownView :source="convention.body" />
       </section>
     </template>
+    <p v-else-if='item?.kind === "doc"' class="small muted" data-testid="doc-path">
+      Instructions link to it as <code>{{ item.path }}</code>. It installs with the profile's other docs, and those
+      links are pointed at its copy.
+    </p>
     <template v-else-if='item?.kind === "instructions" && (item.sections?.length ?? 0) > 0'>
       <section v-for="(section, at) in item.sections ?? []" :key="at" class="stack">
         <h2>{{ section.heading }}</h2>
