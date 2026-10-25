@@ -5,6 +5,10 @@ name: Release the CLI
 # `/install.sh` and `/install.ps1` (apps/worker/src/install-script.ts) download from the release of the version the
 # deployment was built with. A version with a pre-release part (`0.1.0-rc.1`) is published as a pre-release.
 #
+# Then, on each of those platforms, `smoke` runs the very script a deployment serves to install the published binary,
+# and installs ShelfKit's own shelf with it, through APM, from `shelfkit serve`. The macOS and Windows builds also run
+# the keychain test, against the OS keychain the CLI keeps keys in.
+#
 # The release is created with GITHUB_TOKEN: this workflow opens no pull request and pushes no tag (the tag that
 # started it already exists), which are the two things a GITHUB_TOKEN write cannot do usefully.
 on:
@@ -24,9 +28,9 @@ jobs:
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
           # One macOS runner builds both architectures: Apple's toolchain cross-compiles between them.
-          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: aarch64-apple-darwin, os: macos-15, keychain: true }
           - { target: x86_64-apple-darwin, os: macos-15 }
-          - { target: x86_64-pc-windows-msvc, os: windows-2022 }
+          - { target: x86_64-pc-windows-msvc, os: windows-2022, keychain: true }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -51,6 +55,12 @@ jobs:
       - name: Build
         shell: bash
         run: cargo build --release --locked --package shelfkit-compiler --bin shelfkit --target "${{ matrix.target }}"
+
+      # Linux's Secret Service needs a desktop session, which runners lack, so only macOS and Windows run it.
+      - name: Keep, read, and remove a key in the OS keychain
+        if: matrix.keychain
+        shell: bash
+        run: cargo test --release --locked --package shelfkit-compiler --target "${{ matrix.target }}" --test keychain -- --ignored
 
       - name: Package
         shell: bash
@@ -98,3 +108,64 @@ jobs:
             --title "shelfkit $GITHUB_REF_NAME" \
             --notes "The \`shelfkit\` CLI. Install it with \`curl -fsSL https://<deployment>/install.sh | sh\`, or in PowerShell \`irm https://<deployment>/install.ps1 | iex\`." \
             $prerelease
+
+  smoke:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, script: install.sh }
+          - { os: ubuntu-22.04-arm, script: install.sh }
+          - { os: macos-15, script: install.sh }
+          - { os: macos-15-intel, script: install.sh }
+          - { os: windows-2022, script: install.ps1 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Node runs the script printer as TypeScript, with no install; uv runs the pinned APM.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Print the install script a deployment serves
+        shell: bash
+        run: node apps/worker/scripts/install-script.ts "${{ matrix.script }}" "${GITHUB_REF_NAME#v}" https://smoke.invalid > "$RUNNER_TEMP/${{ matrix.script }}"
+
+      - name: Install the CLI with it (sh)
+        if: matrix.script == 'install.sh'
+        shell: bash
+        env:
+          SHELFKIT_INSTALL_DIR: ${{ runner.temp }}/bin
+        run: sh "$RUNNER_TEMP/install.sh"
+
+      - name: Install the CLI with it (PowerShell, as `irm | iex` runs it)
+        if: matrix.script == 'install.ps1'
+        shell: pwsh
+        env:
+          SHELFKIT_INSTALL_DIR: ${{ runner.temp }}\bin
+        run: Get-Content -Raw "$env:RUNNER_TEMP\install.ps1" | Invoke-Expression
+
+      - name: The installed CLI is this release
+        shell: bash
+        run: |
+          bin="$RUNNER_TEMP/bin"
+          echo "$bin" >> "$GITHUB_PATH"
+          test "$("$bin/shelfkit" --version)" = "shelfkit ${GITHUB_REF_NAME#v}"
+
+      - name: Install ShelfKit's own shelf with it, from shelfkit serve
+        shell: bash
+        run: |
+          shelfkit --shelf shelf serve --port 7979 > "$RUNNER_TEMP/serve.log" 2>&1 &
+          for _ in $(seq 1 30); do grep -q "listening on" "$RUNNER_TEMP/serve.log" && break; sleep 1; done
+          repo="$RUNNER_TEMP/my-app"
+          mkdir -p "$repo" && cd "$repo"
+          shelfkit install hebilicious/default --url http://127.0.0.1:7979
+          grep -q "<!-- apm:start -->" AGENTS.md
+          grep -q "The crates are the product" AGENTS.md
+          test "$(cat CLAUDE.md)" = "@AGENTS.md"
+          test -f .claude/skills/update-goldens/SKILL.md
+          test -f .agents/skills/update-goldens/SKILL.md
+          test ! -e .claude/rules && test ! -e .cursor/rules && test ! -e .github/instructions

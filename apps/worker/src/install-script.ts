@@ -124,17 +124,26 @@ const SCRIPTS: ReadonlyMap<
   ["/install.ps1", powershellScript],
 ]);
 
+/** The script `/<name>` serves for a deployment at `origin`, or `null` when there is none of that name. */
+export function installScript(
+  name: string,
+  version: string,
+  origin: string
+): string | null {
+  return SCRIPTS.get(`/${name}`)?.(version, origin) ?? null;
+}
+
 /** The install script the request's path names, or `null` when it names none. */
 export function installScriptRoute(
   request: Request,
   version: string
 ): Response | null {
   const url = new URL(request.url);
-  const script = SCRIPTS.get(url.pathname);
-  if (script === undefined) {
+  const script = installScript(url.pathname.slice(1), version, url.origin);
+  if (script === null) {
     return null;
   }
-  return new Response(script(version, url.origin), {
+  return new Response(script, {
     headers: {
       "cache-control": "public, max-age=300",
       "content-type": "text/plain; charset=utf-8",

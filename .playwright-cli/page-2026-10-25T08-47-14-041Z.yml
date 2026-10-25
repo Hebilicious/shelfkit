@@ -1,0 +1,98 @@
+- generic [ref=e3]:
+    - banner [ref=e4]:
+        - link "ShelfKit" [ref=e5] [cursor=pointer]:
+            - /url: /
+        - button "? Keys" [ref=e6] [cursor=pointer]:
+            - generic [ref=e7]: "?"
+            - text: Keys
+        - link "Sign in" [ref=e8] [cursor=pointer]:
+            - /url: /sign-in
+    - generic [ref=e9]:
+        - navigation "Shelf sections" [ref=e10]:
+            - strong [ref=e11]: jarettes-box
+            - link "Shelf" [ref=e12] [cursor=pointer]:
+                - /url: /shelves/jarettes-box
+            - link "Profiles" [ref=e13] [cursor=pointer]:
+                - /url: /shelves/jarettes-box/profiles
+            - link "Repositories" [ref=e14] [cursor=pointer]:
+                - /url: /shelves/jarettes-box/activity
+            - link "Import" [ref=e15] [cursor=pointer]:
+                - /url: /shelves/jarettes-box/import
+            - link "Settings" [ref=e16] [cursor=pointer]:
+                - /url: /shelves/jarettes-box/settings
+            - generic "Reconnecting to receive changes made elsewhere" [ref=e17]: ○ connecting
+        - generic [ref=e18]:
+            - navigation "What the shelf holds" [ref=e19]:
+                - link "Everything 0" [ref=e20] [cursor=pointer]:
+                    - /url: /shelves/jarettes-box
+                    - generic [ref=e21]: Everything
+                    - generic [ref=e22]: "0"
+                - generic [ref=e23]:
+                    - heading "For you" [level=2] [ref=e24]
+                    - link "Prompts 0" [ref=e25] [cursor=pointer]:
+                        - /url: /shelves/jarettes-box/prompts
+                        - generic [ref=e26]: Prompts
+                        - generic [ref=e27]: "0"
+                - generic [ref=e28]:
+                    - heading "What the agent knows" [level=2] [ref=e29]
+                    - link "Instructions 0" [ref=e30] [cursor=pointer]:
+                        - /url: /shelves/jarettes-box/instructions
+                        - generic [ref=e31]: Instructions
+                        - generic [ref=e32]: "0"
+                    - link "Tech stacks 0" [ref=e33] [cursor=pointer]:
+                        - /url: /shelves/jarettes-box/tech-stacks
+                        - generic [ref=e34]: Tech stacks
+                        - generic [ref=e35]: "0"
+                    - link "Library notes 0" [ref=e36] [cursor=pointer]:
+                        - /url: /shelves/jarettes-box/library-notes
+                        - generic [ref=e37]: Library notes
+                        - generic [ref=e38]: "0"
+                    - link "Skills 0" [ref=e39] [cursor=pointer]:
+                        - /url: /shelves/jarettes-box/skills
+                        - generic [ref=e40]: Skills
+                        - generic [ref=e41]: "0"
+                - generic [ref=e42]:
+                    - heading "What the agent can use" [level=2] [ref=e43]
+                    - link "MCP servers 0" [ref=e44] [cursor=pointer]:
+                        - /url: /shelves/jarettes-box/mcp-servers
+                        - generic [ref=e45]: MCP servers
+                        - generic [ref=e46]: "0"
+                    - link "Agents 0" [ref=e47] [cursor=pointer]:
+                        - /url: /shelves/jarettes-box/agents
+                        - generic [ref=e48]: Agents
+                        - generic [ref=e49]: "0"
+                    - link "Hooks 0" [ref=e50] [cursor=pointer]:
+                        - /url: /shelves/jarettes-box/hooks
+                        - generic [ref=e51]: Hooks
+                        - generic [ref=e52]: "0"
+                    - link "Language servers 0" [ref=e53] [cursor=pointer]:
+                        - /url: /shelves/jarettes-box/language-servers
+                        - generic [ref=e54]: Language servers
+                        - generic [ref=e55]: "0"
+                    - link "Plugins 0" [ref=e56] [cursor=pointer]:
+                        - /url: /shelves/jarettes-box/plugins
+                        - generic [ref=e57]: Plugins
+                        - generic [ref=e58]: "0"
+            - main [ref=e59]:
+                - heading "jarettes-box" [level=1] [ref=e61]
+                - list "How a shelf works" [ref=e62]:
+                    - listitem [ref=e63]:
+                        - strong [ref=e64]: Collect
+                        - generic [ref=e65]: Prompts, skills, instructions and MCP servers your coding agents should have, kept here.
+                    - listitem [ref=e66]:
+                        - strong [ref=e67]: Pick
+                        - generic [ref=e68]:
+                            - text: A
+                            - link "profile" [ref=e69] [cursor=pointer]:
+                                - /url: /shelves/jarettes-box/profiles
+                            - text: is the set one kind of project gets.
+                    - listitem [ref=e70]:
+                        - strong [ref=e71]: Install
+                        - generic [ref=e72]:
+                            - text: ShelfKit writes the profile into a repository's
+                            - code [ref=e73]: apm.yml
+                            - text: ", and"
+                            - code [ref=e74]: apm install
+                            - text: sets up Claude, Codex, Copilot or Cursor with it.
+                - searchbox "Search the shelf" [ref=e76]
+                - paragraph [ref=e77]: Loading…

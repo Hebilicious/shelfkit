@@ -130,6 +130,8 @@ enum Command {
     /// `0.0.0+sha256.<revision>.format<N>` when it has none. The three Registry HTTP API endpoints are served at the root:
     /// `GET /v1/packages/{owner}/{repo}/versions`, `GET .../versions/{version}/download`, and `PUT
     /// .../versions/{version}` (tar.gz as application/gzip only; a version is immutable, so a repeat PUT is 409).
+    /// They are served under `/apm` too, as a hosted deployment serves them, so `shelfkit install <namespace>/<profile>
+    /// --url http://127.0.0.1:<port>` installs from this server.
     /// Reads are anonymous when the shelf is public (`registry.public`, or --public / --private). Keys are given as
     /// `SCOPES=KEY`, scopes comma-separated from `read`, `read:{owner}/{repo}`, `publish:{owner}/{repo}`, and
     /// `publish:{owner}/*`, with --key or in SHELFKIT_SERVE_KEYS (whitespace-separated; prefer it, since arguments are
