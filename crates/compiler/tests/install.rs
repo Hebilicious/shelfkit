@@ -408,8 +408,20 @@ fn the_newest_version_is_pinned_and_installing_again_moves_the_pin() {
     );
 
     *machine.newest.borrow_mut() = "1.1.0";
+    std::fs::write(repo.join("apm.lock.yaml"), "lockfile_version: '2'\n").unwrap();
+    machine.ran.borrow_mut().clear();
     let again = shelfkit(&repo, &machine, &["install", "team/web", "--url", URL]);
     assert_eq!(again.code, 0, "{}", again.stderr);
+    let runs: Vec<String> = machine
+        .ran
+        .borrow()
+        .iter()
+        .map(|(args, _)| args[3..].join(" "))
+        .collect();
+    assert!(
+        runs.contains(&"update --yes team/web".to_owned()),
+        "the locked build is replaced: {runs:?}"
+    );
     let manifest = std::fs::read_to_string(repo.join("apm.yml")).unwrap();
     assert!(
         manifest.contains("      version: \"1.1.0\"\n"),

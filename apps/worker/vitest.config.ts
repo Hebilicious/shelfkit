@@ -90,6 +90,12 @@ const provide = {
   ownShelf: shelfFiles(path.join(repository, "shelf")),
 };
 
+/**
+ * The first request of each test file loads the Worker's modules into workerd, about 5 s on its own and more while the
+ * rest of the gate runs beside it; Vitest's default 5 s (10 s for a hook) leaves no room for that.
+ */
+const timeouts = { hookTimeout: 60_000, testTimeout: 60_000 };
+
 /** The tests that need GitHub sign-in enabled; every other test runs as a default deployment, without it. */
 const GITHUB_TESTS = ["test/github.test.ts"];
 
@@ -113,6 +119,7 @@ export default defineConfig({
           include: ["test/**/*.test.ts"],
           name: "default",
           provide,
+          ...timeouts,
         },
       },
       {
@@ -122,7 +129,7 @@ export default defineConfig({
             wrangler: { configPath: "./wrangler.jsonc" },
           }),
         ],
-        test: { include: GITHUB_TESTS, name: "github", provide },
+        test: { include: GITHUB_TESTS, name: "github", provide, ...timeouts },
       },
     ],
   },

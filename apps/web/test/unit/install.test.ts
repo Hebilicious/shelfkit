@@ -88,7 +88,15 @@ describe("installing a profile with APM alone", () => {
     const steps = apmTerminalSteps(withRules);
     expect(steps).toContain("<!-- apm:start -->");
     expect(steps).toContain("@AGENTS.md");
-    expect(steps.trimEnd().endsWith("apm compile --target codex")).toBeTruthy();
+    expect(steps).toContain(
+      "\nuvx --from apm-cli==0.33.0 apm compile --target codex\n"
+    );
+  });
+
+  it("says how to move to a newer version later, which apm install alone does not", () => {
+    expect(apmTerminalSteps(target)).toContain(
+      "apm update --yes hebilicious/default"
+    );
   });
 
   it("compiles only a profile that has instructions", () => {

@@ -84,10 +84,14 @@ pub fn token_variable(registry: &str) -> String {
 /// `shelfkit install`. Exits with APM's own code when an APM step fails.
 pub fn install(ctx: &mut Context<'_>, request: &InstallRequest<'_>) -> u8 {
     let repo = absolute(ctx, request.repo);
+    let mut moved = None;
     if let Some(profile) = request.profile {
-        if let Err(message) = add_profile(ctx, &repo, profile, request.url) {
-            let _ = writeln!(ctx.stderr, "shelfkit: {message}");
-            return 1;
+        match add_profile(ctx, &repo, profile, request.url) {
+            Ok(pin_moved) => moved = pin_moved,
+            Err(message) => {
+                let _ = writeln!(ctx.stderr, "shelfkit: {message}");
+                return 1;
+            }
         }
     } else if !repo.join(APM_YML).is_file() {
         let _ = writeln!(
@@ -98,19 +102,20 @@ pub fn install(ctx: &mut Context<'_>, request: &InstallRequest<'_>) -> u8 {
         );
         return 1;
     }
-    match run_apm(ctx, &repo, request.apm_args) {
+    match run_apm(ctx, &repo, request.apm_args, moved.as_deref()) {
         Ok(()) => 0,
         Err(code) => code,
     }
 }
 
-/// Check the profile is published and readable, then add it to the repository's apm.yml.
+/// Check the profile is published and readable, then add it to the repository's apm.yml. Returns the profile's
+/// coordinate when apm.yml already pinned another version of it, which the lockfile still holds.
 fn add_profile(
     ctx: &mut Context<'_>,
     repo: &Path,
     profile: &str,
     url: Option<&str>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let wanted = ProfileRef::parse(profile)?;
     let url = deployment(ctx.system, url)?;
     let key = key_for(ctx.system, &url)?;
@@ -130,7 +135,7 @@ fn add_profile(
             "apm.yml already installs {}@{version}, its newest version, from {url}",
             wanted.coordinate()
         );
-        return Ok(());
+        return Ok(None);
     }
     std::fs::write(&path, &text).map_err(|error| format!("{}: {error}", path.display()))?;
     let _ = writeln!(
@@ -145,7 +150,12 @@ fn add_profile(
         wanted.shelf,
         wanted.coordinate()
     );
-    Ok(())
+    let pinned = existing
+        .as_deref()
+        .and_then(|text| pinned_version(text, &wanted.coordinate()));
+    Ok(pinned
+        .is_some_and(|pinned| pinned != version)
+        .then(|| wanted.coordinate()))
 }
 
 /// The key to send `url`: `SHELFKIT_KEY`, else the one `shelfkit login` keeps; `None` for a public shelf's reader
@@ -380,6 +390,20 @@ fn uses_a_harness(repo: &Path) -> bool {
         .any(|file| repo.join(file).exists())
 }
 
+/// The version apm.yml pins the registry dependency `coordinate` to, if it has one.
+fn pinned_version(manifest: &str, coordinate: &str) -> Option<String> {
+    let manifest = Node::parse(manifest).ok()?;
+    let Some(Node::Seq(entries)) = manifest.get("dependencies")?.get("apm") else {
+        return None;
+    };
+    entries
+        .iter()
+        .find(|entry| entry.get("id").and_then(Node::as_str) == Some(coordinate))
+        .and_then(|entry| entry.get("version"))
+        .and_then(Node::as_str)
+        .map(str::to_owned)
+}
+
 /// Every ShelfKit registry apm.yml names, with the deployment it is on: `(name, deployment URL)`. A ShelfKit
 /// registry is a deployment's `/apm`.
 fn shelfkit_registries(manifest: &Node) -> Vec<(String, String)> {
@@ -432,7 +456,14 @@ fn apm_step(
 }
 
 /// Configure APM for the registries apm.yml names, install, and compile the instructions into AGENTS.md.
-fn run_apm(ctx: &mut Context<'_>, repo: &Path, apm_args: &[String]) -> Result<(), u8> {
+/// `moved` names a dependency whose pin changed: APM 0.33 keeps a locked build that still satisfies the pin by
+/// semver, which ignores build metadata, so moving from one generated `0.0.0+…` version to another takes `apm update`.
+fn run_apm(
+    ctx: &mut Context<'_>,
+    repo: &Path,
+    apm_args: &[String],
+    moved: Option<&str>,
+) -> Result<(), u8> {
     let runner = Runner::resolve(ctx.system);
     if runner == Runner::Missing {
         let _ = writeln!(
@@ -498,6 +529,15 @@ fn run_apm(ctx: &mut Context<'_>, repo: &Path, apm_args: &[String]) -> Result<()
     let mut args = vec!["install"];
     args.extend(apm_args.iter().map(String::as_str));
     apm_step(ctx, &runner, &args, repo, &env)?;
+    if let Some(coordinate) = moved
+        && repo.join("apm.lock.yaml").is_file()
+    {
+        let _ = writeln!(
+            ctx.stderr,
+            "APM keeps the build its lockfile holds while it matches the pin by semver, so it moves to the new one with:"
+        );
+        apm_step(ctx, &runner, &["update", "--yes", coordinate], repo, &env)?;
+    }
     if repo.join("apm.lock.yaml").is_file() {
         let _ = writeln!(ctx.stderr, "apm.lock.yaml written by APM");
     }

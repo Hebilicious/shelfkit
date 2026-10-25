@@ -76,14 +76,15 @@ export function cliTerminalSteps(target: InstallTarget): string {
     );
   }
   lines.push(
-    "# In the repository: adds the profile to apm.yml, and APM installs it.",
+    "# In the repository: adds the profile to apm.yml, and APM installs it. It also turns on",
+    "# APM's registry support in APM's settings for this computer.",
     cliCommand(target)
   );
   return lines.join("\n");
 }
 
 const COMMIT_STEP =
-  "Tell me which files were written. Commit apm.yml, apm.lock.yaml, and those files, but do not edit the installed files: the next install writes them again from the shelf.";
+  "Tell me which files were written. Commit them with apm.yml, apm.lock.yaml, and .gitignore (where APM keeps apm_modules/ out of git), but do not edit the installed files: the next install writes them again from the shelf.";
 
 /** A prompt that has an agent install the CLI if it is missing, then the profile with it. */
 export function cliAgentPrompt(target: InstallTarget): string {
@@ -91,7 +92,7 @@ export function cliAgentPrompt(target: InstallTarget): string {
     `Install the ShelfKit profile "${target.title}" (${target.coordinate}) into this repository with the ShelfKit CLI.`,
     "",
     `1. If \`shelfkit --version\` fails, install the CLI: \`curl -fsSL ${target.origin}/install.sh | sh\` (on Windows, in PowerShell: \`irm ${target.origin}/install.ps1 | iex\`). It goes into ~/.local/bin; when that is not on PATH, run it as \`~/.local/bin/shelfkit\`.`,
-    `2. At the repository root, run \`${cliCommand(target)}\`. It adds the profile to apm.yml, keeping what is already there, and runs APM, which writes the files each agent reads.`,
+    `2. At the repository root, run \`${cliCommand(target)}\` (as \`~/.local/bin/shelfkit\` if step 1 put it off PATH). It adds the profile to apm.yml, keeping what is already there, and runs APM, which writes the files each agent reads. It also turns on APM's registry support in APM's settings for this computer${target.isPrivate ? ", and records the shelf's registry there" : ""}.`,
   ];
   if (target.isPrivate) {
     lines.push(
@@ -207,5 +208,11 @@ export function apmTerminalSteps(target: InstallTarget): string {
       `${APM} ${COMPILE}`
     );
   }
+  lines.push(
+    "",
+    "# Later, to move to a newer version: set `version:` in apm.yml to the one this page shows, then",
+    `#   ${APM} update --yes ${target.coordinate}${target.instructions ? ` && ${APM} ${COMPILE}` : ""}`,
+    "# (apm install alone keeps the build apm.lock.yaml holds)."
+  );
   return lines.join("\n");
 }
