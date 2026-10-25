@@ -54,6 +54,7 @@ const TreeSchema = v.object({
   sha: v.string(),
   tree: v.array(
     v.object({
+      mode: v.optional(v.string()),
       path: v.string(),
       sha: v.string(),
       size: v.optional(v.number()),
@@ -63,9 +64,14 @@ const TreeSchema = v.object({
   truncated: v.optional(v.boolean()),
 });
 
+/** The Git file mode of a symbolic link. */
+const SYMLINK_MODE = "120000";
+
 export interface TreeEntry {
   /** Relative to the repository root. */
   readonly path: string;
+  /** A blob that is a symbolic link: its content is the path it points to, not a file. */
+  readonly symlink?: boolean;
   readonly sha: string;
   readonly type: "blob" | "tree";
   readonly size: number;
@@ -128,18 +134,20 @@ export class GitHub {
         `${url}: GitHub truncated the listing; import a narrower \`path\``
       );
     }
-    return tree.tree.flatMap((entry) =>
-      entry.type === "blob" || entry.type === "tree"
-        ? [
-            {
-              path: prefix === "" ? entry.path : `${prefix}/${entry.path}`,
-              sha: entry.sha,
-              size: entry.size ?? 0,
-              type: entry.type,
-            },
-          ]
-        : []
-    );
+    return tree.tree.flatMap((entry): TreeEntry[] => {
+      if (entry.type !== "blob" && entry.type !== "tree") {
+        return [];
+      }
+      const listed: TreeEntry = {
+        path: prefix === "" ? entry.path : `${prefix}/${entry.path}`,
+        sha: entry.sha,
+        size: entry.size ?? 0,
+        type: entry.type,
+      };
+      return [
+        entry.mode === SYMLINK_MODE ? { ...listed, symlink: true } : listed,
+      ];
+    });
   }
 
   /**

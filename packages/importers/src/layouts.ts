@@ -11,6 +11,11 @@
  * | `plugin.json` with an Agent Plugin schema  | one plugin                                |
  * | a marketplace with inline `mcpServers`     | one `mcp` item per server                 |
  * | one `*.prompt.md`, `*.instructions.md`, or `*.agent.md` | one item pinned to that file |
+ * | a root `AGENTS.md`, and the markdown files it links to | one `instructions` item, and one `doc` per file |
+ * | one other `*.md` file                      | one `doc`                                  |
+ *
+ * The last two rows are ShelfKit's, not APM's: APM has no primitive for either, and the adapter finds them
+ * (`./docs.ts`), because they need files read.
  *
  * A shelf never rewrites a package's layout: each artifact keeps the path it has upstream, and that path is what the
  * compiled `apm.yml` pins.
@@ -34,6 +39,10 @@ export interface Artifact {
   readonly name: string;
   /** For a skill: every file under its directory. */
   readonly files?: readonly TreeEntry[];
+  /** A title the file states (a doc's or an AGENTS.md's first heading); otherwise one is made from `name`. */
+  readonly title?: string;
+  /** The keys of the artifacts it links to (the docs an AGENTS.md or a doc links to). */
+  readonly links?: readonly string[];
 }
 
 const FILE_KINDS: readonly [string, ItemKind][] = [

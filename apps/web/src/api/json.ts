@@ -141,6 +141,8 @@ const CandidateSchema = v.looseObject({
   licenseId: v.optional(v.string()),
   linkOnly: v.boolean(),
   path: v.optional(v.string()),
+  /** The keys of the candidates it links to (the docs an AGENTS.md links to). */
+  requires: v.optional(v.array(v.string())),
   title: v.string(),
   upstream: v.optional(
     v.looseObject({

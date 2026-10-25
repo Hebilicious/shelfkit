@@ -75,6 +75,7 @@ const TreeSchema = v.object({
   sha: v.string(),
   tree: v.array(
     v.object({
+      mode: v.optional(v.string()),
       path: v.string(),
       sha: v.string(),
       size: v.optional(v.number()),
@@ -98,16 +99,19 @@ function kept(
         LICENCE.test(entry.path) ||
         requested.some((other) => other.includes(`/${entry.path}`))
     )
-    .map((entry): Json =>
-      entry.size === undefined
-        ? { path: entry.path, sha: entry.sha, type: entry.type }
-        : {
-            path: entry.path,
-            sha: entry.sha,
-            size: entry.size,
-            type: entry.type,
-          }
-    );
+    .map((entry): Json => {
+      const listed: Record<string, Json> =
+        entry.size === undefined
+          ? { path: entry.path, sha: entry.sha, type: entry.type }
+          : {
+              path: entry.path,
+              sha: entry.sha,
+              size: entry.size,
+              type: entry.type,
+            };
+      // Only a symbolic link's mode is kept: it is the only one the adapter reads.
+      return entry.mode === "120000" ? { mode: entry.mode, ...listed } : listed;
+    });
   return json.truncated === undefined
     ? { sha: json.sha, tree }
     : { sha: json.sha, tree, truncated: json.truncated };
@@ -116,7 +120,7 @@ function kept(
 /**
  * Keep a recorded GitHub answer to what the adapters read, so fixtures stay small: a repository's default branch
  * and licence, a commit's SHA, and, in a one-level directory listing, its directories, its licence files, and the
- * files some other request named. A recursive listing (one artifact's directory) is kept whole.
+ * files some other request named, with a mode only for a symbolic link. A recursive listing (one artifact's directory) is kept whole.
  */
 function trimmed(url: string, json: Json, requested: readonly string[]): Json {
   if (!url.startsWith("https://api.github.com/repos/")) {

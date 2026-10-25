@@ -168,6 +168,15 @@ async function index(): Promise<void> {
   }
 }
 
+/** The titles of the candidates one links to: imported with it, it requires them, so a profile that selects it gets them. */
+function linkedTitles(candidates: readonly ImportCandidate[], candidate: ImportCandidate): string {
+  const linked = new Set(candidate.requires);
+  return candidates
+    .filter((entry) => linked.has(entry.key))
+    .map((entry) => entry.title)
+    .join(", ");
+}
+
 function when(timestamp: string): string {
   return new Date(timestamp).toLocaleString();
 }
@@ -272,6 +281,12 @@ function when(timestamp: string): string {
               <td>
                 <span class="badge">{{ KINDS[candidate.kind].label }}</span> {{ candidate.title }}
                 <div class="small muted">{{ candidate.description ?? candidate.path ?? "" }}</div>
+                <div
+                  v-if='linkedTitles(readCandidates(job.candidates), candidate) !== ""'
+                  class="small muted"
+                >
+                  Links to {{ linkedTitles(readCandidates(job.candidates), candidate) }}. Tick those too and they come with it.
+                </div>
               </td>
               <td><input
                   v-model="draftFor(job.id, candidate).id"
