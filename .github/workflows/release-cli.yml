@@ -128,6 +128,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
+          # Nothing is installed here, and the package-manager cache needs pnpm on the runner.
+          package-manager-cache: false
       - uses: astral-sh/setup-uv@v6
 
       - name: Print the install script a deployment serves
