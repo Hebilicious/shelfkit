@@ -1,6 +1,6 @@
 # ShelfKit
 
-A registry and curation layer for AI agent context, built on [APM](https://github.com/microsoft/apm). **`docs/PRD.md` is the specification and the source of truth for scope. Read it before writing code.**
+A registry and curation layer for AI agent context, built on [APM](https://github.com/microsoft/apm). **[`docs/PRD.md`](docs/PRD.md) is the specification and the source of truth for scope. Read it before writing code.**
 
 ## Commands
 
