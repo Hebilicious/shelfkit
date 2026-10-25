@@ -117,13 +117,13 @@
       "producers": [{ "binding": "JOBS", "queue": "shelfkit-jobs-preview" }],
     },
     "vars": {
-      "SHELFKIT_VERSION": "0.1.0-rc.6",
+      "SHELFKIT_VERSION": "0.1.0-rc.7",
       "GITHUB_URL": "https://github.com",
       "GITHUB_API_URL": "https://api.github.com",
     },
   },
   "vars": {
-    "SHELFKIT_VERSION": "0.1.0-rc.6",
+    "SHELFKIT_VERSION": "0.1.0-rc.7",
     // Where signing in with GitHub goes: the authorize and token endpoints, and the REST API. Only tests point these
     // at a stand-in GitHub; a deployment keeps github.com.
     "GITHUB_URL": "https://github.com",
