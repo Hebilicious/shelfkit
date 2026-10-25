@@ -5,7 +5,14 @@
 //! Those are load errors. Every other deviation from the specification is
 //! *soft*: harnesses such as Claude Code read the file anyway, so the shelf
 //! keeps it exactly as written and `check` reports a
-//! [`crate::NoticeCode::SkillFrontmatter`] notice for each one.
+//! [`crate::NoticeCode::SkillFrontmatter`] notice for each one, saying what
+//! the deviation costs in each agent and whether a spec-valid form keeps it.
+//!
+//! What each agent does was checked on Claude Code 2.1.306, Codex 0.163.0,
+//! Copilot CLI 1.0.101, VS Code, and Cursor in October 2026: Claude Code,
+//! Cursor, and Copilot honour `disable-model-invocation` at the top level
+//! only, Codex ignores it, Copilot CLI refuses a description over 1024
+//! characters, and no agent acts on `metadata` beyond its own keys.
 
 use crate::revision::normalize_line_endings;
 use crate::shelf::{LoadedItem, Notice, NoticeCode};
@@ -19,6 +26,22 @@ const SPEC_KEYS: &[&str] = &[
     "metadata",
     "name",
 ];
+
+/// Keys Claude Code reads at the top level of `SKILL.md` that agentskills.io
+/// does not define. None has a spec-valid place: moved into `metadata`,
+/// Claude Code ignores it.
+const CLAUDE_CODE_KEYS: &[&str] = &[
+    "agent",
+    "argument-hint",
+    "context",
+    "effort",
+    "hooks",
+    "model",
+    "user-invocable",
+];
+
+/// What strict readers do with a file that strays from the specification.
+const STRICT: &str = "strict validators and claude.ai's skill upload refuse this file";
 
 const DESCRIPTION_LIMIT: usize = 1024;
 const COMPATIBILITY_LIMIT: usize = 500;
@@ -76,7 +99,9 @@ pub(crate) fn check_frontmatter(id: &str, bytes: &[u8]) -> FrontmatterProblems {
             let length = description.chars().count();
             if length > DESCRIPTION_LIMIT {
                 problems.soft.push(format!(
-                    "`description` is {length} characters; agentskills.io allows at most {DESCRIPTION_LIMIT}"
+                    "`description` is {length} characters, over agentskills.io's {DESCRIPTION_LIMIT}: Copilot CLI \
+                     refuses to load the skill, and Codex and VS Code cut the description short. Shortening it to \
+                     {DESCRIPTION_LIMIT} loses nothing in Claude Code"
                 ));
             }
         }
@@ -88,8 +113,18 @@ pub(crate) fn check_frontmatter(id: &str, bytes: &[u8]) -> FrontmatterProblems {
     for key in mapping.keys() {
         match key.as_str() {
             Some(key) if SPEC_KEYS.contains(&key) => {}
+            Some("disable-model-invocation") => problems.soft.push(format!(
+                "`disable-model-invocation` is not an agentskills.io key, so {STRICT}. Claude Code, Cursor, and \
+                 Copilot honour it here at the top level and nowhere else (in `metadata` they ignore it); Codex \
+                 ignores it and reads `agents/openai.yaml` (`policy: allow_implicit_invocation: false`) instead"
+            )),
+            Some(key) if CLAUDE_CODE_KEYS.contains(&key) => problems.soft.push(format!(
+                "`{key}` is a Claude Code key, not an agentskills.io one, so {STRICT}. Claude Code honours it only \
+                 at the top level; agents that do not know it ignore it"
+            )),
             Some(key) => problems.soft.push(format!(
-                "unknown key `{key}`; agentskills.io allows only {}",
+                "unknown key `{key}`: agentskills.io allows only {}, so {STRICT}; agents ignore a key they do not \
+                 know",
                 SPEC_KEYS.join(", ")
             )),
             None => problems.soft.push("keys must be strings".to_owned()),
@@ -114,9 +149,10 @@ pub(crate) fn check_frontmatter(id: &str, bytes: &[u8]) -> FrontmatterProblems {
                 .all(|(key, value)| key.is_string() && value.is_string())
         });
         if !flat {
-            problems
-                .soft
-                .push("`metadata` must map strings to strings".to_owned());
+            problems.soft.push(format!(
+                "`metadata` must map strings to strings, so {STRICT}. Agents read only their own `metadata` keys, so \
+                 flattening it to string values loses nothing"
+            ));
         }
     }
     problems
@@ -135,10 +171,7 @@ pub(crate) fn notices(loaded: &LoadedItem) -> Vec<Notice> {
         .map(|problem| Notice {
             path: path.clone(),
             code: NoticeCode::SkillFrontmatter,
-            message: format!(
-                "{problem}. Clients and uploaders that hold to agentskills.io (such as \
-                 claude.ai's skill upload) may refuse this file; harnesses like Claude Code read it"
-            ),
+            message: problem,
         })
         .collect()
 }
@@ -176,12 +209,29 @@ mod tests {
         assert_eq!(
             problems.soft,
             [
-                "`description` is 1025 characters; agentskills.io allows at most 1024",
-                "unknown key `disable-model-invocation`; agentskills.io allows only \
-                 allowed-tools, compatibility, description, license, metadata, name",
+                "`description` is 1025 characters, over agentskills.io's 1024: Copilot CLI refuses to load the \
+                 skill, and Codex and VS Code cut the description short. Shortening it to 1024 loses nothing in \
+                 Claude Code",
+                "`disable-model-invocation` is not an agentskills.io key, so strict validators and claude.ai's \
+                 skill upload refuse this file. Claude Code, Cursor, and Copilot honour it here at the top level \
+                 and nowhere else (in `metadata` they ignore it); Codex ignores it and reads `agents/openai.yaml` \
+                 (`policy: allow_implicit_invocation: false`) instead",
                 "`license` must be a string",
                 "`compatibility` is 501 characters; agentskills.io allows at most 500",
-                "`metadata` must map strings to strings",
+                "`metadata` must map strings to strings, so strict validators and claude.ai's skill upload refuse \
+                 this file. Agents read only their own `metadata` keys, so flattening it to string values loses \
+                 nothing",
+            ]
+        );
+        assert_eq!(
+            skill("name: demo\ndescription: A thing.\nargument-hint: <file>\nx-mine: 1").soft,
+            [
+                "`argument-hint` is a Claude Code key, not an agentskills.io one, so strict validators and \
+                 claude.ai's skill upload refuse this file. Claude Code honours it only at the top level; agents \
+                 that do not know it ignore it",
+                "unknown key `x-mine`: agentskills.io allows only allowed-tools, compatibility, description, \
+                 license, metadata, name, so strict validators and claude.ai's skill upload refuse this file; \
+                 agents ignore a key they do not know",
             ]
         );
     }

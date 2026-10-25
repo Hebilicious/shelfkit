@@ -509,16 +509,21 @@ fn a_skill_off_the_agentskills_spec_loads_and_is_reported() {
     // Notices are sorted, so they come in message order.
     let checked = reported(&shelf.check());
     assert_eq!(checked.len(), 3, "{checked:?}");
+    // Each says what the deviation costs, agent by agent.
     assert!(
-        checked[0].starts_with("`description` is 1050 characters"),
+        checked[0].starts_with("`description` is 1050 characters")
+            && checked[0].contains("Copilot CLI refuses to load the skill"),
         "{checked:?}"
     );
-    assert!(checked[2].starts_with("unknown key `disable-model-invocation`"));
-    assert!(checked[1].starts_with("`metadata` must map strings to strings"));
     assert!(
-        checked
-            .iter()
-            .all(|message| message.contains("claude.ai's skill upload"))
+        checked[1].starts_with("`disable-model-invocation` is not an agentskills.io key")
+            && checked[1].contains("Codex ignores it"),
+        "{checked:?}"
+    );
+    assert!(
+        checked[2].starts_with("`metadata` must map strings to strings")
+            && checked[2].contains("flattening it to string values loses nothing"),
+        "{checked:?}"
     );
 
     // A profile that installs the skill carries the same notices into its plan,
