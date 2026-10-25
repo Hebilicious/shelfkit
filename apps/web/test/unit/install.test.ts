@@ -46,6 +46,7 @@ describe("installing a profile with the ShelfKit CLI", () => {
     const login = steps.indexOf("shelfkit login https://shelf.example.dev");
     expect(login).toBeGreaterThan(steps.indexOf("install.sh"));
     expect(login).toBeLessThan(steps.indexOf(cliCommand(secret)));
+    expect(steps).toContain("approve there if the page shows the code");
   });
 
   it("has an agent install the CLI only when it is missing", () => {
@@ -61,7 +62,8 @@ describe("installing a profile with the ShelfKit CLI", () => {
     expect(asked).toContain(
       "ask me to run `shelfkit login https://shelf.example.dev` in my own terminal"
     );
-    expect(asked).toContain("Do not ask me for the key");
+    expect(asked).toContain("do not ask me for a key");
+    expect(asked).toContain("Do not run it yourself");
   });
 });
 

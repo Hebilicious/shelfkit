@@ -106,7 +106,10 @@ const problem = computed(() => {
         signed-in device makes one in Settings, and an invite is one. On Linux, a browser needs a passkey provider: its
         built-in password manager, a password manager's extension, or a hardware security key.
       </p>
-      <p class="muted small">The CLI, agents, and CI use a key instead: the owner creates one in Settings.</p>
+      <p class="muted small">
+        The CLI signs in through this site: <code>shelfkit login</code> opens a page here to approve. Agents and CI use a
+        key instead, which the owner creates in Settings.
+      </p>
     </section>
   </main>
 </template>

@@ -5,10 +5,12 @@ import { useRouter } from "vue-router";
 import { execute } from "../api/graphql.ts";
 import type { ResultOf } from "../api/graphql.ts";
 import {
+  CliKeysQuery,
   CreateSignInLinkMutation,
   PasskeysQuery,
   RemovePasskeyMutation,
   RenamePasskeyMutation,
+  RevokeCliKeyMutation,
 } from "../api/operations.ts";
 import { copyToClipboard } from "../composables/clipboard.ts";
 import { signOut, viewer, viewerName } from "../composables/session.ts";
@@ -17,6 +19,7 @@ import { keyOf, useQuery } from "../data/cache.ts";
 import { addPasskey, deviceLabel, passkeysAvailable } from "../lib/passkeys.ts";
 
 type Passkey = ResultOf<typeof PasskeysQuery>["passkeys"][number];
+type CliKey = ResultOf<typeof CliKeysQuery>["cliKeys"][number];
 
 const router = useRouter();
 const canUsePasskeys = passkeysAvailable();
@@ -39,6 +42,33 @@ const passkeys = useQuery(
 );
 
 const list = computed<readonly Passkey[]>(() => passkeys.data.value ?? []);
+
+/** The keys CLIs hold for this account, from approving `shelfkit login` in a browser: any signed-in person has them. */
+const cliKeys = useQuery(
+  () => (viewer.value?.principal ? keyOf("cli-keys", viewer.value.principal) : null),
+  async () => {
+    const data = await execute(CliKeysQuery, {});
+    return data.cliKeys;
+  },
+);
+const cliList = computed<readonly CliKey[]>(() => cliKeys.data.value ?? []);
+const armedCli = ref<string | null>(null);
+
+/** Revoking asks twice: the CLI holding the key is signed out on its next request. */
+async function revokeCli(id: string): Promise<void> {
+  if (armedCli.value !== id) {
+    armedCli.value = id;
+    return;
+  }
+  armedCli.value = null;
+  try {
+    await execute(RevokeCliKeyMutation, { id });
+    notify("Revoked. That CLI is signed out.");
+    await cliKeys.refresh();
+  } catch (error) {
+    notifyError(error);
+  }
+}
 const label = ref(deviceLabel());
 const renaming = ref<string | null>(null);
 const newLabel = ref("");
@@ -194,6 +224,38 @@ async function copy(text: string): Promise<void> {
           <button class="quiet" type="button" @click="link = null">Done</button>
         </div>
       </div>
+    </template>
+    <template v-if="viewer.principal">
+      <h3>CLI sign-ins</h3>
+      <p class="small muted">
+        Running <code>shelfkit login</code> in a terminal opens this site to approve it. Each approval gives that
+        computer's CLI a key that acts as you; revoke it here to sign that CLI out.
+      </p>
+      <table v-if="cliList.length > 0" class="table" data-testid="cli-keys">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Key</th>
+            <th>Approved</th>
+            <th>Last used</th>
+            <th><span class="visually-hidden">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="key in cliList" :key="key.id">
+            <td>{{ key.name }}</td>
+            <td><code class="mono small">{{ key.prefix }}</code></td>
+            <td class="small">{{ when(key.createdAt) }}</td>
+            <td class="small">{{ when(key.lastUsedAt) }}</td>
+            <td>
+              <button class="danger small" type="button" @click="revokeCli(key.id)">
+                {{ armedCli === key.id ? "Revoke: sure?" : "Revoke" }}
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="small muted">No CLI is signed in as you.</p>
     </template>
   </section>
 </template>

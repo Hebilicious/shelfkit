@@ -97,7 +97,7 @@ export async function graphqlRoute(
       "the key is not valid: it is malformed, unknown, or revoked"
     );
   }
-  const context = createContext(env, request, session, execution);
+  const context = createContext(env, request, session, execution, source);
   if (clearCookie) {
     context.cookies.push(signOutCookie());
   }

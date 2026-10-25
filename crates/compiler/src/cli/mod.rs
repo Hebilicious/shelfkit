@@ -139,17 +139,24 @@ enum Command {
     /// visible to other processes). Keys are never printed or logged. APM 0.33.0 sends no credentials over plain
     /// http, so APM installs only from a public shelf on loopback.
     Serve(ServeArgs),
-    /// Keep a key for a hosted deployment in the OS keychain.
+    /// Sign this computer in to a hosted deployment, through the browser, and keep its key in the OS keychain.
     ///
-    /// Reads the key from the terminal without echoing it (or a line of standard input), checks it against the
-    /// deployment, stores it under the keychain service `shelfkit` with the URL as the account, and remembers the URL
-    /// as the default. The key is never printed. `SHELFKIT_KEY`, when set, is used instead of the keychain.
+    /// In a terminal, `login` shows a code, opens the deployment's approval page in the browser, and waits: sign in
+    /// there, check the page shows the same code, and approve. The deployment then hands this CLI a key that acts as
+    /// you, which it checks, stores under the keychain service `shelfkit` with the URL as the account, and the URL is
+    /// remembered as the default. Approve only a code you see in your own terminal. The page lists the key under
+    /// "CLI sign-ins", where you can revoke it.
+    ///
+    /// With `--key`, or when standard input is not a terminal (CI), it reads a key made in Settings instead: from the
+    /// terminal without echoing it, or a line of standard input. The key is never printed. `SHELFKIT_KEY`, when set,
+    /// is used instead of the keychain by every other command.
     Login(LoginArgs),
     /// Remove the key kept for a hosted deployment from the OS keychain.
-    Logout(LoginArgs),
-    /// Open the deployment's web UI in a browser, signed in as the owner.
+    Logout(LogoutArgs),
+    /// Open the deployment's web UI in a browser, signed in as you.
     ///
-    /// Uses the owner key it holds (`SHELFKIT_KEY`, or the keychain) to make a one-time sign-in link, which works once,
+    /// Uses the key it holds (`SHELFKIT_KEY`, or the keychain: the owner key, or the key `shelfkit login` got through
+    /// the browser, which signs it in as whoever approved it) to make a one-time sign-in link, which works once,
     /// within 15 minutes, and opens it with the system's browser opener. A URL with a path, such as
     /// `https://<host>/shelves/<shelf>`, opens that page once signed in. The page then offers to add a passkey on that
     /// device, so it signs in again without a link. Only with `--print` is the link printed instead; when no opener
@@ -172,6 +179,15 @@ enum Command {
 
 #[derive(Args)]
 struct LoginArgs {
+    /// The deployment, as https://<host>. Defaults to SHELFKIT_URL, then the one `login` remembered.
+    url: Option<String>,
+    /// Read a key made in Settings, instead of signing in through the browser.
+    #[arg(long)]
+    key: bool,
+}
+
+#[derive(Args)]
+struct LogoutArgs {
     /// The deployment, as https://<host>. Defaults to SHELFKIT_URL, then the one `login` remembered.
     url: Option<String>,
 }
@@ -456,7 +472,7 @@ where
             );
         }
         Command::Serve(args) => serve_command(ctx, shelf, &args),
-        Command::Login(args) => hosted::login(ctx, args.url.as_deref()),
+        Command::Login(args) => hosted::login(ctx, args.url.as_deref(), args.key),
         Command::Logout(args) => hosted::logout(ctx, args.url.as_deref()),
         Command::Open(args) => hosted::open(ctx, args.url.as_deref(), args.print),
         Command::Push(args) => push_command(ctx, shelf, &args),
