@@ -65,7 +65,8 @@ function remember(session: StoredSession | null): void {
 }
 
 /** Who a viewer is, for telling whether the cached answers were theirs. */
-function identity(current: Viewer | null): string {
+/** Who the viewer is, as one string: it changes exactly when signing in, out, or as someone else. */
+export function identity(current: Viewer | null): string {
   return current === null
     ? ""
     : `${current.principal ?? ""}\u0000${current.keyId ?? ""}\u0000${String(current.authenticated)}`;

@@ -2,8 +2,8 @@
 import { onBeforeUnmount, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 
-import { followShelf, liveState } from "../composables/use-shelf-events.ts";
-import { shelves, viewer, viewerName } from "../composables/session.ts";
+import { followShelf, liveState, refollow } from "../composables/use-shelf-events.ts";
+import { identity, shelves, viewer, viewerName } from "../composables/session.ts";
 import { useShelfId } from "../composables/shelf-context.ts";
 import { useShelfIndex, warmShelf } from "../data/shelf.ts";
 import { SECTIONS, sectionOf } from "../navigation.ts";
@@ -26,6 +26,8 @@ watch(
   { immediate: true },
 );
 onBeforeUnmount(() => followShelf(null));
+// A new viewer may read a shelf the last one could not, or no longer read one it could.
+watch(() => identity(viewer.value), refollow);
 
 function switchShelf(event: Event): void {
   if (event.target instanceof HTMLSelectElement) {
@@ -66,10 +68,7 @@ function active(name: string): boolean {
         {{ liveState === "live" ? "● live" : liveState === "connecting" ? "○ connecting" : "" }}
       </span>
     </nav>
-    <main
-      v-if="summary.data.value === null && !summary.loading.value && !summary.refreshing.value"
-      class="page"
-    >
+    <main v-if="summary.data.value === null && !summary.loading.value" class="page">
       <h1>No shelf <code>{{ shelf }}</code></h1>
       <p v-if="summary.error.value !== null" class="error-text">{{ summary.error.value }}</p>
       <p v-else-if="viewer?.authenticated !== true">
