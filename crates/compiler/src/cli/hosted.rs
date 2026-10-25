@@ -258,9 +258,21 @@ pub(super) fn login(ctx: &mut Context<'_>, url: Option<&str>, paste: bool) -> Ou
     Ok(())
 }
 
+/// What one of the deployment's plain routes answered: its JSON, or `429`
+/// with the seconds to wait before asking again.
+enum Posted {
+    Json(Value),
+    Limited(u64),
+}
+
+/// The longest the CLI waits when the deployment asks it to slow down, and
+/// what it waits when the deployment does not say.
+const MAX_RETRY_SECONDS: u64 = 60;
+const DEFAULT_RETRY_SECONDS: u64 = 10;
+
 /// POST JSON to one of the deployment's plain routes, without a key, and read
 /// the JSON it answers.
-fn post_json(system: &dyn System, url: &str, path: &str, body: &Value) -> Result<Value, String> {
+fn post_json(system: &dyn System, url: &str, path: &str, body: &Value) -> Result<Posted, String> {
     let response = system
         .http(&HttpRequest {
             body: serde_json::to_vec(body).unwrap_or_default(),
@@ -275,10 +287,20 @@ fn post_json(system: &dyn System, url: &str, path: &str, body: &Value) -> Result
              Settings"
         ));
     }
+    if response.status == 429 {
+        // `Retry-After` in seconds; its HTTP-date form, which the deployment never sends, waits the default.
+        let seconds = response
+            .header("retry-after")
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_RETRY_SECONDS)
+            .clamp(1, MAX_RETRY_SECONDS);
+        return Ok(Posted::Limited(seconds));
+    }
     if !(200..300).contains(&response.status) {
         return Err(format!("{url}{path} answered {}", response.status));
     }
     serde_json::from_slice(&response.body)
+        .map(Posted::Json)
         .map_err(|_| format!("{url}{path} answered with a body that is not JSON"))
 }
 
@@ -294,12 +316,21 @@ fn browser_login(ctx: &mut Context<'_>, url: &str) -> Result<String, Failure> {
         .system
         .hostname()
         .unwrap_or_else(|| "a computer".to_owned());
-    let started = post_json(
+    let started = match post_json(
         ctx.system,
         url,
         "/auth/cli/start",
         &json!({ "device": device }),
-    )?;
+    )? {
+        Posted::Json(started) => started,
+        Posted::Limited(seconds) => {
+            return Err(format!(
+                "{url} has started too many logins from this address in the last minute: run `shelfkit login {url}` \
+                 again in {seconds} seconds"
+            )
+            .into());
+        }
+    };
     let fields = (
         started["userCode"].as_str(),
         started["deviceCode"].as_str(),
@@ -335,15 +366,33 @@ fn browser_login(ctx: &mut Context<'_>, url: &str) -> Result<String, Failure> {
         }
     );
     // One poll more than the login lasts, so its expiry is the deployment's answer, not a guess.
+    // A poll the deployment refuses as too frequent (`429`) waits its `Retry-After` and polls again; it still counts
+    // as a poll, so the loop only ever lasts longer than the login.
     let polls = expires_in / interval + 2;
+    let mut wait = interval;
+    let mut slowed = false;
     for _ in 0..polls {
-        ctx.system.sleep(std::time::Duration::from_secs(interval));
-        let answer = post_json(
+        ctx.system.sleep(std::time::Duration::from_secs(wait));
+        wait = interval;
+        let answer = match post_json(
             ctx.system,
             url,
             "/auth/cli/poll",
             &json!({ "deviceCode": device_code }),
-        )?;
+        )? {
+            Posted::Json(answer) => answer,
+            Posted::Limited(seconds) => {
+                if !slowed {
+                    slowed = true;
+                    let _ = writeln!(
+                        ctx.stderr,
+                        "{url} asked this computer to poll less often; still waiting for approval…"
+                    );
+                }
+                wait = seconds;
+                continue;
+            }
+        };
         match answer["status"].as_str() {
             Some("pending") => {}
             Some("approved") => {

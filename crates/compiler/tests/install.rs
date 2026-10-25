@@ -56,6 +56,7 @@ impl Machine {
 
 fn answer(status: u16, body: &serde_json::Value) -> io::Result<HttpResponse> {
     Ok(HttpResponse {
+        headers: Vec::new(),
         body: serde_json::to_vec(body).unwrap(),
         status,
     })
