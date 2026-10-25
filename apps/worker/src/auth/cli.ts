@@ -12,7 +12,9 @@
  *    once), denied, or expired. A wrong secret is answered as an expired code, so the poll says nothing more about a
  *    code than the CLI that started it may know.
  *
- * Both routes are plain `POST`s of `application/json`, read no cookie, and answer `no-store`.
+ * Both routes are plain `POST`s of `application/json`, read no cookie, and answer `no-store`. Each is rate limited by
+ * the client's address before it reads the body (`limits.ts`): an address over its limit is answered `429` with
+ * `Retry-After`, and the CLI waits that long before it polls again.
  */
 import * as v from "valibot";
 
@@ -21,6 +23,7 @@ import { sha256Hex } from "../storage/objects.ts";
 import { base64url } from "./browser.ts";
 import type { CliLoginPoll } from "./cli-logins.ts";
 import { displayPrefix, newCliKey } from "./keys.ts";
+import { clientAddress, overLimit, tooManyRequests } from "./limits.ts";
 import { accountStub } from "./principals.ts";
 import type { Person } from "./session.ts";
 
@@ -174,9 +177,21 @@ export async function cliLoginRoute(
   if (refused !== null) {
     return refused;
   }
-  return pathname === "/auth/cli/start"
-    ? await start(request, env)
-    : await poll(request, env);
+  const starting = pathname === "/auth/cli/start";
+  const wait = await overLimit(
+    env,
+    starting ? "CLI_START_LIMIT" : "CLI_POLL_LIMIT",
+    clientAddress(request)
+  );
+  if (wait !== null) {
+    return tooManyRequests(
+      wait,
+      starting
+        ? `too many CLI logins started from this address: try again in ${wait} seconds`
+        : `polling too often from this address: wait ${wait} seconds, then poll every ${CLI_POLL_SECONDS} seconds`
+    );
+  }
+  return starting ? await start(request, env) : await poll(request, env);
 }
 
 /** Why approving a login was refused. */

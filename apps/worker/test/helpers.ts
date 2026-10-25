@@ -12,7 +12,12 @@ const GraphQLResponseSchema = v.object({
   errors: v.optional(
     v.array(
       v.object({
-        extensions: v.optional(v.object({ code: v.optional(v.string()) })),
+        extensions: v.optional(
+          v.object({
+            code: v.optional(v.string()),
+            retryAfter: v.optional(v.number()),
+          })
+        ),
         message: v.string(),
       })
     )

@@ -9,6 +9,8 @@ declare module "vitest" {
     readonly cargoVersion: string;
     /** ShelfKit's own shelf. */
     readonly ownShelf: Record<string, string>;
+    /** `wrangler.jsonc`, as JSON. */
+    readonly wranglerConfig: string;
     /** The registry conformance suite: `cases.json`, and each archive in base64 by its `file`. */
     readonly conformance: {
       readonly cases: string;

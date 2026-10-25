@@ -24,6 +24,7 @@ import {
   OWNER_PRINCIPAL,
 } from "../auth/index.ts";
 import type { Person } from "../auth/index.ts";
+import { overLimit } from "../auth/limits.ts";
 import {
   createSignInLink,
   linkHash,
@@ -403,6 +404,22 @@ function approver(context: GraphQLContext): Person {
   throw forbidden("sign in in this browser to approve a CLI login");
 }
 
+/**
+ * The approver, once this lookup of a code is counted against their account's limit (`auth/limits.ts`): looking a
+ * login up, approving it, and denying it each count, so a signed-in session cannot try codes quickly.
+ */
+async function countedApprover(context: GraphQLContext): Promise<Person> {
+  const person = approver(context);
+  const wait = await overLimit(context.env, "CLI_APPROVAL_LIMIT", person.id);
+  if (wait !== null) {
+    throw new GraphQLError(
+      `too many CLI login codes looked up from this account: try again in ${wait} seconds`,
+      { extensions: { code: "RATE_LIMITED", retryAfter: wait } }
+    );
+  }
+  return person;
+}
+
 function userCode(code: string): string {
   const normalized = normalizeUserCode(code);
   if (normalized === null) {
@@ -432,7 +449,7 @@ export async function previewCliLogin(
   context: GraphQLContext,
   code: string
 ): Promise<CliLoginPreview | null> {
-  approver(context);
+  await countedApprover(context);
   const normalized = userCode(code);
   const pending = await cliLoginStub(context.env, normalized).pending();
   return pending === null
@@ -449,7 +466,7 @@ export async function approveCli(
   context: GraphQLContext,
   code: string
 ): Promise<{ readonly device: string; readonly name: string }> {
-  const person = approver(context);
+  const person = await countedApprover(context);
   const approved = await approveCliLogin(context.env, userCode(code), person);
   if (!approved.ok) {
     throw approved.reason === "not-waiting"
@@ -464,7 +481,7 @@ export async function denyCli(
   context: GraphQLContext,
   code: string
 ): Promise<boolean> {
-  approver(context);
+  await countedApprover(context);
   if (!(await cliLoginStub(context.env, userCode(code)).deny())) {
     throw notWaiting();
   }

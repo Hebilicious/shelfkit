@@ -5,6 +5,7 @@ import path from "node:path";
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
+import { stripJsonc } from "./scripts/jsonc.ts";
 import {
   FAKE_ACCOUNTS,
   FAKE_CLIENT,
@@ -81,6 +82,15 @@ const cargoVersion =
     readFileSync(path.join(repository, "Cargo.toml"), "utf-8")
   )?.groups?.version ?? "";
 
+/** `wrangler.jsonc` as JSON, for the tests that hold the Worker's code in step with its configuration. */
+const wranglerConfig = JSON.stringify(
+  JSON.parse(
+    stripJsonc(
+      readFileSync(path.join(import.meta.dirname, "wrangler.jsonc"), "utf-8")
+    )
+  )
+);
+
 const provide = {
   allKindsShelf: shelfFiles(
     path.join(repository, "crates/core/tests/fixtures/all-kinds")
@@ -88,6 +98,7 @@ const provide = {
   cargoVersion,
   conformance: { archives, cases },
   ownShelf: shelfFiles(path.join(repository, "shelf")),
+  wranglerConfig,
 };
 
 /**
