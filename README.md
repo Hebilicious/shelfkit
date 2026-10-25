@@ -108,11 +108,13 @@ The owner's GitHub account signs in as the owner. Others hold what you grant the
 Then, from a shelf:
 
 ```bash
-shelfkit login https://shelfkit.<you>.workers.dev   # paste a key; it goes to the OS keychain
+shelfkit login https://shelfkit.<you>.workers.dev   # approve it in your browser; the key goes to the OS keychain
 shelfkit push                                       # upload the shelf, commit it, publish every profile
 shelfkit fetch                                      # write the hosted shelf (edits made in the UI) back
-shelfkit open                                       # open the web UI in your browser, signed in as the owner
+shelfkit open                                       # open the web UI in your browser, signed in as you
 ```
+
+`shelfkit login` shows a code and opens the deployment's approval page: sign in there, check the page shows the same code as your terminal, and approve. The CLI then holds a key that acts as you (the owner, or what each shelf grants you), listed under "CLI sign-ins" in Settings, where revoking it signs that CLI out. Approve only a code you see in your own terminal. In CI, or with `--key`, it reads a key made in Settings from standard input instead.
 
 A profile then installs from the deployment with APM's registry client: `registries: { shelf: { url: https://shelfkit.<you>.workers.dev/apm } }` in `apm.yml`, the dependency `{ id: <namespace>/<profile>, version: <version> }`, and `apm experimental enable registries`.
 

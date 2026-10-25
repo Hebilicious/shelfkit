@@ -127,7 +127,7 @@ One consequence to accept: because APM owns install, **an APM breaking change is
 | `shelfkit verify` | The manifest still matches the profile it came from |
 | `shelfkit recommend` | Propose items and profiles from detected stack markers |
 | `shelfkit doctor` | Detect `apm`, harnesses, and source drift |
-| `shelfkit login` / `push` | The hosted service |
+| `shelfkit login` / `push` | The hosted service. `login` signs the CLI in through the browser (section 10.3); `--key` reads a key instead, as CI does |
 
 ### 4.2 How a profile reaches the agents
 
@@ -514,6 +514,7 @@ Cloudflare Worker  (single deployable)
   /graphql       API for the UI and the CLI, including keys, links, invites, and passkeys
   /auth/passkey/* passkey sign-in for the browser
   /auth/github/*  GitHub sign-in, when enabled
+  /auth/cli/*     signing the CLI in through the browser (`shelfkit login`)
   /*             static SPA
 
   Resolver (Rust/WASM)   Importer   Registry
@@ -553,7 +554,7 @@ Subscriptions work: a Durable Object per shelf already exists, so it fans out ch
 
 ### 10.3 Auth
 
-Deliberately minimal. People sign in with passkeys; programs present keys. There are no passwords, no device flow, and no roles, and nobody pastes a key into a browser.
+Deliberately minimal. People sign in with passkeys; programs present keys, and a person's CLI gets its key by being approved in their browser. There are no passwords and no roles, and nobody pastes a key into a browser.
 
 **People** sign in with a **passkey** (WebAuthn), and a **one-time link** opens a browser that has none:
 
@@ -569,9 +570,18 @@ On Linux, a browser makes and uses passkeys through a passkey provider: its own 
 
 **GitHub sign-in is opt-in.** With `moon run worker:setup -- --github-sign-in`, setup creates the deployment's own GitHub App (asking for no permissions), records the owner's GitHub account by numeric id, and the sign-in screen offers "Sign in with GitHub". `/auth/github/start` and `/auth/github/callback` run the authorization code flow with PKCE; the Worker uses GitHub's token once, to read who signed in, and revokes it. The owner's GitHub account signs in as the owner principal, and the owner grants other GitHub accounts scopes as for anyone else. Without the flag, no GitHub App exists and no button is shown. `--no-github-sign-in` turns it off again by deleting its secrets: every GitHub session, the owner's included, then ends at its next request, and GitHub accounts' grants hold nothing.
 
+**Signing the CLI in through the browser.** `shelfkit login <url>`, run in a terminal, signs the CLI in the way a device-authorization flow does, so a person never copies a key:
+
+1. The CLI posts `/auth/cli/start` with a name for its computer (the hostname). The Worker answers with a **user code** of 8 characters from an alphabet without look-alikes (`ABCD-EFGH`), a **device code** (`<user code>.<secret>`), the page that approves it (`/cli/ABCD-EFGH`), and a poll interval. The pending login lives in its own Durable Object, named by the user code, which keeps only the SHA-256 of the device code's secret and expires after 10 minutes; an alarm deletes whatever is left.
+2. The CLI prints the page and the code and opens the page in the browser. A browser that is not signed in goes through sign-in and back. The page shows the code, the device name the CLI sent (which proves nothing), the account that approves, and what its key may do, and says to approve only a code shown in one's own terminal right now: the code is the phishing surface of any such flow. Only a browser signed in by its cookie approves or denies (`approveCliLogin`, `denyCliLogin`), never a key, under the same-origin rules as every cookie request.
+3. Approving makes a **CLI key**, `skc_<account>_<secret>`, named "CLI on <device>", kept by its hash in the approver's account object. It acts as that person on every surface: the owner's is the owner, and an invited person's or a GitHub account's holds what each shelf grants them, read on every request, so a narrowed or revoked grant, or removing the person, takes effect on the CLI at once. The key waits in the login for one pickup.
+4. The CLI posts `/auth/cli/poll` with the device code every interval until it hears `approved` (with the key, deleted from the login in the same step), `denied`, or `expired`. A wrong secret and an unknown code are answered as `expired`, so the poll tells nobody more about a code than its CLI may know. A key approved for a CLI that never comes back for it is revoked when the login expires.
+
+The CLI then checks the key and keeps it in the OS keychain, as with a pasted key. Each person sees the keys their CLIs hold under "CLI sign-ins" and revokes them there; the owner also revokes any key from Settings. Rotating the session secret signs browsers out, not CLIs. Starting and polling are unauthenticated and not rate limited beyond the platform's own limits: a login costs an object that deletes itself, and with 32^8 codes that each live 10 minutes, guessing one that someone else is about to approve is not practical. A CLI key does not open `/mcp`'s tools, which an agent reaches with a scoped key from Settings.
+
 **Programs.** The CLI, agents, CI, and APM's registry client send `Authorization: Bearer <key>`, the header the registry wire contract defines. A deployment has an **owner key** and any number of **scoped API keys**, and a middleware in the Worker resolves a key to a scope set before any resolver runs. The scope vocabulary is shared with the registry, so one key can read, publish, or both.
 
-Keys, links, invites, and passkeys are managed over GraphQL, not REST, because they are a UI and CLI concern like every other operation:
+Keys, links, invites, passkeys, and CLI logins are managed over GraphQL, not REST, because they are a UI and CLI concern like every other operation:
 
 ```graphql
 type Mutation {
@@ -582,11 +592,14 @@ type Mutation {
   redeemLink(token: String!): LinkRedemption!
   revokeAccess(shelf: ID!, principal: ID!): Boolean!
   removePerson(shelf: ID!, principal: ID!): Boolean!
+  approveCliLogin(code: String!): CliLoginApproval! # the CLI picks the key up once, from /auth/cli/poll
+  denyCliLogin(code: String!): Boolean!
+  revokeCliKey(id: ID!): Boolean!
 }
 ```
 
 - A key never goes into a browser. Settings creates one and shows it once, to copy into CI or an agent's configuration.
-- `shelfkit login` asks for a key created in the UI and stores it in the OS keychain. `shelfkit install` hands it to APM in `APM_REGISTRY_TOKEN_<NAME>` for each ShelfKit registry an `apm.yml` names, so installing from a private shelf needs the key typed once per computer, by a person, and never in a file, a command line, or an agent's context.
+- `shelfkit login` signs the CLI in through the browser and stores the key it is given in the OS keychain. With `--key`, or when standard input is not a terminal (CI), it reads a key created in the UI instead. `shelfkit install` hands it to APM in `APM_REGISTRY_TOKEN_<NAME>` for each ShelfKit registry an `apm.yml` names, so installing from a private shelf needs the key typed once per computer, by a person, and never in a file, a command line, or an agent's context.
 - The registry endpoints read the same header, which is why declaring a ShelfKit instance in `apm.yml` needs no separate credential.
 - A request the cookie authenticates must be same-origin: a `POST` is JSON only and carries this origin's `Origin` header, and there is no CORS. `/mcp` reads the header only.
 
