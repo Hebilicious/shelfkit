@@ -92,8 +92,8 @@ pub fn generated_version(revision: &Revision) -> String {
 ///
 /// 2: instructions moved to `.github/instructions/`. 3: an instructions body that opens with its own top-level
 /// heading is not given the item's title above it. 4: a skill whose `SKILL.md` sets `disable-model-invocation` gets
-/// `agents/openai.yaml` for Codex.
-pub const FORMAT: u32 = 4;
+/// `agents/openai.yaml` for Codex. 5: a skill that links to a doc of the profile carries a copy of it.
+pub const FORMAT: u32 = 5;
 
 /// Package one resolved profile of `shelf`.
 pub fn package(shelf: &Shelf, resolved: &ResolvedProfile) -> Result<PackagedProfile, Errors> {

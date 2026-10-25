@@ -1613,7 +1613,8 @@
                     "hook-approval",
                     "hosted-mcp",
                     "mcp-schema-mismatch",
-                    "skill-frontmatter"
+                    "skill-frontmatter",
+                    "doc-link"
                   ],
                   "type": "string"
                 },

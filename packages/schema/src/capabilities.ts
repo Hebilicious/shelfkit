@@ -204,6 +204,7 @@ export const CompileNoteSchema = v.strictObject({
     "hosted-mcp",
     "mcp-schema-mismatch",
     "skill-frontmatter",
+    "doc-link",
   ]),
 });
 

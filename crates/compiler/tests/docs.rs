@@ -129,3 +129,107 @@ fn two_docs_at_one_path_are_refused() {
         "{errors}"
     );
 }
+
+/// The shelf above plus a skill written inside `.agents/skills/`, whose links climb to its repository's root.
+fn with_skill(source: &mut MemorySource, items: &str) {
+    source.insert(
+        "items/skills/triage/item.json",
+        r#"{ "id": "triage", "kind": "skill", "title": "Triage" }"#,
+    );
+    source.insert(
+        "items/skills/triage/SKILL.md",
+        "---\nname: triage\ndescription: Triage issues.\n---\n\nRead [the domain](../../../docs/agents/domain.md#labels) \
+         first, then [the checklist](references/checklist.md) and [the rules](../../../AGENTS.md).\n",
+    );
+    source.insert(
+        "items/skills/triage/references/checklist.md",
+        "Words come from [the domain](../../../../docs/agents/domain.md).\n",
+    );
+    source.insert(
+        "items/docs/glossary/item.json",
+        r#"{ "id": "glossary", "kind": "doc", "title": "Glossary", "path": "GLOSSARY.md" }"#,
+    );
+    source.insert("items/docs/glossary/doc.md", "# Glossary\n");
+    source.insert(
+        "profiles/p.json",
+        format!(r#"{{ "id": "p", "title": "P", "items": {items}, "compile": {{ "targets": ["claude", "codex"] }} }}"#)
+            .as_str(),
+    );
+}
+
+#[test]
+fn a_skill_that_links_a_doc_carries_its_own_copy_with_the_docs_that_one_links() {
+    let mut source = shelf(r#"["claude", "codex"]"#);
+    with_skill(&mut source, r#"["rules", "triage", "glossary"]"#);
+    let compiled = plan(&source, &Request::default()).unwrap();
+    let file = |path: &str| {
+        compiled
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .map(|file| text(&file.bytes().unwrap()))
+    };
+    let skill = file("vendor/p/.apm/skills/triage/SKILL.md").unwrap();
+    assert!(
+        skill.contains("[the domain](docs/agents/domain.md#labels)"),
+        "{skill}"
+    );
+    assert!(
+        skill.contains("[the checklist](references/checklist.md)"),
+        "{skill}"
+    );
+    assert!(skill.contains("[the rules](../../../AGENTS.md)"), "{skill}");
+    let nested = file("vendor/p/.apm/skills/triage/references/checklist.md").unwrap();
+    assert!(
+        nested.contains("[the domain](../docs/agents/domain.md)"),
+        "{nested}"
+    );
+    // The copy, and the glossary it links to, are inside the skill, where APM keeps links as they are written.
+    assert_eq!(
+        file("vendor/p/.apm/skills/triage/docs/agents/domain.md").unwrap(),
+        "# Domain\n\nSee also [the glossary](../../GLOSSARY.md).\n"
+    );
+    assert_eq!(
+        file("vendor/p/.apm/skills/triage/GLOSSARY.md").unwrap(),
+        "# Glossary\n"
+    );
+}
+
+#[test]
+fn a_link_to_a_file_the_profile_does_not_ship_is_noted() {
+    let mut source = shelf(r#"["claude", "codex"]"#);
+    with_skill(&mut source, r#"["triage"]"#);
+    source.insert(
+        "items/instructions/rules/AGENTS.fragment.md",
+        "Read [the domain](docs/agents/domain.md), [the app](apps/web/README.md), and [triage](.agents/skills/triage/SKILL.md).\n",
+    );
+    source.insert(
+        "items/instructions/rules/item.json",
+        r#"{ "id": "rules", "kind": "instructions", "title": "Rules" }"#,
+    );
+    source.insert(
+        "profiles/p.json",
+        r#"{ "id": "p", "title": "P", "items": ["rules", "triage"], "compile": { "targets": ["claude", "codex"] } }"#,
+    );
+    let compiled = plan(&source, &Request::default()).unwrap();
+    let notes: Vec<String> = compiled
+        .notes
+        .iter()
+        .filter(|note| serde_json::to_value(note.code).unwrap() == "doc-link")
+        .map(|note| note.message.clone())
+        .collect();
+    // The domain doc is on the shelf but not in the profile, from the instruction and from the skill; the app's
+    // README is on no shelf. The skill's own reference, AGENTS.md, and the triage skill itself are all installed.
+    assert_eq!(notes.len(), 3, "{notes:#?}");
+    assert!(notes.iter().any(|note| {
+        note.starts_with("`rules` links to `docs/agents/domain.md`, which is the doc `domain`")
+    }));
+    assert!(notes.iter().any(|note| {
+        note.starts_with("`triage` links to `docs/agents/domain.md`, which is the doc `domain`")
+    }));
+    assert!(notes.iter().any(|note| {
+        note.starts_with(
+            "`rules` links to `apps/web/README.md`, which no doc in the shelf provides",
+        )
+    }));
+}

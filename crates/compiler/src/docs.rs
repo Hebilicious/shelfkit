@@ -98,36 +98,148 @@ fn index(skill: &str, docs: &BTreeMap<String, Doc>) -> String {
     out
 }
 
-/// `text` with every markdown link to one of `paths` (inline `[x](path)` or a reference definition `[x]: path`,
-/// written plain or as `./path`, with or without a `#fragment`) pointed at the doc's installed copy.
-pub fn rewrite_links(text: &str, paths: &[&str], skill: &str) -> String {
-    let installed = |target: &str| -> Option<String> {
-        let (path, fragment) = target
-            .split_once('#')
-            .map_or((target, ""), |(path, fragment)| (path, fragment));
-        let path = path.strip_prefix("./").unwrap_or(path);
-        paths.contains(&path).then(|| {
-            let mut out = format!("{DEPLOYED_ROOT}/{skill}/{path}");
-            if !fragment.is_empty() {
-                out.push('#');
-                out.push_str(fragment);
-            }
-            out
-        })
-    };
+/// The doc a link names, and the link's `#fragment` (empty when it has none): the target, written plain, as
+/// `./path`, or climbing out of where it was written with leading `../` (as a skill written inside `.agents/skills/`
+/// reaches its repository's root), is one of `paths`.
+pub fn doc_link<'p>(target: &str, paths: &[&'p str]) -> Option<(&'p str, String)> {
+    let (path, fragment) = target.split_once('#').unwrap_or((target, ""));
+    let mut path = path.strip_prefix("./").unwrap_or(path);
+    while let Some(rest) = path.strip_prefix("../") {
+        path = rest;
+    }
+    let found = paths.iter().find(|candidate| **candidate == path)?;
+    Some((found, fragment.to_owned()))
+}
 
+fn with_fragment(path: String, fragment: &str) -> String {
+    if fragment.is_empty() {
+        path
+    } else {
+        format!("{path}#{fragment}")
+    }
+}
+
+/// An instruction's text with every link to one of `paths` pointed at the doc's copy in the profile's docs skill,
+/// relative to the repository's root, which is where AGENTS.md is read from.
+pub fn rewrite_links(text: &str, paths: &[&str], skill: &str) -> String {
+    rewrite_targets(text, &|target| {
+        doc_link(target, paths).map(|(path, fragment)| {
+            with_fragment(format!("{DEPLOYED_ROOT}/{skill}/{path}"), &fragment)
+        })
+    })
+}
+
+/// One skill's files (by path inside the skill) with every link to a doc pointed at a copy of the doc inside the skill
+/// itself, at the doc's path, and those copies added, with the docs they link to in turn.
+///
+/// Inside, because APM 0.33 keeps a link that stays within a skill's folder as written but rewrites one that leaves
+/// it, even to a sibling skill of the same package, to the package's copy under `apm_modules/`, which a repository
+/// does not commit. A skill already holding a file at a doc's path keeps it, and its links to that path are left.
+pub fn localize(files: &mut BTreeMap<String, Vec<u8>>, docs: &BTreeMap<String, Doc>) {
+    let paths: Vec<&str> = docs.keys().map(String::as_str).collect();
+    let own: Vec<String> = files.keys().cloned().collect();
+    let mut wanted: Vec<String> = Vec::new();
+    for name in own.iter().filter(|name| name.ends_with(".md")) {
+        let Some(bytes) = files.get_mut(name) else {
+            continue;
+        };
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            continue;
+        };
+        let up = "../".repeat(name.matches('/').count());
+        let rewritten = rewrite_targets(text, &|target| {
+            let (path, fragment) = doc_link(target, &paths)?;
+            if own.iter().any(|file| file == path) {
+                return None;
+            }
+            Some(with_fragment(format!("{up}{path}"), &fragment))
+        });
+        if rewritten != text {
+            for target in markdown_targets(text) {
+                if let Some((path, _)) = doc_link(&target, &paths)
+                    && !own.iter().any(|file| file == path)
+                    && !wanted.iter().any(|known| known == path)
+                {
+                    wanted.push(path.to_owned());
+                }
+            }
+            *bytes = rewritten.into_bytes();
+        }
+    }
+    // The docs those docs link to, relative to where each doc sits, come too.
+    let mut at = 0;
+    while at < wanted.len() {
+        let path = wanted[at].clone();
+        at += 1;
+        let Some(doc) = docs.get(&path) else { continue };
+        let Ok(text) = std::str::from_utf8(&doc.bytes) else {
+            continue;
+        };
+        for target in markdown_targets(text) {
+            if let Some(linked) = resolve(&path, &target)
+                && docs.contains_key(&linked)
+                && !files.contains_key(&linked)
+                && !wanted.contains(&linked)
+            {
+                wanted.push(linked);
+            }
+        }
+    }
+    for path in wanted {
+        if let Some(doc) = docs.get(&path) {
+            files.entry(path).or_insert_with(|| doc.bytes.clone());
+        }
+    }
+}
+
+/// `target`, a relative link written in the file at `from`, as a path from the root `from` is relative to; `None`
+/// for an absolute URL, an anchor, or a link that climbs out of the root.
+pub fn resolve(from: &str, target: &str) -> Option<String> {
+    let path = target.split('#').next().unwrap_or_default();
+    if path.is_empty()
+        || path.contains("://")
+        || path.starts_with('/')
+        || path.starts_with("mailto:")
+    {
+        return None;
+    }
+    let mut segments: Vec<&str> = from.split('/').collect();
+    segments.pop();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop()?;
+            }
+            other => segments.push(other),
+        }
+    }
+    Some(segments.join("/"))
+}
+
+/// Every link target in a markdown text: inline `[x](target)` and reference definitions `[x]: target`.
+pub fn markdown_targets(text: &str) -> Vec<String> {
+    let found = std::cell::RefCell::new(Vec::new());
+    rewrite_targets(text, &|target| {
+        found.borrow_mut().push(target.to_owned());
+        None
+    });
+    found.into_inner()
+}
+
+/// `text` with each link target that `rewrite` maps replaced, line by line.
+fn rewrite_targets(text: &str, rewrite: &dyn Fn(&str) -> Option<String>) -> String {
     let mut out = String::with_capacity(text.len());
     for line in text.split_inclusive('\n') {
         out.push_str(
-            &rewrite_reference(line, &installed)
-                .unwrap_or_else(|| rewrite_inline(line, &installed)),
+            &rewrite_reference(line, rewrite).unwrap_or_else(|| rewrite_inline(line, rewrite)),
         );
     }
     out
 }
 
 /// A reference definition line, `[label]: target "title"`, with its target rewritten; `None` for any other line.
-fn rewrite_reference(line: &str, installed: &impl Fn(&str) -> Option<String>) -> Option<String> {
+fn rewrite_reference(line: &str, rewrite: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     let trimmed = line.trim_start();
     let indent = &line[..line.len() - trimmed.len()];
     let rest = trimmed.strip_prefix('[')?;
@@ -135,7 +247,7 @@ fn rewrite_reference(line: &str, installed: &impl Fn(&str) -> Option<String>) ->
     let spaced = rest.len() - rest.trim_start().len();
     let rest = rest.trim_start();
     let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-    let target = installed(&rest[..end])?;
+    let target = rewrite(&rest[..end])?;
     Some(format!(
         "{indent}[{label}]:{}{target}{}",
         " ".repeat(spaced.max(1)),
@@ -143,8 +255,8 @@ fn rewrite_reference(line: &str, installed: &impl Fn(&str) -> Option<String>) ->
     ))
 }
 
-/// Every inline link `](target)` in the line whose target is a doc, rewritten.
-fn rewrite_inline(line: &str, installed: &impl Fn(&str) -> Option<String>) -> String {
+/// Every inline link `](target)` in the line, its target rewritten where `rewrite` maps it.
+fn rewrite_inline(line: &str, rewrite: &dyn Fn(&str) -> Option<String>) -> String {
     let mut out = String::with_capacity(line.len());
     let mut rest = line;
     while let Some(at) = rest.find("](") {
@@ -154,7 +266,7 @@ fn rewrite_inline(line: &str, installed: &impl Fn(&str) -> Option<String>) -> St
             .find(|c: char| c == ')' || c.is_whitespace())
             .unwrap_or(after.len());
         let target = &after[..end];
-        match installed(target) {
+        match rewrite(target) {
             Some(rewritten) => out.push_str(&rewritten),
             None => out.push_str(target),
         }

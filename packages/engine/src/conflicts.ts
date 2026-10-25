@@ -32,6 +32,7 @@ export const NOTE_SEVERITY: ReadonlyMap<string, ConflictSeverity> = new Map<
   string,
   ConflictSeverity
 >([
+  ["doc-link", "warning"],
   ["hook-approval", "warning"],
   ["hosted-mcp", "info"],
   ["mcp-schema-mismatch", "warning"],

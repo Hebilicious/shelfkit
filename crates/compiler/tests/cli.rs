@@ -735,7 +735,7 @@ fn apm_install_accepts_compiled_manifests_when_apm_is_present() {
         (
             "items/skills/ask-first/SKILL.md".to_owned(),
             "---\nname: ask-first\ndescription: Runs only when a person asks for it.\n\
-             disable-model-invocation: true\n---\n\nAsk before doing anything.\n"
+             disable-model-invocation: true\n---\n\nAsk before doing anything, in [our words](../../../docs/GLOSSARY.md).\n"
                 .to_owned(),
         ),
         (
@@ -798,6 +798,20 @@ fn apm_install_accepts_compiled_manifests_when_apm_is_present() {
             .is_file()
     );
     assert!(repo.join(".agents/skills/mixed-docs/SKILL.md").is_file());
+    // A skill's link to a doc stays inside the skill, where APM leaves it as written, and the doc is there.
+    for root in [".agents/skills", ".claude/skills"] {
+        let skill =
+            std::fs::read_to_string(repo.join(format!("{root}/ask-first/SKILL.md"))).unwrap();
+        assert!(
+            skill.contains("[our words](docs/GLOSSARY.md)"),
+            "{root}: {skill}"
+        );
+        assert!(
+            repo.join(format!("{root}/ask-first/docs/GLOSSARY.md"))
+                .is_file(),
+            "{root}"
+        );
+    }
 }
 
 /// A minimal OpenAPM registry on loopback, enough for `apm install`: the

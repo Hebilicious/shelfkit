@@ -30,7 +30,7 @@ use shelfkit_core::{
     Error, ErrorKind, Errors, ItemKind, LoadedItem, NoticeCode, Payload, ResolvedProfile, Revision,
     Shelf,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The version written into a compiled manifest. A profile revision is a
 /// hash, not a semver (`docs/PRD.md` section 13, question 1); a repository
@@ -156,17 +156,20 @@ pub enum NoteCode {
     McpSchemaMismatch,
     /// A skill's `SKILL.md` frontmatter deviates from agentskills.io.
     SkillFrontmatter,
+    /// An instruction or a skill links to a markdown file the profile does not ship (`docs.rs`).
+    DocLink,
 }
 
 impl NoteCode {
     /// Every code, for the test that keeps the schema package's list in step.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::ProducerNonconformantTarget,
         Self::UnratifiedLsp,
         Self::HookApproval,
         Self::HostedMcp,
         Self::McpSchemaMismatch,
         Self::SkillFrontmatter,
+        Self::DocLink,
     ];
 }
 
@@ -379,8 +382,10 @@ impl Compiler<'_> {
         );
     }
 
-    /// Put the docs skill into the profile's own package, and point the instructions' links to a doc at its copy.
+    /// Put the docs skill into the profile's own package, point the instructions' links to a doc at its copy there,
+    /// and give each skill that links to a doc a copy of its own (`docs::localize`).
     fn place_docs(&mut self) {
+        self.note_doc_links();
         if self.docs.is_empty() {
             return;
         }
@@ -401,11 +406,116 @@ impl Compiler<'_> {
                     *bytes = docs::rewrite_links(text, &paths, &skill).into_bytes();
                 }
             }
+            for name in skill_directories(&package.files) {
+                let prefix = format!(".apm/skills/{name}/");
+                let mut own: BTreeMap<String, Vec<u8>> = package
+                    .files
+                    .iter()
+                    .filter_map(|(path, bytes)| {
+                        path.strip_prefix(&prefix)
+                            .map(|inside| (inside.to_owned(), bytes.clone()))
+                    })
+                    .collect();
+                docs::localize(&mut own, &self.docs);
+                for (inside, bytes) in own {
+                    package.files.insert(format!("{prefix}{inside}"), bytes);
+                }
+            }
         }
         let own = self.packages.entry(self.resolved.id.clone()).or_default();
         own.files.extend(docs::skill_files(&skill, &self.docs));
         own.items
             .extend(self.docs.values().map(|doc| doc.id.clone()));
+    }
+
+    /// A note for each link in a vendored instruction or skill to a markdown file the profile does not ship: one to a
+    /// doc of the shelf the profile leaves out, or one to a file no doc provides. Installed in another repository,
+    /// either leads nowhere.
+    fn note_doc_links(&mut self) {
+        let shelf_docs: BTreeMap<&str, &str> = self
+            .shelf
+            .items
+            .values()
+            .filter_map(|loaded| match &loaded.item.payload {
+                Payload::Doc(doc) => Some((doc.path.as_str(), loaded.item.id.as_str())),
+                _ => None,
+            })
+            .collect();
+        let shelf_paths: Vec<&str> = shelf_docs.keys().copied().collect();
+        let profile_paths: Vec<&str> = self.docs.keys().map(String::as_str).collect();
+        // Every file of every skill the profile vendors, as `<skill>/<path>`: what a link into `.agents/skills/` or
+        // to a sibling skill reaches once installed.
+        let skill_files: BTreeSet<String> = self
+            .packages
+            .values()
+            .flat_map(|package| package.files.keys())
+            .filter_map(|path| path.strip_prefix(".apm/skills/").map(str::to_owned))
+            .collect();
+        let mut found: BTreeSet<(String, String, Option<String>)> = BTreeSet::new();
+        for package in self.packages.values() {
+            for (path, bytes) in &package.files {
+                let Some((id, own)) = linking_item(path, &package.files) else {
+                    continue;
+                };
+                let Ok(text) = std::str::from_utf8(bytes) else {
+                    continue;
+                };
+                for target in docs::markdown_targets(text) {
+                    let bare = target.split('#').next().unwrap_or_default();
+                    if !bare.ends_with(".md")
+                        || docs::resolve("", bare).is_none() && !bare.starts_with("../")
+                        || docs::doc_link(&target, &profile_paths).is_some()
+                        || own
+                            .iter()
+                            .any(|file| Some(file.as_str()) == docs::resolve(path, bare).as_deref())
+                    {
+                        continue;
+                    }
+                    let shelf_doc = docs::doc_link(&target, &shelf_paths)
+                        .and_then(|(doc_path, _)| shelf_docs.get(doc_path))
+                        .map(|doc| (*doc).to_owned());
+                    let mut shown = bare.strip_prefix("./").unwrap_or(bare);
+                    while let Some(rest) = shown.strip_prefix("../") {
+                        shown = rest;
+                    }
+                    let in_skills = [".agents/skills/", ".claude/skills/", ""]
+                        .iter()
+                        .any(|root| {
+                            shown
+                                .strip_prefix(root)
+                                .is_some_and(|rest| skill_files.contains(rest))
+                        });
+                    // The repository's own AGENTS.md and CLAUDE.md, which an install writes, and files of the
+                    // profile's skills are there once installed.
+                    if in_skills || matches!(shown, "AGENTS.md" | "CLAUDE.md") {
+                        continue;
+                    }
+                    found.insert((id.to_owned(), shown.to_owned(), shelf_doc));
+                }
+            }
+        }
+        for (id, path, doc) in found {
+            let Some(loaded) = self.shelf.items.get(&id) else {
+                continue;
+            };
+            let message = match doc {
+                Some(doc) => format!(
+                    "`{id}` links to `{path}`, which is the doc `{doc}`, and this profile does not include it, so \
+                     the link leads nowhere once installed. Add `{doc}` to the profile, or list it in `{id}`'s \
+                     `requires`"
+                ),
+                None => format!(
+                    "`{id}` links to `{path}`, which no doc in the shelf provides, so in a repository other than \
+                     the one it was written for the link leads nowhere. Import the file as a doc (`shelfkit add \
+                     <file>.md`) to ship it with the profile"
+                ),
+            };
+            self.notes.push(Note {
+                code: NoteCode::DocLink,
+                message,
+                path: loaded.item_json(),
+            });
+        }
     }
 
     fn reference(&mut self, loaded: &LoadedItem, upstream: &Upstream) {
@@ -710,6 +820,44 @@ impl Compiler<'_> {
             uses_registry: !self.registries.is_empty(),
         })
     }
+}
+
+/// The names of the skill folders in a package's files, `.apm/skills/<name>/...`.
+fn skill_directories(files: &BTreeMap<String, Vec<u8>>) -> BTreeSet<String> {
+    files
+        .keys()
+        .filter_map(|path| {
+            path.strip_prefix(".apm/skills/")?
+                .split_once('/')
+                .map(|(name, _)| name.to_owned())
+        })
+        .collect()
+}
+
+/// For a vendored instructions file or a markdown file of a skill, the item it belongs to and, for a skill, the
+/// paths of its own files (which its links may name); `None` for any other file.
+fn linking_item<'f>(
+    path: &'f str,
+    files: &BTreeMap<String, Vec<u8>>,
+) -> Option<(&'f str, Vec<String>)> {
+    if let Some(id) = path
+        .strip_prefix(vendor::INSTRUCTIONS_DIR)
+        .and_then(|name| name.strip_suffix(".instructions.md"))
+    {
+        return Some((id, Vec::new()));
+    }
+    let inside = path.strip_prefix(".apm/skills/")?;
+    let (name, _) = inside.split_once('/')?;
+    if !path.ends_with(".md") {
+        return None;
+    }
+    let prefix = format!(".apm/skills/{name}/");
+    let own = files
+        .keys()
+        .filter(|file| file.starts_with(&prefix))
+        .cloned()
+        .collect();
+    Some((name, own))
 }
 
 /// The lines of AGENTS.md between which `apm compile` writes the instructions, leaving the rest of the file as it is.
