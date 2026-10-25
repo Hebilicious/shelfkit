@@ -15,6 +15,7 @@ pub mod doctor;
 mod hosted;
 mod install;
 mod keychain;
+mod linked_docs;
 mod network;
 pub mod output;
 pub mod serve;
@@ -73,13 +74,15 @@ enum Command {
     ///
     /// A local directory or file (the `path` source kind) is read here, by APM's package layouts: `.apm/` primitives,
     /// a root SKILL.md, a plugin, `skills/<name>/SKILL.md`, and `hooks/*.json`, or one `.prompt.md`, `.agent.md`, or
-    /// `.instructions.md` file, or any other markdown file, which becomes a doc at its path in its repository. Items
-    /// are copied into the shelf with no upstream, their `source` naming a `path`
-    /// source in shelf.json.
+    /// `.instructions.md` file, or any other markdown file, which becomes a doc at its path in its repository. A
+    /// directory's root AGENTS.md becomes instructions, and every markdown file its relative links reach (directly or
+    /// through another doc) a doc at its path in the directory, required by what links to it. Items are copied into
+    /// the shelf with no upstream, their `source` naming a `path` source in shelf.json.
     ///
     /// Anything else (a GitHub repository as a URL or `owner/repo`, a ClawHub listing, an MCP registry, another
     /// ShelfKit instance) is imported by the hosted service's import job, which pins each item, records its licence
-    /// and attribution, and imports an unlicensed one as a link without content. Without `--pick` or `--all` the
+    /// and attribution, and imports an unlicensed one as a link without content. A repository's AGENTS.md and its
+    /// docs are found the same way there, and `--path` naming one markdown file imports it as a doc. Without `--pick` or `--all` the
     /// candidates are listed; with them they are imported into the hosted shelf, and `shelfkit fetch` brings them
     /// here. Needs `shelfkit login`.
     Add(AddArgs),
