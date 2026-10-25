@@ -79,7 +79,7 @@ dependencies:
       transport: http
 ```
 
-Three things worth noting. A ShelfKit instance can be declared as a **registry**, with `default` as a sibling key rather than a per-entry field, so a shelf is installable by stock APM without the ShelfKit CLI installed. Registry-routed dependencies use the object form with `id` and `version`, since a version selector is not a Git ref. And shelf-authored items compile into a local `.apm/` package under `vendor/`, because that is APM's layout for "N independent primitives" and it is exactly what those items are.
+Three things worth noting. A ShelfKit instance can be declared as a **registry**, with `default` as a sibling key rather than a per-entry field, so a shelf is installable by stock APM without the ShelfKit CLI installed. Registry-routed dependencies use the object form with `id` and `version`, since a version selector is not a Git ref. And shelf-authored items compile into a local `.apm/` package under `vendor/`, because that is APM's layout for "N independent primitives" and it is exactly what those items are, with one deliberate exception: instructions, tech stacks, and library notes go into the package's `.github/instructions/`, for the reason in section 4.2.
 
 Two parser rules the compiler must respect, because getting either wrong produces a manifest APM rejects. A Git pin is `#<ref>` and nothing else, where the ref is a tag, branch, or commit. That object form also accepts a semver range in `ref:` resolved against remote tags. `@` is never a ref separator, though it may appear inside a literal ref.
 
@@ -113,6 +113,8 @@ One consequence to accept: because APM owns install, **an APM breaking change is
 
 `packages/compiler` and `packages/core` are Rust crates with no Cloudflare dependency, compiled to a single static binary. The same crates are compiled to WASM for the Worker, so the browser preview and the CLI cannot disagree about what a profile compiles to.
 
+**Distribution.** A tag `v<version>` publishes the binary for Linux and macOS (x86-64 and ARM) and Windows (x86-64) as a GitHub release with a `SHA256SUMS`. Every deployment serves `/install.sh` and `/install.ps1`, which install the release of the deployment's own version into `~/.local/bin` (or `SHELFKIT_INSTALL_DIR`) after checking its checksum, and change nothing else on the machine. The CLI a deployment hands out therefore always speaks its API.
+
 | Command | Purpose |
 | --- | --- |
 | `shelfkit init` | Scaffold a shelf |
@@ -120,12 +122,23 @@ One consequence to accept: because APM owns install, **an APM breaking change is
 | `shelfkit search <query>` | Search the shelf, and optionally federated sources |
 | `shelfkit serve` | Run a shelf locally as an OpenAPM registry |
 | `shelfkit compile` | Write `apm.yml` and vendored content |
-| `shelfkit install` | Run APM, resolved from the path or through `uvx`, with the compiled flags |
+| `shelfkit install [<shelf>/<profile> --url <deployment>]` | Add a hosted profile to the repository's `apm.yml` (registry and dependency), then run APM, resolved from the path or through `uvx`, handing it the key `shelfkit login` keeps for each ShelfKit registry `apm.yml` names. Without a profile, run APM on the `apm.yml` there |
 | `shelfkit check` | Validate the shelf: schemas, coordinates, references, unratified keys, target conformance |
 | `shelfkit verify` | The manifest still matches the profile it came from |
 | `shelfkit recommend` | Propose items and profiles from detected stack markers |
 | `shelfkit doctor` | Detect `apm`, harnesses, and source drift |
 | `shelfkit login` / `push` | The hosted service |
+
+### 4.2 How a profile reaches the agents
+
+APM decides where each kind lands, and for most kinds its choice is the only sensible one: a skill folder in `.claude/skills/` and `.agents/skills/`, a prompt as a slash command, an MCP server in each harness's configuration. Instructions are the exception. APM 0.33's installer turns each one into a rule file per agent (`.claude/rules/`, `.cursor/rules/`, `.github/instructions/`); Codex reads none of those, and Cursor and Copilot read AGENTS.md as well, so the same text arrives twice. **ShelfKit sends instructions, tech stacks, and library notes through AGENTS.md instead, for every agent:**
+
+- The compiler writes them to the package's `.github/instructions/`, which `apm install` does not deploy and `apm compile` reads. No rule file is written for any agent.
+- The repository's `apm.yml` gets `compilation: { strategy: single-file, agents_md: { mode: managed_section } }`: `apm compile` writes every instruction into the root AGENTS.md, a scoped one as a section naming the files it applies to, between `<!-- apm:start -->` and `<!-- apm:end -->`, and keeps the rest of the file byte for byte.
+- `shelfkit install` adds those two lines to the end of an AGENTS.md that lacks them (or writes a file with only them), makes CLAUDE.md import AGENTS.md with `@AGENTS.md` (appending the line to a CLAUDE.md that lacks it, writing one that is only it, and leaving a symbolic link alone), and runs `apm compile --target codex`, whose only output is AGENTS.md. Codex, Cursor, and Copilot read AGENTS.md; Claude Code reads CLAUDE.md and, through the import, AGENTS.md. Not compiling for `claude` or `copilot` keeps APM from writing CLAUDE.md or `.github/copilot-instructions.md` copies of the same text.
+- These marker and import lines are the only lines ShelfKit writes outside `apm.yml`, and only to make APM's own managed-section mode work; the instructions themselves are written by APM.
+
+Two limits. This rests on APM 0.33's installer and compiler reading different directories, which nothing in APM promises; the compiler's APM test installs ShelfKit's own shelf and fails if a rule file appears or AGENTS.md lacks the instructions, so an APM release that changes it is caught before the pin moves. And an instruction that is an upstream dependency (a file in another repository, pinned) is installed by APM as a package of its own, so it still becomes rule files.
 
 ---
 
@@ -225,7 +238,7 @@ APM treats prompts and commands as one primitive with one source layout, `.apm/p
 
 #### `instructions`
 
-Project conventions as structured `sections`, plus `markers` that make a stack detectable. Compiles into an APM `.apm/instructions/` primitive, or into a harness instruction file for the harnesses APM does not cover.
+Project conventions as structured `sections`, plus `markers` that make a stack detectable. Compiles into an `.instructions.md` file that reaches every agent through one section of the repository's AGENTS.md (section 4.2).
 
 #### `agent`
 
@@ -466,7 +479,7 @@ Vue 3, Vite, Vize, CSSForge. Everything goes through the same API as the CLI.
 | **Item** | Rendered content, what installing it writes, history and diffs, origin, what uses it, scans. |
 | **Profiles** | Every profile, what it installs, and the way to edit or install it. |
 | **Edit profile** | Build a profile: drag items in, see what it installs and any conflicts, see the `apm.yml` update live. Reached from a profile, not the navigation. |
-| **Install** | Install a profile through the shelf's registry with stock APM: copy a prompt that has an agent do it, the terminal steps, or the ShelfKit CLI's, and see which file each item becomes for each agent. Reached from a profile. |
+| **Install** | Install a profile from the shelf's registry. The default is the ShelfKit CLI: a prompt that has an agent install the CLI if it is missing and run `shelfkit install`, or the same as terminal steps. APM alone is the other way, again as a prompt or terminal steps. A private shelf's steps sign the CLI in once with `shelfkit login`, so no key is ever in a file or in front of an agent. Below, which file each item becomes for each agent. Reached from a profile. |
 | **Import** | Paste a repo, registry, catalog, or shelf URL; pick items; set pins. |
 | **Repositories** | Which repositories installed which profile version, and which are behind. |
 | **Settings** | Your passkeys and devices, people and invites, API keys for programs, sources, secret names, registry visibility. |
@@ -573,7 +586,7 @@ type Mutation {
 ```
 
 - A key never goes into a browser. Settings creates one and shows it once, to copy into CI or an agent's configuration.
-- `shelfkit login` asks for a key created in the UI and stores it in the OS keychain.
+- `shelfkit login` asks for a key created in the UI and stores it in the OS keychain. `shelfkit install` hands it to APM in `APM_REGISTRY_TOKEN_<NAME>` for each ShelfKit registry an `apm.yml` names, so installing from a private shelf needs the key typed once per computer, by a person, and never in a file, a command line, or an agent's context.
 - The registry endpoints read the same header, which is why declaring a ShelfKit instance in `apm.yml` needs no separate credential.
 - A request the cookie authenticates must be same-origin: a `POST` is JSON only and carries this origin's `Origin` header, and there is no CORS. `/mcp` reads the header only.
 
