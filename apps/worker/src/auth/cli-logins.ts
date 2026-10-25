@@ -87,8 +87,13 @@ export class CliLoginIndex extends DurableObject<Env> {
     readonly secretHash: string;
     readonly expiresAt: number;
   }): Promise<boolean> {
-    if (this.live() !== null) {
+    const existing = this.login();
+    if (existing !== null && existing.expiresAt > seconds()) {
       return false;
+    }
+    // An expired login its alarm has not cleared yet goes first, revoking a key nobody picked up.
+    if (existing !== null) {
+      await this.end(existing);
     }
     const login: Login = { ...input, state: { status: "pending" } };
     this.kv.put("login", login);
