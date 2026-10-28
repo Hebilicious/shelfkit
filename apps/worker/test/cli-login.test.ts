@@ -16,7 +16,15 @@ import { signSession } from "../src/auth/browser.ts";
 import type { CliLoginIndex } from "../src/auth/cli-logins.ts";
 import { CLI_RATE_LIMITS } from "../src/auth/limits.ts";
 import { TEST_SESSION_SECRET } from "./fake-github.ts";
-import { graphql, ORIGIN, push, shelfOf, TEST_OWNER_KEY } from "./helpers.ts";
+import {
+  fixtureShelf,
+  graphql,
+  ORIGIN,
+  push,
+  shelfOf,
+  TEST_OWNER_KEY,
+} from "./helpers.ts";
+import { call, failure, textOf, toolNames, value } from "./mcp/client.ts";
 
 const StartSchema = v.object({
   deviceCode: v.string(),
@@ -486,6 +494,66 @@ describe("an invited person's CLI", () => {
       TEST_OWNER_KEY
     );
     await expect(shelves()).resolves.toStrictEqual({ acme: null, other: null });
+  });
+
+  it("opens /mcp with the person's grants: reading the shelf they hold, and reporting only on a profile they publish", async () => {
+    await push("acme", fixtureShelf(inject("allKindsShelf"), "acme"));
+    await push("other", fixtureShelf(inject("allKindsShelf"), "other"));
+    const reader = await signedInCli(await invitedPerson("acme", ["read"]));
+    const publisher = await signedInCli(
+      await invitedPerson("acme", ["read", "publish:acme/minimal"])
+    );
+    const plan = await value(
+      v.object({ apmYmlDigest: v.string(), profileRevision: v.string() }),
+      "shelf.compile.plan",
+      { profile: "minimal", shelf: "acme" },
+      reader
+    );
+    /** What `shelf.report` on `minimal` answers `key`: the report, or the failure's error. */
+    const outcome = async (key: string) => {
+      const { result } = await call(
+        "shelf.report",
+        {
+          ...plan,
+          outcome: "applied",
+          profile: "minimal",
+          repository: "github.com/acme/web",
+          shelf: "acme",
+        },
+        key
+      );
+      return result?.isError === true
+        ? textOf(result).error
+        : result?.structuredContent;
+    };
+    const found = await value(
+      v.object({
+        items: v.array(v.object({ item: v.object({ id: v.string() }) })),
+      }),
+      "shelf.search",
+      { query: "Playwright", shelf: "acme" },
+      reader
+    );
+    const listed = await toolNames(reader);
+    expect({
+      found: found.items.some((entry) => entry.item.id === "playwright"),
+      listed: ["shelf.search", "shelf.report"].every((name) =>
+        listed.includes(name)
+      ),
+      other: await failure(
+        "shelf.search",
+        { query: "Playwright", shelf: "other" },
+        reader
+      ),
+      published: await outcome(publisher),
+      read: await outcome(reader),
+    }).toMatchObject({
+      found: true,
+      listed: true,
+      other: { _tag: "ShelfNotFound" },
+      published: { stale: false },
+      read: { _tag: "Forbidden" },
+    });
   });
 
   it("is signed out when the owner removes the person", async () => {

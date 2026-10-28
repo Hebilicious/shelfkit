@@ -10,7 +10,9 @@
  *   (`read` or `publish:{shelf}/*`). A key holding only `mcp:` relay grants sees its relayed tools and nothing else
  *   (rule 4), and a `read:{shelf}/{profile}` key is registry-only;
  * - `shelf.report`, for the owner and a key that may publish a profile. A `publish:{shelf}/{profile}` key lists only
- *   this tool: it reports on its profile and cannot read the shelf.
+ *   this tool: it reports on its profile and cannot read the shelf;
+ * - every tool, for a person signed in with a CLI key: what they hold differs by shelf, and only each shelf's object
+ *   knows it.
  *
  * Availability narrows the list; it is not what protects a shelf. The object decides every call.
  */
@@ -53,6 +55,12 @@ export interface ToolAccess {
 
 export function toolAccess(session: Session): ToolAccess {
   if (session.kind === "owner" || session.kind === "system") {
+    return { reads: true, reports: true };
+  }
+  // A person (the CLI key of someone invited, or of a GitHub account) holds what each shelf grants them, which only
+  // that shelf's object knows: every tool is offered, and the object answers as their grant there allows, reporting
+  // only on a profile the grant lets them publish, as for a key.
+  if (session.kind === "person") {
     return { reads: true, reports: true };
   }
   if (session.kind !== "key") {

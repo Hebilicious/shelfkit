@@ -82,7 +82,8 @@ export function relayShelf(request: Request, session: Session): string | null {
   if (session.kind === "key") {
     return named === null || named === session.shelf ? session.shelf : null;
   }
-  return session.kind === "owner" ? named : null;
+  // The owner, or a person whose grant on the named shelf the object checks for each relayed item (`mayRelay`).
+  return session.kind === "owner" || session.kind === "person" ? named : null;
 }
 
 /** The relay of one request. */
