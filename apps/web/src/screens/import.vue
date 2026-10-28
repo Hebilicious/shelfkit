@@ -168,7 +168,10 @@ async function index(): Promise<void> {
   }
 }
 
-/** The titles of the candidates one links to: imported with it, it requires them, so a profile that selects it gets them. */
+/**
+ * The titles of the candidates one links to. It requires them, so a profile that selects it gets them: those imported
+ * with it, and for one left out, the doc the shelf already has at its path (`requireLinked` in `@shelfkit/importers`).
+ */
 function linkedTitles(candidates: readonly ImportCandidate[], candidate: ImportCandidate): string {
   const linked = new Set(candidate.requires);
   return candidates
@@ -285,7 +288,8 @@ function when(timestamp: string): string {
                   v-if='linkedTitles(readCandidates(job.candidates), candidate) !== ""'
                   class="small muted"
                 >
-                  Links to {{ linkedTitles(readCandidates(job.candidates), candidate) }}. Tick those too and they come with it.
+                  Links to {{ linkedTitles(readCandidates(job.candidates), candidate) }}. Ticked, they come with it; left
+                  unticked, it uses the doc this shelf already has at the same path, if there is one.
                 </div>
               </td>
               <td><input

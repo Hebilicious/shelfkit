@@ -34,6 +34,18 @@ export function isDocPath(path: string): boolean {
   return v.is(DocPathSchema, path);
 }
 
+/**
+ * The `path` a doc at `path` in its repository gets when the tree at `tree` is imported: relative to that tree, since
+ * that is how the tree's AGENTS.md links to it, and the compiler points those links at the doc's installed copy. A doc
+ * outside the tree keeps its repository path.
+ */
+export function docPathIn(tree: string | undefined, path: string): string {
+  const base = (tree ?? "").replaceAll(/^\/+|\/+$/gu, "");
+  return base !== "" && path.startsWith(`${base}/`)
+    ? path.slice(base.length + 1)
+    : path;
+}
+
 /** The text with fenced code blocks blanked, so a link shown as an example is not followed. */
 function outsideCode(text: string): string[] {
   const lines: string[] = [];

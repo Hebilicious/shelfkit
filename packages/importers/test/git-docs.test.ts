@@ -205,6 +205,52 @@ describe("docs through the git adapter", () => {
     expect(glossary?.item.requires).toStrictEqual(["domain-words"]);
   });
 
+  it("has AGENTS.md picked alone require the doc already on the shelf at the path it links to, and not guess between two", async () => {
+    const context = contextFor(repository(true));
+    const found = await gitAdapter.discover(source, context);
+    const picked = candidate(found.candidates, "AGENTS.md");
+    const fetched = [
+      {
+        candidate: picked,
+        imported: await gitAdapter.fetch(
+          source,
+          picked,
+          { candidate: picked.key },
+          context
+        ),
+        pick: { candidate: picked.key },
+      },
+    ];
+    const linked = (docs: { id: string; path: string }[]) => {
+      const [agents] = requireLinked(fetched, {
+        candidates: found.candidates,
+        docs,
+        tree: undefined,
+      });
+      return { requires: agents?.item.requires, warnings: agents?.warnings };
+    };
+    expect(
+      linked([
+        { id: "domain-words", path: "docs/domain.md" },
+        { id: "guide", path: "docs/guide.md" },
+      ])
+    ).toStrictEqual({ requires: ["domain-words", "guide"], warnings: [] });
+    expect(
+      linked([
+        { id: "domain-words", path: "docs/domain.md" },
+        { id: "domain-old", path: "docs/domain.md" },
+      ])
+    ).toStrictEqual({
+      requires: undefined,
+      warnings: [
+        "kit: links to docs/domain.md, which 2 docs on the shelf have (domain-words, domain-old), so it requires none of them; add the one it means to its requires",
+      ],
+    });
+    expect(
+      linked([{ id: "elsewhere", path: "other/domain.md" }])
+    ).toStrictEqual({ requires: undefined, warnings: [] });
+  });
+
   it("imports AGENTS.md and its docs as links, without their text, when nothing licenses a copy", async () => {
     const context = contextFor(repository(false));
     const found = await gitAdapter.discover(source, context);

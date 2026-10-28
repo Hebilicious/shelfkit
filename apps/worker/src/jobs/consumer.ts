@@ -218,8 +218,13 @@ async function applyImport(
         return { candidate, imported, pick };
       })
     );
-    // An AGENTS.md picked with the docs it links to requires them, so a profile that selects it gets them.
-    const items = requireLinked(fetched);
+    // An AGENTS.md requires the docs it links to, picked with it or already on the shelf, so a profile that selects it
+    // gets them.
+    const items = requireLinked(fetched, {
+      candidates: job.candidates,
+      docs: await stub.shelfDocs(session, message.shelf),
+      tree: job.source.path,
+    });
     const committed = await stub.applyImport(
       session,
       message.shelf,

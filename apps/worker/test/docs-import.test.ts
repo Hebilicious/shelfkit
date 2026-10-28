@@ -195,6 +195,52 @@ describe("docs through the import jobs", () => {
     );
   });
 
+  it("has AGENTS.md imported alone require the doc the shelf already has at the path it links to, and compile with it", async () => {
+    // The shelf's own doc at docs/domain.md, under an id of its own, written before the import.
+    await push(
+      SHELF,
+      shelfOf(SHELF, false, {
+        "items/docs/domain-words/doc.md": "# Domain\n\nOur words.\n",
+        "items/docs/domain-words/item.json": `${JSON.stringify({ id: "domain-words", kind: "doc", path: "docs/domain.md", title: "Domain" })}\n`,
+      })
+    );
+    const deps = dependencies(repository(true));
+    const job = await stub().createImportJob(owner, SHELF, {
+      kind: "git",
+      repo: "https://github.com/acme/kit",
+    });
+    if (job === null) {
+      throw new Error("no job");
+    }
+    await runJob(
+      { job: job.id, shelf: SHELF, type: "import.discover" },
+      env,
+      deps
+    );
+    await stub().pickImport(owner, SHELF, job.id, [{ candidate: "AGENTS.md" }]);
+    await runJob(
+      { job: job.id, shelf: SHELF, type: "import.apply" },
+      env,
+      deps
+    );
+    const [done] = (await stub().importJobs(owner, SHELF, job.id)) ?? [];
+    const agents = await item("kit");
+    const compiled = await compileAgents();
+    expect({
+      imported: done?.imported,
+      requires: agents.document.requires,
+      status: done?.status,
+    }).toStrictEqual({
+      imported: ["kit"],
+      requires: ["domain-words"],
+      status: "done",
+    });
+    expect(compiled.errors).toStrictEqual([]);
+    expect(JSON.stringify(compiled.plan?.files)).toContain(
+      "[the domain](.agents/skills/docs-kit-p-docs/docs/domain.md#terms)"
+    );
+  });
+
   it("imports unlicensed docs as links, which a profile cannot compile, and says why", async () => {
     const { done } = await importEverything(repository(false));
     expect(done).toMatchObject({ status: "done" });

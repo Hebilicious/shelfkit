@@ -31,7 +31,7 @@ import type { Scanner, SourceAdapter, SourceKind } from "./seam.ts";
 
 export * from "./seam.ts";
 export { requireLinked } from "./imported.ts";
-export type { Fetched } from "./imported.ts";
+export type { Fetched, LinkTargets, ShelfDoc } from "./imported.ts";
 export { ALL_TERMS } from "./terms.ts";
 export type { SourceTerms } from "./terms.ts";
 

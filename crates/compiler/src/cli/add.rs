@@ -22,6 +22,10 @@
 //! the directory, which is how AGENTS.md links to it, and each linking item
 //! `requires` the docs it links to, so a profile that selects AGENTS.md gets
 //! them. Their ids come from their file names, kebab-cased and made unique.
+//! A linked doc the shelf already has at that `path` is not imported again:
+//! the linking item requires the shelf's own, which is the doc the compiler
+//! points the link at. When the shelf has more than one there, the link is
+//! imported with neither required, and the import says so.
 //!
 //! A single `*.prompt.md`, `*.agent.md`, or `*.instructions.md` file yields
 //! one item, and any other markdown file a doc whose `path` is where it sits
@@ -32,6 +36,7 @@
 
 use super::linked_docs;
 use crate::engine::Overlay;
+use shelfkit_core::item::Payload;
 use shelfkit_core::profile::{ShelfSource, SourceKind};
 use shelfkit_core::{DirSource, Item, ItemKind, Manifest, MemorySource, load};
 use std::collections::{BTreeMap, BTreeSet};
@@ -76,7 +81,8 @@ pub fn import(shelf_root: &Path, target: &Path, source_id: Option<&str>) -> Resu
         };
         (root, vec![found])
     } else {
-        (target.clone(), discover(&target, &mut warnings)?)
+        let on_shelf = shelf_docs(shelf_root);
+        (target.clone(), discover(&target, &on_shelf, &mut warnings)?)
     };
     if found.is_empty() {
         return Err(format!(
@@ -304,10 +310,30 @@ fn doc_at(file: &Path, path: String, id: String) -> Result<Found, String> {
     })
 }
 
+/// The ids of the shelf's docs by the `path` each installs at. A shelf that does not load has none to offer; the
+/// import's own check reports why it does not.
+fn shelf_docs(shelf_root: &Path) -> BTreeMap<String, Vec<String>> {
+    let mut docs: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    if let Ok(shelf) = load(&DirSource::new(shelf_root)) {
+        for loaded in shelf.items.values() {
+            if let Payload::Doc(doc) = &loaded.item.payload {
+                docs.entry(doc.path.clone())
+                    .or_default()
+                    .push(loaded.item.id.clone());
+            }
+        }
+    }
+    docs
+}
+
 /// What a directory offers: its APM layouts, then its AGENTS.md and the docs that links to.
-fn discover(root: &Path, warnings: &mut Vec<String>) -> Result<Vec<Found>, String> {
+fn discover(
+    root: &Path,
+    on_shelf: &BTreeMap<String, Vec<String>>,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<Found>, String> {
     let mut found = layouts(root)?;
-    let linked = agents_and_docs(root, &found, warnings)?;
+    let linked = agents_and_docs(root, &found, on_shelf, warnings)?;
     found.extend(linked);
     Ok(found)
 }
@@ -363,11 +389,13 @@ fn unique_id(name: &str, fallback: &str, qualifier: &str, taken: &mut BTreeSet<S
     id
 }
 
-/// The directory's AGENTS.md as instructions, and every doc its links reach (`linked_docs.rs`), each requiring the
-/// docs it links to. Nothing when AGENTS.md is missing or a symbolic link (a CLAUDE.md's target, say).
+/// The directory's AGENTS.md as instructions, and every doc its links reach (`linked_docs.rs`) that the shelf does not
+/// have at its `path` yet, each requiring the docs it links to: those imported with it, or the shelf's own at that
+/// path. Nothing when AGENTS.md is missing or a symbolic link (a CLAUDE.md's target, say).
 fn agents_and_docs(
     root: &Path,
     layouts: &[Found],
+    on_shelf: &BTreeMap<String, Vec<String>>,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<Found>, String> {
     let agents = root.join("AGENTS.md");
@@ -383,15 +411,36 @@ fn agents_and_docs(
     }
     let mut taken: BTreeSet<String> = layouts.iter().map(|found| found.id.clone()).collect();
     let instructions_id = unique_id(&file_name(root), "instructions", "instructions", &mut taken);
-    let ids: BTreeMap<&str, String> = followed
-        .docs
-        .iter()
-        .map(|doc| {
-            let stem = doc.path.rsplit('/').next().unwrap_or(&doc.path);
-            let stem = stem.strip_suffix(".md").unwrap_or(stem);
-            (doc.path.as_str(), unique_id(stem, "doc", "doc", &mut taken))
-        })
-        .collect();
+    // Each linked doc's id: the shelf's own doc at its path, or a new one for the copy imported here.
+    let mut ids: BTreeMap<&str, String> = BTreeMap::new();
+    let mut new_docs = Vec::new();
+    for doc in &followed.docs {
+        match on_shelf.get(&doc.path).map(Vec::as_slice) {
+            Some([id]) => {
+                warnings.push(format!(
+                    "{}: the shelf has it already, as doc `{id}`, so it was not imported again; what links to it \
+                     requires that one",
+                    doc.path
+                ));
+                ids.insert(doc.path.as_str(), id.clone());
+            }
+            Some(several) => {
+                warnings.push(format!(
+                    "{}: the shelf has {} docs at this path ({}), so it was not imported again and nothing that \
+                     links to it requires one; add the one meant to its requires",
+                    doc.path,
+                    several.len(),
+                    several.join(", ")
+                ));
+            }
+            None => {
+                let stem = doc.path.rsplit('/').next().unwrap_or(&doc.path);
+                let stem = stem.strip_suffix(".md").unwrap_or(stem);
+                ids.insert(doc.path.as_str(), unique_id(stem, "doc", "doc", &mut taken));
+                new_docs.push(doc);
+            }
+        }
+    }
     let requires = |links: &[String], own: &str| -> serde_json::Value {
         let mut required: Vec<&str> = links
             .iter()
@@ -414,7 +463,7 @@ fn agents_and_docs(
         );
     }
     found.push(instructions);
-    for doc in &followed.docs {
+    for doc in new_docs {
         let id = ids.get(doc.path.as_str()).cloned().unwrap_or_default();
         let mut item = doc_at(&root.join(&doc.path), doc.path.clone(), id.clone())?;
         if !doc.links.is_empty() {

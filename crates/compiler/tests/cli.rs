@@ -620,6 +620,87 @@ fn add_imports_a_directorys_agents_md_and_every_doc_its_links_reach() {
 }
 
 #[test]
+fn add_has_agents_md_require_the_doc_the_shelf_already_has_at_a_linked_path() {
+    let root = scratch("agents-shelf-docs");
+    let shelf = root.join("shelf");
+    assert_eq!(shelfkit(&root, &NoProcesses, &["init", "shelf"]).code, 0);
+    // The shelf's own doc at docs/domain.md, under an id of its own.
+    let own = shelf.join("items/docs/domain-words");
+    std::fs::create_dir_all(&own).unwrap();
+    std::fs::write(own.join("doc.md"), "# Domain\n\nOur words.\n").unwrap();
+    std::fs::write(
+        own.join("item.json"),
+        r#"{ "id": "domain-words", "kind": "doc", "title": "Domain", "path": "docs/domain.md" }"#,
+    )
+    .unwrap();
+
+    let repo = root.join("acme-app");
+    for (path, text) in [
+        (
+            "AGENTS.md",
+            "# Acme\n\nRead [the domain](docs/domain.md) and [the glossary](GLOSSARY.md).\n",
+        ),
+        ("docs/domain.md", "# Domain\n"),
+        (
+            "GLOSSARY.md",
+            "# Glossary\n\nBack to [the domain](docs/domain.md).\n",
+        ),
+    ] {
+        let file = repo.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+
+    let ran = shelfkit(&shelf, &NoProcesses, &["add", "../acme-app"]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let added: Vec<&str> = ran
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with("added"))
+        .collect();
+    assert_eq!(
+        added,
+        ["added instructions acme-app", "added doc glossary"],
+        "{}",
+        ran.stdout
+    );
+    assert!(
+        ran.stderr
+            .contains("docs/domain.md: the shelf has it already, as doc `domain-words`"),
+        "{}",
+        ran.stderr
+    );
+    let item = |kind: &str, id: &str| -> serde_json::Value {
+        let path = shelf.join(format!("items/{kind}/{id}/item.json"));
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    assert_eq!(
+        item("instructions", "acme-app")["requires"],
+        serde_json::json!(["domain-words", "glossary"])
+    );
+    assert_eq!(
+        item("docs", "glossary")["requires"],
+        serde_json::json!(["domain-words"])
+    );
+    assert!(!shelf.join("items/docs/domain").exists());
+
+    // Selecting AGENTS.md brings the shelf's doc, and its link points at that doc's installed copy.
+    std::fs::write(
+        shelf.join("profiles/default.json"),
+        r#"{ "id": "default", "title": "Default", "items": ["acme-app"] }"#,
+    )
+    .unwrap();
+    let dry = shelfkit(&shelf, &NoProcesses, &["compile", "--dry-run", "--json"]);
+    assert_eq!(dry.code, 0, "{}", dry.stderr);
+    assert!(dry.stdout.contains("Our words."), "{}", dry.stdout);
+    assert!(
+        dry.stdout.contains("[the domain](.agents/skills/"),
+        "{}",
+        dry.stdout
+    );
+}
+
+#[test]
 fn add_hands_a_source_that_is_not_local_to_the_hosted_import_and_reads_nothing_itself() {
     let root = scratch("add-remote");
     assert_eq!(shelfkit(&root, &NoProcesses, &["init"]).code, 0);

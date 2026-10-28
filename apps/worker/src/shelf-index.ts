@@ -3378,6 +3378,25 @@ export class ShelfIndex extends DurableObject<Env> {
     return committed;
   }
 
+  /** The shelf's docs by the `path` each installs at, for an import whose links reach a doc it did not pick. */
+  shelfDocs(
+    session: Session,
+    shelf: string
+  ): { readonly id: string; readonly path: string }[] {
+    if (session.kind !== "system" || this.shelfId() !== shelf) {
+      return [];
+    }
+    return this.db
+      .select()
+      .from(table.item)
+      .all()
+      .flatMap(({ document }) =>
+        document.kind === "doc"
+          ? [{ id: document.id, path: document.path }]
+          : []
+      );
+  }
+
   /**
    * The imported items (those with a `source`), for the upstream check, each with the kind of its source: the kind of
    * the `shelf.json` source its `source.id` names, else the kind its own `source` shows (`sourceKindOf`).

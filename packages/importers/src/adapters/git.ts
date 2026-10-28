@@ -14,7 +14,13 @@
 import type { ItemKind } from "@shelfkit/schema";
 import * as v from "valibot";
 
-import { firstHeading, followDocs, isDocFile, isDocPath } from "../docs.ts";
+import {
+  docPathIn,
+  firstHeading,
+  followDocs,
+  isDocFile,
+  isDocPath,
+} from "../docs.ts";
 import { frontmatter, skillProblem } from "../frontmatter.ts";
 import {
   GITHUB_API,
@@ -714,10 +720,7 @@ async function kindFields(
     return {};
   }
   const path = candidate.path ?? "";
-  const base = cleanPath(source.path);
-  const relative = path.startsWith(`${base}/`)
-    ? path.slice(base.length + 1)
-    : path;
+  const relative = docPathIn(cleanPath(source.path), path);
   if (!isDocPath(relative)) {
     throw new Error(
       `${repositoryUrl(snap.github.repository)}/${path}: \`${relative}\` cannot be a doc's path`
