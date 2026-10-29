@@ -50,7 +50,8 @@ function when(timestamp: string): string {
     </header>
     <p class="muted">
       Which repositories installed which profile, and whether they have its latest version. An install is recorded
-      when it is written from a profile's Install page, or reported by an agent with the <code>shelf.report</code> tool.
+      when an agent reports it with the <code>shelf.report</code> tool; installing from a profile's Install page or
+      with <code>shelfkit install</code> records nothing here.
     </p>
     <p
       v-if="latestByRepository.length > 0"
