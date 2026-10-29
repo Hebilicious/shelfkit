@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0-rc.7"
+version = "0.1.0-rc.8"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/Hebilicious/shelfkit"
@@ -11,10 +11,10 @@ rust-version = "1.98"
 
 [workspace.dependencies]
 # Internal
-shelfkit-core = { path = "crates/core", version = "=0.1.0-rc.7" }
-shelfkit-compiler = { path = "crates/compiler", version = "=0.1.0-rc.7", default-features = false }
-shelfkit-registry = { path = "crates/registry", version = "=0.1.0-rc.7" }
-shelfkit-git = { path = "crates/git", version = "=0.1.0-rc.7" }
+shelfkit-core = { path = "crates/core", version = "=0.1.0-rc.8" }
+shelfkit-compiler = { path = "crates/compiler", version = "=0.1.0-rc.8", default-features = false }
+shelfkit-registry = { path = "crates/registry", version = "=0.1.0-rc.8" }
+shelfkit-git = { path = "crates/git", version = "=0.1.0-rc.8" }
 
 # Shared
 serde = { version = "1", features = ["derive"] }
