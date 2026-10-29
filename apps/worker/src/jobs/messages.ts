@@ -36,11 +36,11 @@ export const JobMessageSchema = v.variant("type", [
   v.strictObject({
     /** A branch, tag, or commit; the default branch when absent. */
     ref: v.optional(v.string()),
-    /** `owner/repo` on GitHub. */
-    repository: v.pipe(
-      v.string(),
-      v.regex(/^[\w.-]+\/[\w.-]+$/u, "must be owner/repo")
-    ),
+    /** `owner/repo` on GitHub, or the HTTPS URL of a public Git repository anywhere else. */
+    repository: v.union([
+      v.pipe(v.string(), v.regex(/^[\w.-]+\/[\w.-]+$/u, "must be owner/repo")),
+      v.pipe(v.string(), v.url(), v.startsWith("https://")),
+    ]),
     /** A directory in the repository that holds the shelf; the root when absent. */
     root: v.optional(v.string()),
     shelf: ShelfIdSchema,

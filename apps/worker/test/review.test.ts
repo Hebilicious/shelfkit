@@ -506,7 +506,7 @@ describe("6. a secret", () => {
     const dependencies = {
       adapters: [adapter],
       fetch,
-      forge: new GitHubForge(fetch),
+      forge: () => new GitHubForge(fetch),
       now: () => "2026-10-19T12:00:00Z",
       scanners: [],
     };

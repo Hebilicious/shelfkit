@@ -80,7 +80,7 @@ function dependencies(
   return {
     adapters,
     fetch: recordedFetch,
-    forge: new GitHubForge(recordedFetch),
+    forge: () => new GitHubForge(recordedFetch),
     now: () => "2026-10-19T12:00:00Z",
     scanners,
   };

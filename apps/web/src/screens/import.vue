@@ -225,9 +225,11 @@ function when(timestamp: string): string {
         <h2>Copy a whole shelf from GitHub</h2>
         <p class="small muted">
           Read every item and profile of a shelf (a folder with a <code>shelf.json</code>) in a GitHub repository into
-          this one.
+          this one, or from a public Git repository on any other host by its https:// URL, whose ref is then a branch.
         </p>
-        <label class="field">Repository <input v-model="indexForm.repository" placeholder="owner/repo" required /></label>
+        <label class="field">
+          Repository <input v-model="indexForm.repository" placeholder="owner/repo, or https://…" required />
+        </label>
         <div class="row">
           <label class="field">Branch, tag or commit <input v-model="indexForm.ref" placeholder="the default branch" /></label>
           <label class="field">Folder <input v-model="indexForm.root" placeholder="the root" /></label>

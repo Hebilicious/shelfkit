@@ -409,12 +409,14 @@ type Mutation {
   ): Grant!
 
   """
-  Queue indexing a shelf from a GitHub repository through the REST API; the result arrives as a `snapshot` event.
+  Queue indexing a shelf from a Git repository: GitHub's REST API for owner/repo, Artifacts for any other public HTTPS URL. The result arrives as a `snapshot` event.
   """
   indexRepository(
     ref: String
 
-    """owner/repo on GitHub."""
+    """
+    owner/repo on GitHub, or the HTTPS URL of a public Git repository anywhere else (read through Artifacts; `ref` is then a branch).
+    """
     repository: String!
 
     """The directory holding the shelf; the root by default."""
