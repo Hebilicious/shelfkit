@@ -133,6 +133,15 @@ const draft = reactive<Draft>({
 const saving = ref(false);
 const saveError = ref<string | null>(null);
 
+/** The editable fields of a draft, as one string, to tell whether it still holds what it was reset to. */
+function draftFields(): string {
+  const { message: _message, ...fields } = draft;
+  return JSON.stringify(fields);
+}
+
+/** The draft's fields when it was last reset from the prompt: anything else in it was typed since. */
+const resetTo = ref<string | null>(null);
+
 function resetDraft(): void {
   const current = item.value;
   if (current === null) {
@@ -150,10 +159,13 @@ function resetDraft(): void {
     name: variable.name,
     required: variable.required === true,
   }));
+  resetTo.value = draftFields();
 }
 
-watch(item, (current, previous) => {
-  if (current !== null && (previous === null || tab.value !== "edit")) {
+// The editor follows the prompt (a save, a restore, a change made elsewhere) until something is typed in it; then it
+// keeps what was typed.
+watch(item, (current) => {
+  if (current !== null && (resetTo.value === null || draftFields() === resetTo.value)) {
     resetDraft();
   }
 });
@@ -317,7 +329,8 @@ async function restore(at: number): Promise<void> {
       notify(problemText(result), null, "error");
       return;
     }
-    notify("Restored as a new version.");
+    // The same files are the same version: restoring one makes it current again, rather than a copy of it.
+    notify("Restored. The prompt is that version again.");
     selectedRevision.value = 0;
     invalidate(shelfPrefix(shelf));
   } catch (error) {

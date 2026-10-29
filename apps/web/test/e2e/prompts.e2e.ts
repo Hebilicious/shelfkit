@@ -87,7 +87,7 @@ test("favourites a prompt from the keyboard, and the list opens on it", async ({
   await expect(page.getByTestId("prompt-list")).toContainText("PR description");
 });
 
-test("edits a prompt in place, as a new revision with a diff, and restores the old one", async ({
+test("edits a prompt in place, as a new revision with a diff, and restores the old one, which is that revision again", async ({
   page,
 }) => {
   await page.goto(`/shelves/${SHELF}/prompts/pr-description`);
@@ -108,7 +108,13 @@ test("edits a prompt in place, as a new revision with a diff, and restores the o
     .last()
     .click();
   await page.getByRole("button", { name: "Restore this version" }).click();
-  await expect(page.getByRole("tab", { name: /History \(3\)/u })).toBeVisible();
+  // The restored files are the first version's, byte for byte, so the prompt is that version again: no third one.
+  await expect(
+    page.getByText("The prompt is that version again.")
+  ).toBeVisible();
+  await expect(page.getByRole("tab", { name: /History \(2\)/u })).toBeVisible();
+  await page.getByRole("tab", { name: "Edit" }).click();
+  await expect(body).not.toHaveValue(/Keep it under 200 words/u);
 });
 
 test("renders markdown with HTML shown as text, never run, and remote images never loaded", async ({

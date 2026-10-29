@@ -262,6 +262,38 @@ describe("writes become commits", () => {
     });
   });
 
+  it("commits an edit in the UI as that edit, leaving the rest of item.json as it was written", async () => {
+    const written = `{
+  "id": "hello",
+  "kind": "prompt",
+  "title": "Hello",
+  "description": "Say hello",
+  "variables": [{ "name": "who", "required": false }]
+}
+`;
+    await push(
+      "kit",
+      shelfOf("kit", false, {
+        ...PROMPT,
+        "items/prompts/hello/item.json": written,
+      })
+    );
+    await data(
+      v.unknown(),
+      `mutation { updatePrompt(shelf: "kit", id: "hello", body: "Hi.\\n") { ok } }`
+    );
+    const bodyOnly = await headFiles("kit");
+    expect(bodyOnly["items/prompts/hello/item.json"]).toBe(written);
+    await data(
+      v.unknown(),
+      `mutation { updatePrompt(shelf: "kit", id: "hello", title: "Greeting") { ok } }`
+    );
+    const titled = await headFiles("kit");
+    expect(titled["items/prompts/hello/item.json"]).toBe(
+      written.replace('"title": "Hello"', '"title": "Greeting"')
+    );
+  });
+
   it("pushes nothing when the files are the same", async () => {
     await push("kit", shelfOf("kit", false, PROMPT));
     const again = await push("kit", shelfOf("kit", false, PROMPT));
