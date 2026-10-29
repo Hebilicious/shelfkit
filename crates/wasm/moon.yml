@@ -4,12 +4,13 @@ tags: ["crate", "wasm"]
 
 project:
   title: "WASM engine"
-  description: "The shelf loader, resolver, and compiler as a wasm32-unknown-unknown module with a JSON ABI."
+  description: "The shelf loader, resolver, compiler, registry, and Git push encoding as a wasm32-unknown-unknown module with a JSON ABI."
 
 dependsOn:
   - "core"
   - "compiler"
   - "registry"
+  - "git"
 
 tasks:
   build:
@@ -24,6 +25,8 @@ tasks:
       - "/crates/compiler/src/**/*"
       - "/crates/registry/src/**/*"
       - "/crates/registry/Cargo.toml"
+      - "/crates/git/src/**/*"
+      - "/crates/git/Cargo.toml"
       - "/crates/compiler/schemas/**/*"
       - "/crates/compiler/Cargo.toml"
       - "/crates/core/Cargo.toml"

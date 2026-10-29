@@ -1,0 +1,26 @@
+language: rust
+# The Git side of a shelf's Artifacts repository: its objects, the pack, and
+# the receive-pack request the Worker pushes (through the WASM engine). No I/O
+# of its own.
+layer: library
+tags: ["crate", "git"]
+
+tasks:
+  build:
+    command: "cargo build --package shelfkit-git"
+  check:
+    command: "cargo clippy --package shelfkit-git --all-targets -- -D warnings"
+    deps:
+      - "check-wasm"
+  check-wasm:
+    description: "Prove the crate builds for WASM, where the Worker builds its pushes."
+    command: "cargo clippy --package shelfkit-git --target wasm32-unknown-unknown -- -D warnings"
+    deps:
+      - "core:wasm-target"
+  lint:
+    command: "cargo fmt --package shelfkit-git --check"
+  test:
+    description: "Unit tests, and the tests that push to and read from the real `git` binary (each skipped, saying so, without one on PATH)."
+    command: "cargo test --package shelfkit-git"
+  fmt:
+    command: "cargo fmt --package shelfkit-git"

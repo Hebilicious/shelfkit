@@ -80,6 +80,67 @@
 //! "version" } }`; `archive` means the host sends the stored bytes of that
 //! version. See `shelfkit_registry::protocol` for the two steps.
 //!
+//! The Git calls speak a shelf's repository (SHA-1, smart HTTP, protocol
+//! v1), the encoding being `shelfkit_git`'s; the host sends the bytes and does
+//! nothing else. Three make and read a push, as a client does:
+//!
+//! - `shelfkit_git_commit()`: `{ "parent"?, "base": [{ "path", "mode",
+//!   "id" }], "files": [{ "path", "mode"?, "id" } | { "path", "mode"?,
+//!   "contents", "encoding"? }], "ref"?, "author": { "name", "email",
+//!   "time", "offset" }, "committer"?, "message" }`, where `parent` is the
+//!   commit `ref` (default `refs/heads/main`) points at, absent for a root
+//!   commit, `base` is every file of that commit, `files` is every file of
+//!   the new one (an `id` names a blob of `base`), `mode` is `100644` (the
+//!   default), `100755`, `120000`, or `160000` (a gitlink: its `id` is a
+//!   submodule's commit, which need not be in `base`, and it never has
+//!   `contents`), `encoding` is `utf-8` (the default) or
+//!   `base64`, `time` is Unix seconds, and `offset` minutes east of UTC. The
+//!   output is `{ "commit", "tree", "unchanged", "objects", "files": [{
+//!   "path", "mode", "id" }], "request" }`: `request` is the body of the
+//!   `POST /git-receive-pack`, in base64, its pack holding only the objects
+//!   `base` does not, and `objects` counts them. When the tree is the
+//!   parent's, `unchanged` is true and `commit` and `request` are null. A
+//!   bad path, mode, reference, or signature, or an `id` not in `base`, is
+//!   `1` and the errors, each on its path.
+//! - `shelfkit_git_version()`: `{ "package", "version", "archive",
+//!   "publishedAt", "parent"?, "base"? }`, a version the registry published
+//!   (`archive` in base64, `publishedAt` in Unix seconds) and the commit and
+//!   files `main` is at, absent for the first; the output is the commit
+//!   `shelfkit_registry::git` makes of it, as `shelfkit_git_commit` answers,
+//!   its request moving `main` and creating the tag `v{version}`. An archive
+//!   that does not read is `1` and the error, on `<archive>`.
+//! - `shelfkit_git_report()`: `{ "body" }`, the receive-pack response in
+//!   base64; the output is `{ "unpack": { "ok": true } | { "ok": false,
+//!   "message" }, "refs": [{ "name", "ok", "reason"? }] }`, or `1` and the
+//!   error when the body is not a report (or a side-band one ending in a
+//!   fatal error, on `<remote>`).
+//!
+//! The rest serve a repository the host stores itself (local mode, and test
+//! doubles), `body` always being bytes in base64:
+//!
+//! - `shelfkit_git_receive()`: `{ "body" }`, a receive-pack request, read
+//!   as a server does. The output is `{ "updates": [{ "old", "new", "name"
+//!   }], "capabilities": [string], "objects": [object] }`, each object `{
+//!   "id", "kind" }` and, by kind: a blob or tag `contents` (its body); a
+//!   tree `entries: [{ "name", "mode", "id" }]` and `body`; a commit `tree`,
+//!   `parents`, `author` and `committer` (`{ "name", "email" }`),
+//!   `authoredAt` and `committedAt` (Unix seconds), `message`, and `body`. A
+//!   request or pack that does not read is `1` and the error.
+//! - `shelfkit_git_advertise()`: `{ "service", "refs": [{ "name", "id" }],
+//!   "head"? }`, `service` being `git-upload-pack` or `git-receive-pack`; the
+//!   output is `{ "body" }`, the answer to `GET info/refs?service=<service>`.
+//! - `shelfkit_git_upload_request()`: `{ "body" }`, a `git-upload-pack`
+//!   request; the output is `{ "wants", "capabilities", "shallows", "depth",
+//!   "haves", "negotiation", "deepens" }`, `depth` null without one and
+//!   `negotiation` `none` (the wants alone), `round`, or `done`.
+//! - `shelfkit_git_upload_response()`: `{ "deepens", "shallow",
+//!   "unshallow", "negotiation", "common", "pack": [{ "kind", "body" }] }`;
+//!   the output is `{ "body" }`, the answer to that request, its pack holding
+//!   `pack` when `negotiation` is `done`.
+//! - `shelfkit_git_status()`: `{ "unpack": { "ok", "message"? }, "refs": [{
+//!   "name", "ok", "reason"? }] }`; the output is `{ "body" }`, the answer to
+//!   a receive-pack request whose client asked for `report-status`.
+//!
 //! `shelfkit_abi_version()` changes whenever any of this does.
 
 use serde::{Deserialize, Serialize};
@@ -95,6 +156,8 @@ use shelfkit_registry::protocol::{self, Payload, Prepared};
 use shelfkit_registry::{Access, Context, Credential};
 use std::cell::RefCell;
 
+pub mod git;
+
 /// What `shelfkit_plan` returns.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,7 +171,7 @@ pub enum Status {
 }
 
 /// The ABI's version, for a host to check before it calls anything else.
-pub const ABI_VERSION: u32 = 6;
+pub const ABI_VERSION: u32 = 7;
 
 /// The largest request the module accepts, in bytes.
 pub const MAX_INPUT: u32 = 512 * 1024 * 1024;
@@ -198,6 +261,62 @@ pub extern "C" fn shelfkit_registry_prepare() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn shelfkit_registry_respond() -> u32 {
     exchange(registry_respond)
+}
+
+/// Plan a commit and the request that pushes it; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_git_commit() -> u32 {
+    exchange(git::commit)
+}
+
+/// Commit a published version and tag it; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_git_version() -> u32 {
+    exchange(git::version)
+}
+
+/// Read a receive-pack report; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_git_report() -> u32 {
+    exchange(git::report)
+}
+
+/// Read a receive-pack request as a server does; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_git_receive() -> u32 {
+    exchange(git::receive)
+}
+
+/// A server's reference advertisement; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_git_advertise() -> u32 {
+    exchange(git::advertise)
+}
+
+/// Read an upload-pack request as a server does; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_git_upload_request() -> u32 {
+    exchange(git::upload_request)
+}
+
+/// A server's upload-pack answer; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_git_upload_response() -> u32 {
+    exchange(git::upload_response)
+}
+
+/// A server's receive-pack answer; see the crate documentation.
+#[allow(unsafe_code)] // Exporting the symbol; there is no unsafe block.
+#[unsafe(no_mangle)]
+pub extern "C" fn shelfkit_git_status() -> u32 {
+    exchange(git::status)
 }
 
 /// Run `call` on the input buffer and leave its answer in the output buffer,
