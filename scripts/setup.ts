@@ -104,9 +104,8 @@ const CLIENT_SECRET = "GITHUB_CLIENT_SECRET";
 /** How long setup waits for you to create the GitHub App on github.com. */
 const GITHUB_APP_WAIT_MS = 15 * 60 * 1000;
 /**
- * The bucket lock: published registry archives (`archives/`), retained indefinitely. Uploaded content (`objects/`) is
- * not locked: an upload no commit takes must stay removable. Setting the configuration replaces any earlier rule, so
- * a deployment that locked `objects/` (the rule `objects-immutable`) loses that rule here.
+ * The bucket lock: published registry archives (`archives/`), retained indefinitely. File contents (`objects/`) are
+ * not locked: one no commit takes must stay removable.
  */
 const LOCK = {
   rules: [

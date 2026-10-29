@@ -14,7 +14,7 @@ import type { Session } from "./auth/index.ts";
 import { engine } from "./engine.ts";
 import { REGISTRY_MOUNT } from "./shelf-index.ts";
 import type { RegistryAnswer } from "./shelf-index.ts";
-import { archiveKey, objectKey, putObject } from "./storage/objects.ts";
+import { archiveKey } from "./storage/objects.ts";
 
 export async function registryRoute(
   request: Request,
@@ -98,18 +98,10 @@ async function toResponse(env: Env, answer: Answer): Promise<Response> {
   }
   if (body.kind === "object") {
     const archived = await env.BLOBS.get(archiveKey(body.sha256));
-    if (archived !== null) {
-      return new Response(archived.body, { headers, status: answer.status });
-    }
-    // A deployment from before archives had their own locked prefix kept them under `objects/`: serve it, and copy it
-    // to `archives/`, where the bucket lock keeps it.
-    const legacy = await env.BLOBS.get(objectKey(body.sha256));
-    if (legacy === null) {
+    if (archived === null) {
       throw new Error(`R2 has no archive ${archiveKey(body.sha256)}`);
     }
-    const bytes = new Uint8Array(await legacy.arrayBuffer());
-    await putObject(env.BLOBS, bytes, "application/gzip", archiveKey);
-    return new Response(bytes, { headers, status: answer.status });
+    return new Response(archived.body, { headers, status: answer.status });
   }
   return new Response(null, { headers, status: answer.status });
 }

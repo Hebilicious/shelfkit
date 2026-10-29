@@ -1,11 +1,14 @@
 /**
- * `ShelfRepository` for local mode. Artifacts has no local simulator, and Wrangler says it never will, so a deployment
- * without the `ARTIFACTS` binding keeps each shelf's repository in its R2 bucket and answers Git's smart HTTP itself,
- * the engine reading and writing the protocol (`crates/git`'s `serve`). The rest is as it is with Artifacts: the Git
- * route relays a client's exchange here, a write the Worker makes is a push here, and the shelf's object indexes the
- * head of `main`.
+ * A Git repository the Worker keeps in R2 and serves itself, the engine reading and writing the protocol
+ * (`crates/git`'s `serve`). Two kinds use it:
  *
- * Under `repositories/<shelf>/` in `BLOBS`: `refs`, every reference and its commit as JSON; `objects/<id>`, each
+ * - Every shelf's repository in local mode. Artifacts has no local simulator, and Wrangler says it never will, so a
+ *   deployment without the `ARTIFACTS` binding is a `ShelfRepository` here. The rest is as it is with Artifacts: the
+ *   Git route relays a client's exchange here, a write the Worker makes is a push here, and the shelf's object indexes
+ *   the head of `main`.
+ * - Every published profile's repository, in every mode (`src/packages.ts`), under `packages/`.
+ *
+ * Under `<prefix><name>/` in `BLOBS`: `refs`, every reference and its commit as JSON; `objects/<id>`, each
  * object's body, its kind in the custom metadata; and `decoded/<id>`, a tree's entries or a commit's fields as the
  * engine read them. A push stores its objects first and moves its references last, with R2's conditional write, so a
  * reader never follows a reference to an object that is not there, and two pushes cannot both move a branch from the

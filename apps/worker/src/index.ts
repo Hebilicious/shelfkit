@@ -6,7 +6,7 @@
  *   /mcp       stateless MCP tools (`mcp/`, issue #6)
  *   /graphql   everything the UI and CLI do, including key management (`graphql/`)
  *   /raw/*     a shelf's content-addressed files, for the browser's engine (`raw.ts`)
- *   /git/*     each shelf's Git repository, for `git clone`, `push`, and APM (`git.ts`)
+ *   /git/*     each shelf's Git repository, for `git clone` and `push`, and each published profile's, for APM (`git.ts`)
  *   /auth/passkey/*  signing the browser in with a passkey, and adding one (`auth/passkeys.ts`)
  *   /auth/github/*   signing the browser in with GitHub, when enabled (`auth/github.ts`)
  *   /auth/cli/*      signing the CLI in through the browser: `shelfkit login` (`auth/cli.ts`)

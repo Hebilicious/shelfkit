@@ -23,6 +23,7 @@
 use super::system::{HttpRequest, HttpResponse, System};
 use super::{Context, Failure, Outcome, absolute};
 use crate::engine::{Request, inventory, package_profile};
+use crate::package::PackagedProfile;
 use serde_json::{Value, json};
 use shelfkit_core::{DirSource, Errors};
 use std::path::{Path, PathBuf};
@@ -519,14 +520,16 @@ pub(super) fn open(ctx: &mut Context<'_>, url: Option<&str>, print: bool) -> Out
 }
 
 /// `shelfkit publish`: package every profile and publish it to the
-/// deployment's registry. A version already published with the same bytes is
-/// reported and left; one published with other bytes fails the command, after
-/// every profile has been tried.
+/// deployment's registry, which also commits it to the profile's Git
+/// repository. A version already published with the same bytes is reported
+/// and left; one published with other bytes fails the command, after every
+/// profile has been tried. Ends with how APM installs one of them, both ways.
 pub(super) fn publish(ctx: &mut Context<'_>, root: &Path, url: Option<&str>) -> Outcome {
     let source = DirSource::new(root);
     let found = inventory(&source)?;
     let remote = Remote::connect(ctx.system, url)?;
     let mut failed = false;
+    let mut installable = Vec::new();
     for profile in &found.profiles {
         let id = &profile.profile.id;
         let request = Request {
@@ -559,6 +562,7 @@ pub(super) fn publish(ctx: &mut Context<'_>, root: &Path, url: Option<&str>) -> 
                     "Published {}@{} ({}).",
                     packaged.package, packaged.version, packaged.digest
                 );
+                installable.push(packaged);
             }
             Published::Already => {
                 let _ = writeln!(
@@ -566,6 +570,7 @@ pub(super) fn publish(ctx: &mut Context<'_>, root: &Path, url: Option<&str>) -> 
                     "{}@{} is already published with these bytes.",
                     packaged.package, packaged.version
                 );
+                installable.push(packaged);
             }
             Published::Different => {
                 failed = true;
@@ -577,10 +582,38 @@ pub(super) fn publish(ctx: &mut Context<'_>, root: &Path, url: Option<&str>) -> 
             }
         }
     }
+    let default = found.manifest.default_profile.as_deref();
+    let example = installable
+        .iter()
+        .find(|packaged| Some(packaged.repo.as_str()) == default)
+        .or_else(|| installable.first());
+    if let Some(packaged) = example {
+        let _ = write!(ctx.stdout, "\n{}", install_snippets(remote.url(), packaged));
+    }
     if failed {
         return Err(Failure::Reported);
     }
     Ok(())
+}
+
+/// The two `apm.yml` dependencies that install a published profile, each
+/// following its minor versions: from the profile's Git repository, or from
+/// the registry with APM's experimental registry client. Both install the
+/// same files.
+fn install_snippets(url: &str, packaged: &PackagedProfile) -> String {
+    let PackagedProfile {
+        owner,
+        repo,
+        version,
+        ..
+    } = packaged;
+    format!(
+        "To install {owner}/{repo} with APM, add to apm.yml, from its Git repository:\n\n\
+         dependencies:\n  apm:\n    - git: {url}/git/{owner}/{repo}.git\n      ref: \"^{version}\"\n\n\
+         or from the registry, after `apm experimental enable registries` once:\n\n\
+         registries:\n  shelfkit:\n    url: {url}/apm\n  default: shelfkit\n\
+         dependencies:\n  apm:\n    - id: {owner}/{repo}\n      version: \"^{version}\"\n"
+    )
 }
 
 fn first_message(errors: &Errors) -> String {

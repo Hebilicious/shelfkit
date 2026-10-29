@@ -32,6 +32,7 @@ import {
   ItemKindSchema,
   ItemSchema,
   NoticeSchema,
+  ProfileIdSchema,
   ProfileSchema,
   ShelfIdSchema,
   ShelfManifestSchema,
@@ -74,6 +75,8 @@ import { isUnmigrated, migrateDatabase, openDatabase } from "./db/migrate.ts";
 import type { ShelfDatabase } from "./db/migrate.ts";
 import * as table from "./db/schema.ts";
 import { engine } from "./engine.ts";
+import { commitVersions } from "./packages.ts";
+import type { PublishedVersion } from "./packages.ts";
 import { shelfRepository, REPOSITORY_BRANCH } from "./repository/index.ts";
 import type { ShelfRepository, RepositoryEntry } from "./repository/index.ts";
 import { resolveSecret, secretOrigin } from "./secrets.ts";
@@ -3141,7 +3144,64 @@ export class ShelfIndex extends DurableObject<Env> {
       id: prepared.packageKey,
       kind: "package",
     });
+    await this.commitPublished(prepared.packageKey);
     return this.answer(decided.response);
+  }
+
+  /**
+   * The versions of the package `{shelf}/{profile}` for its Git repository (`src/packages.ts`), if `session` may read
+   * them: the registry decides, exactly as it does for its list of the package's versions. Otherwise the status the
+   * registry refused with.
+   */
+  async packageVersions(
+    session: Session,
+    shelf: string,
+    profile: string
+  ): Promise<
+    | { readonly ok: true; readonly versions: PublishedVersion[] }
+    | { readonly ok: false; readonly status: number }
+  > {
+    const answer = await this.registry(session, {
+      method: "GET",
+      path: `${REGISTRY_MOUNT}/v1/packages/${shelf}/${profile}/versions`,
+    });
+    if (answer.status !== 200) {
+      return { ok: false, status: answer.status };
+    }
+    return { ok: true, versions: this.published(`${shelf}/${profile}`) };
+  }
+
+  /** A package's versions in the order they were published. */
+  private published(packageKey: string): PublishedVersion[] {
+    return this.versions(packageKey).map((row) => ({
+      digest: row.digest,
+      publishedAt: row.published_at,
+      version: row.version,
+    }));
+  }
+
+  /**
+   * Commit a profile's newly published version to its Git repository before the publish answers, so that the next
+   * `apm install` finds it there. A package that is not a profile has no repository. A failure is logged, and the
+   * repository's next read commits the version.
+   */
+  private async commitPublished(packageKey: string): Promise<void> {
+    const [shelf, profile, ...more] = packageKey.split("/");
+    if (
+      more.length > 0 ||
+      shelf === undefined ||
+      !v.is(ProfileIdSchema, profile)
+    ) {
+      return;
+    }
+    try {
+      await commitVersions(this.env, packageKey, this.published(packageKey));
+    } catch (error) {
+      console.error(
+        `committing ${packageKey}'s new version to its repository failed`,
+        error
+      );
+    }
   }
 
   private registryShelf(

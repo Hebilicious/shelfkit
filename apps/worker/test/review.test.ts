@@ -556,7 +556,7 @@ describe("7. storage of uploads and archives", () => {
     expect(get.status).toBe(404);
   });
 
-  it("keeps a published archive under archives/, the locked prefix, and moves one found under objects/ there", async () => {
+  it("keeps a published archive under archives/, the locked prefix", async () => {
     await push("acme", shelfOf("acme", true));
     const provided = inject("conformance");
     const archive = decodeBase64(
@@ -581,17 +581,6 @@ describe("7. storage of uploads and archives", () => {
     expect(published.status).toBe(201);
     await expect(env.BLOBS.head(`archives/${hash}`)).resolves.not.toBeNull();
     await expect(env.BLOBS.head(`objects/${hash}`)).resolves.toBeNull();
-
-    // As a deployment from before the move left it.
-    await env.BLOBS.delete(`archives/${hash}`);
-    await env.BLOBS.put(`objects/${hash}`, archive);
-    const downloaded = await exports.default.fetch(
-      `${ORIGIN}/apm/v1/packages/acme/web/versions/1.0.0/download`
-    );
-    expect(new Uint8Array(await downloaded.arrayBuffer())).toStrictEqual(
-      archive
-    );
-    await expect(env.BLOBS.head(`archives/${hash}`)).resolves.not.toBeNull();
   });
 });
 
