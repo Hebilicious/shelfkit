@@ -262,6 +262,90 @@ describe("writes become commits", () => {
     });
   });
 
+  it("commits an edit in the UI as that edit, leaving the rest of item.json as it was written", async () => {
+    const written = `{
+  "id": "hello",
+  "kind": "prompt",
+  "title": "Hello",
+  "description": "Say hello",
+  "variables": [{ "name": "who", "required": false }]
+}
+`;
+    await push(
+      "kit",
+      shelfOf("kit", false, {
+        ...PROMPT,
+        "items/prompts/hello/item.json": written,
+      })
+    );
+    await data(
+      v.unknown(),
+      `mutation { updatePrompt(shelf: "kit", id: "hello", body: "Hi.\\n") { ok } }`
+    );
+    const bodyOnly = await headFiles("kit");
+    expect(bodyOnly["items/prompts/hello/item.json"]).toBe(written);
+    await data(
+      v.unknown(),
+      `mutation { updatePrompt(shelf: "kit", id: "hello", title: "Greeting") { ok } }`
+    );
+    const titled = await headFiles("kit");
+    expect(titled["items/prompts/hello/item.json"]).toBe(
+      written.replace('"title": "Hello"', '"title": "Greeting"')
+    );
+  });
+
+  it("restores a version byte for byte, title and all, as that revision again", async () => {
+    await push("kit", shelfOf("kit", false, PROMPT));
+    await data(
+      v.unknown(),
+      `mutation { updatePrompt(shelf: "kit", id: "hello", title: "Greeting") { ok } }`
+    );
+    const Revisions = v.object({
+      shelf: v.object({
+        item: v.object({
+          revision: v.string(),
+          revisions: v.array(v.object({ revision: v.string() })),
+        }),
+      }),
+    });
+    const query =
+      '{ shelf(id: "kit") { item(id: "hello") { revision revisions { revision } } } }';
+    const before = await data(Revisions, query);
+    const first = before.shelf.item.revisions.at(-1)?.revision ?? "";
+    const restored = await data(
+      v.object({ restoreItem: v.object({ ok: v.boolean() }) }),
+      `mutation R($revision: String!) { restoreItem(shelf: "kit", id: "hello", revision: $revision) { ok } }`,
+      { revision: first }
+    );
+    expect(restored.restoreItem.ok).toBeTruthy();
+    const files = await headFiles("kit");
+    expect(files["items/prompts/hello/item.json"]).toBe(
+      PROMPT["items/prompts/hello/item.json"]
+    );
+    const after = await data(Revisions, query);
+    expect({
+      count: after.shelf.item.revisions.length,
+      current: after.shelf.item.revision,
+    }).toStrictEqual({ count: 2, current: first });
+  });
+
+  it("changes only the member of shelf.json that changed when the shelf turns public", async () => {
+    const written = `{
+  "registry": { "namespace": "kit", "public": false },
+  "name": "kit"
+}
+`;
+    await push("kit", { ...PROMPT, "shelf.json": written });
+    await data(
+      v.unknown(),
+      'mutation { setVisibility(shelf: "kit", public: true) { ok } }'
+    );
+    const files = await headFiles("kit");
+    expect(files["shelf.json"]).toBe(
+      written.replace('"public": false', '"public": true')
+    );
+  });
+
   it("pushes nothing when the files are the same", async () => {
     await push("kit", shelfOf("kit", false, PROMPT));
     const again = await push("kit", shelfOf("kit", false, PROMPT));

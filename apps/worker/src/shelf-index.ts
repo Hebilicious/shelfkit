@@ -116,6 +116,7 @@ import {
   PRIMARY_FILE,
   text as utf8,
 } from "./shelf/files.ts";
+import { editJsonObject, JsonObjectSchema } from "./shelf/json-edit.ts";
 import {
   bodySnippet,
   ftsQuery,
@@ -940,13 +941,16 @@ export class ShelfIndex extends DurableObject<Env> {
     if ("ok" in granted || !granted.member) {
       return null;
     }
-    return this.db
-      .select()
-      .from(table.snapshot)
-      .orderBy(desc(table.snapshot.createdAt))
-      .limit(Math.min(limit, 200))
-      .all()
-      .map(snapshotRecord);
+    return (
+      this.db
+        .select()
+        .from(table.snapshot)
+        // Newest first; two made within the same second, in the order they were made.
+        .orderBy(desc(table.snapshot.createdAt), desc(sql`rowid`))
+        .limit(Math.min(limit, 200))
+        .all()
+        .map(snapshotRecord)
+    );
   }
 
   /** The current snapshot's files, by path and hash: what the browser's engine downloads. */
@@ -2463,21 +2467,24 @@ export class ShelfIndex extends DurableObject<Env> {
     if ("ok" in granted) {
       return null;
     }
-    return this.db
-      .select()
-      .from(table.revision)
-      .where(eq(table.revision.itemId, id))
-      .orderBy(desc(table.revision.createdAt))
-      .all()
-      .map((row) => ({
-        createdAt: row.createdAt,
-        document: row.document,
-        files: row.files,
-        keyId: row.keyId,
-        message: row.message,
-        revision: row.revision,
-        snapshot: row.snapshot,
-      }));
+    return (
+      this.db
+        .select()
+        .from(table.revision)
+        .where(eq(table.revision.itemId, id))
+        // Newest first; two made within the same second, in the order they were made.
+        .orderBy(desc(table.revision.createdAt), desc(sql`rowid`))
+        .all()
+        .map((row) => ({
+          createdAt: row.createdAt,
+          document: row.document,
+          files: row.files,
+          keyId: row.keyId,
+          message: row.message,
+          revision: row.revision,
+          snapshot: row.snapshot,
+        }))
+    );
   }
 
   /**
@@ -2514,7 +2521,7 @@ export class ShelfIndex extends DurableObject<Env> {
     }
     const document = parsed.output;
     // Read when the edit is made, and again if it is made a second time on top of a repository that had moved on.
-    const changesFor = () => {
+    const changesFor = async () => {
       const existing = this.db
         .select()
         .from(table.item)
@@ -2529,17 +2536,17 @@ export class ShelfIndex extends DurableObject<Env> {
       }
       changes.set(
         `${directory}/item.json`,
-        encoder.encode(`${JSON.stringify(document, null, 2)}
-`)
+        encoder.encode(
+          await this.itemJson(`${directory}/item.json`, existing, document)
+        )
       );
       for (const file of input.files) {
-        if (file.path === "item.json") {
-          continue;
+        if (file.path !== "item.json") {
+          changes.set(
+            `${directory}/${file.path}`,
+            decoded(file.contents, file.encoding)
+          );
         }
-        changes.set(
-          `${directory}/${file.path}`,
-          decoded(file.contents, file.encoding)
-        );
       }
       return changes;
     };
@@ -2548,6 +2555,106 @@ export class ShelfIndex extends DurableObject<Env> {
       shelf,
       changesFor,
       input.message ?? null,
+      "edit"
+    );
+  }
+
+  /**
+   * The text of an item's item.json after an edit: the file as it is, with only the members whose value changed
+   * rewritten, so its history shows the edit and not a rewrite. A new item, or a file this cannot edit, is written
+   * whole.
+   */
+  private async itemJson(
+    path: string,
+    existing: { readonly document: Item } | undefined,
+    document: Item
+  ): Promise<string> {
+    const whole = `${JSON.stringify(document, null, 2)}\n`;
+    const contents = await this.contents();
+    const bytes = existing === undefined ? undefined : contents.get(path);
+    const current = bytes === undefined ? null : utf8(bytes);
+    if (existing === undefined || current === null) {
+      return whole;
+    }
+    const edited = editJsonObject(
+      current,
+      v.parse(JsonObjectSchema, existing.document),
+      v.parse(JsonObjectSchema, document)
+    );
+    return edited ?? whole;
+  }
+
+  /**
+   * Make an item one of its revisions again: its files exactly as that revision had them, item.json included, and none
+   * it did not have. The same files are the same revision, so the item is that revision again rather than a new one
+   * that looks like it.
+   */
+  async restoreItem(
+    session: Session,
+    shelf: string,
+    input: {
+      readonly id: string;
+      readonly revision: string;
+      readonly message: string | null;
+    }
+  ): Promise<Committed> {
+    const granted = this.granted(session);
+    if (granted?.write !== true || this.shelfId() !== shelf) {
+      return forbidden();
+    }
+    const restored = this.db
+      .select()
+      .from(table.revision)
+      .where(
+        and(
+          eq(table.revision.itemId, input.id),
+          eq(table.revision.revision, input.revision)
+        )
+      )
+      .get();
+    if (restored === undefined) {
+      return {
+        errors: [
+          {
+            message: `\`${input.id}\` has no revision ${input.revision}`,
+            path: "<revision>",
+          },
+        ],
+        ok: false,
+        reason: "invalid",
+      };
+    }
+    const bytes = await readObjects(
+      this.env.BLOBS,
+      restored.files.map((file) => file.sha256)
+    );
+    // Read when the edit is made, and again if it is made a second time on top of a repository that had moved on.
+    const changesFor = () => {
+      const existing = this.db
+        .select()
+        .from(table.item)
+        .where(eq(table.item.id, input.id))
+        .get();
+      const directory =
+        existing?.path ??
+        `items/${KIND_DIRECTORIES[restored.document.kind]}/${input.id}`;
+      const changes = new Map<string, Uint8Array | null>();
+      for (const file of existing?.files ?? []) {
+        changes.set(`${directory}/${file}`, null);
+      }
+      for (const file of restored.files) {
+        changes.set(
+          `${directory}/${file.path}`,
+          bytes.get(file.sha256) ?? null
+        );
+      }
+      return changes;
+    };
+    return await this.edit(
+      session,
+      shelf,
+      changesFor,
+      input.message ?? `restore ${input.id}`,
       "edit"
     );
   }
@@ -2721,18 +2828,21 @@ export class ShelfIndex extends DurableObject<Env> {
     if ("ok" in granted) {
       return null;
     }
-    return this.db
-      .select()
-      .from(table.profileRevision)
-      .where(eq(table.profileRevision.profileId, id))
-      .orderBy(desc(table.profileRevision.createdAt))
-      .all()
-      .map((row) => ({
-        createdAt: row.createdAt,
-        profile: row.document,
-        revision: row.revision,
-        snapshot: row.snapshot,
-      }));
+    return (
+      this.db
+        .select()
+        .from(table.profileRevision)
+        .where(eq(table.profileRevision.profileId, id))
+        // Newest first; two made within the same second, in the order they were made.
+        .orderBy(desc(table.profileRevision.createdAt), desc(sql`rowid`))
+        .all()
+        .map((row) => ({
+          createdAt: row.createdAt,
+          profile: row.document,
+          revision: row.revision,
+          snapshot: row.snapshot,
+        }))
+    );
   }
 
   /** Every bundle, as `bundles/<id>.json` holds it, sorted by id. */
@@ -3140,7 +3250,20 @@ export class ShelfIndex extends DurableObject<Env> {
       return forbidden();
     }
     const next = v.parse(ShelfManifestSchema, change(manifest));
-    const bytes = encoder.encode(`${JSON.stringify(next, null, 2)}\n`);
+    const whole = `${JSON.stringify(next, null, 2)}\n`;
+    const contents = await this.contents();
+    const bytesNow = contents.get("shelf.json");
+    const current = bytesNow === undefined ? null : utf8(bytesNow);
+    // Only the members that changed are rewritten, so the commit shows the change and the rest keeps its order.
+    const edited =
+      current === null
+        ? null
+        : editJsonObject(
+            current,
+            v.parse(JsonObjectSchema, manifest),
+            v.parse(JsonObjectSchema, next)
+          );
+    const bytes = encoder.encode(edited ?? whole);
     this.broadcast({ at: now(), id: shelf, kind: "settings" });
     return await this.edit(
       session,
