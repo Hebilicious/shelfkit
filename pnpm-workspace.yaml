@@ -8,7 +8,7 @@ catalog:
   "@acid-cat/cli": 0.4.0
   "@acid-cat/core-ts": 0.4.0
   "@acid-cat/spec-ts": 0.4.0
-  "@cloudflare/vitest-plugin": 1.4.7
+  "@cloudflare/vitest-plugin": 1.4.10
   "@gommage/cli": 0.1.0
   "@gql.tada/vue-support": 1.0.3
   "@hebilicious/cssforge": jsr:0.4.1
@@ -44,7 +44,7 @@ catalog:
   vue: 3.5.43
   vue-router: 5.4.0
   vue-tsc: 3.3.11
-  wrangler: 4.152.0
+  wrangler: 4.155.0
   yaml: 2.9.1
 
 # Patched transitive dependencies, pinned in the catalog above. Each selector covers only the vulnerable range:
@@ -54,9 +54,24 @@ overrides:
   "sharp@<0.35.5": "catalog:"
   "source-map-js@>=1.0.0 <1.2.2": "catalog:"
 
+# Cloudflare's local Artifacts simulator is in Miniflare (cloudflare/workers-sdk#16177), but no Wrangler release wires it
+# in yet: wrangler 4.155.0 treats an Artifacts binding as remote-only, and Miniflare simulates it only when asked
+# explicitly. These patches carry the runtime half of cloudflare/workers-sdk#16186, so a binding with `"remote": false`
+# runs on the simulator in `wrangler dev` and the Workers Vitest pool (local mode, the e2e suite, and the Worker tests).
+# Delete them, and this entry, once a Wrangler release includes #16186. After a version bump, regenerate them with
+# `pnpm patch <package>@<version>`, the same edits, and `pnpm patch-commit`; a stale key fails `pnpm install`.
+patchedDependencies:
+  miniflare@5.20261023.2-beta: patches/miniflare@5.20261023.2-beta.patch
+  wrangler@4.155.0: patches/wrangler@4.155.0.patch
+
 # Build scripts are allowed explicitly rather than by prompt, so CI is deterministic.
 allowBuilds:
   esbuild: true
   workerd: true
   # Its postinstall writes git hooks; `moon run root:hooks-install` does that on purpose.
   lefthook: false
+
+minimumReleaseAgeExclude:
+  - "@cloudflare/vitest-plugin@1.4.10"
+  - miniflare@5.20261023.2-beta
+  - wrangler@4.155.0

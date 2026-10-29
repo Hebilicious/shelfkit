@@ -1,6 +1,6 @@
-//! The receive-pack exchange of `git push` over smart HTTP, protocol v1: the
-//! body of the `POST /git-receive-pack` request, and the report the server
-//! answers with.
+//! The client's side of `git push` over smart HTTP, protocol v1: the body of
+//! the `POST /git-receive-pack` request, and the report the server answers
+//! with.
 //!
 //! The request is one pkt-line per reference update, the first carrying the
 //! client's capabilities after a NUL, a flush, then the pack. ShelfKit asks
@@ -182,76 +182,6 @@ fn report(mut reader: Reader<'_>) -> Result<Report> {
     Ok(Report { unpack, refs })
 }
 
-/// A receive-pack request, as a server reads it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReceivedRequest {
-    pub updates: Vec<Update>,
-    pub capabilities: Vec<String>,
-    /// The pack, empty when the request sent none.
-    pub pack: Vec<u8>,
-}
-
-/// Read a receive-pack request as a server does: the updates and the first
-/// one's capabilities, up to the flush, then the pack: for a host that
-/// stores a repository itself ([`serve`](crate::serve)), or a test double.
-pub fn parse_request(body: &[u8]) -> Result<ReceivedRequest> {
-    let mut reader = Reader::new(body);
-    let mut updates = Vec::new();
-    let mut capabilities = Vec::new();
-    loop {
-        let line = match reader.next_packet()? {
-            Some(Packet::Data(data)) => data,
-            Some(Packet::Flush) => break,
-            Some(Packet::Delim) | None => {
-                return Err(Error::malformed(
-                    "request",
-                    "the updates do not end with a flush",
-                ));
-            }
-        };
-        let line = line.strip_suffix(b"\n").unwrap_or(line);
-        let line = match line.iter().position(|&byte| byte == 0) {
-            Some(nul) if updates.is_empty() => {
-                capabilities = String::from_utf8_lossy(&line[nul + 1..])
-                    .split(' ')
-                    .filter(|capability| !capability.is_empty())
-                    .map(str::to_owned)
-                    .collect();
-                &line[..nul]
-            }
-            _ => line,
-        };
-        let line = std::str::from_utf8(line)
-            .map_err(|_| Error::malformed("request", "an update is not UTF-8"))?;
-        let what = || format!("request, update {}", updates.len() + 1);
-        let mut fields = line.splitn(3, ' ');
-        let mut id = || {
-            fields
-                .next()
-                .and_then(|text| text.parse::<ObjectId>().ok())
-                .ok_or_else(|| {
-                    Error::malformed(what(), format!("`{line}` is not `<old> <new> <ref>`"))
-                })
-        };
-        let old = id()?;
-        let new = id()?;
-        let name = fields
-            .next()
-            .filter(|name| !name.is_empty())
-            .ok_or_else(|| Error::malformed(what(), "no reference name"))?
-            .to_owned();
-        updates.push(Update { old, new, name });
-    }
-    if updates.is_empty() {
-        return Err(Error::malformed("request", "it updates no reference"));
-    }
-    Ok(ReceivedRequest {
-        updates,
-        capabilities,
-        pack: reader.rest().to_vec(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,26 +195,34 @@ mod tests {
         }
     }
 
+    /// The data of each pkt-line before the flush, and what follows it.
+    fn split(body: &[u8]) -> (Vec<Vec<u8>>, Vec<u8>) {
+        let mut reader = pktline::Reader::new(body);
+        let mut lines = Vec::new();
+        while let Some(Packet::Data(data)) = reader.next_packet().unwrap() {
+            lines.push(data.to_vec());
+        }
+        (lines, reader.rest().to_vec())
+    }
+
     #[test]
-    fn a_request_reads_back() {
+    fn a_request_is_its_updates_then_the_pack() {
         let second = Update {
             old: object_id(Kind::Blob, b"a"),
             new: ObjectId::ZERO,
             name: "refs/heads/old".to_owned(),
         };
         let body = request(&[update(), second.clone()], b"PACK...").unwrap();
+        let (lines, pack) = split(&body);
         let first = format!(
             "{} {} refs/heads/main\0report-status agent=shelfkit/{}\n",
             ObjectId::ZERO,
             update().new,
             env!("CARGO_PKG_VERSION")
         );
-        let expected = format!("{:04x}{first}", first.len() + 4);
-        assert!(body.starts_with(expected.as_bytes()), "{body:?}");
-        let read = parse_request(&body).unwrap();
-        assert_eq!(read.updates, [update(), second]);
-        assert_eq!(read.capabilities, ["report-status", AGENT]);
-        assert_eq!(read.pack, b"PACK...");
+        let second = format!("{} {} refs/heads/old\n", second.old, second.new);
+        assert_eq!(lines, [first.into_bytes(), second.into_bytes()]);
+        assert_eq!(pack, b"PACK...");
     }
 
     #[test]

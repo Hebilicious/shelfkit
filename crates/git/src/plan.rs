@@ -358,6 +358,17 @@ mod tests {
         assert_eq!(paths, ["main", ".git/config", "ok"]);
     }
 
+    /// Each update line of a receive-pack request, without its capabilities.
+    fn updates(request: &[u8]) -> Vec<String> {
+        let mut reader = crate::pktline::Reader::new(request);
+        let mut lines = Vec::new();
+        while let Some(crate::pktline::Packet::Data(line)) = reader.next_packet().unwrap() {
+            let line = String::from_utf8_lossy(line);
+            lines.push(line.split('\0').next().unwrap().trim_end().to_owned());
+        }
+        lines
+    }
+
     #[test]
     fn tags_are_created_at_the_commit() {
         let mut tagged = input(
@@ -368,17 +379,11 @@ mod tests {
         tagged.tags = vec!["refs/tags/v1.0.0".to_owned()];
         let plan = plan_commit(&tagged).unwrap();
         let push = plan.push.unwrap();
-        let request = receive_pack::parse_request(&push.request).unwrap();
-        let updates: Vec<(&str, ObjectId, ObjectId)> = request
-            .updates
-            .iter()
-            .map(|update| (update.name.as_str(), update.old, update.new))
-            .collect();
         assert_eq!(
-            updates,
+            updates(&push.request),
             [
-                ("refs/heads/main", ObjectId::ZERO, push.commit),
-                ("refs/tags/v1.0.0", ObjectId::ZERO, push.commit),
+                format!("{} {} refs/heads/main", ObjectId::ZERO, push.commit),
+                format!("{} {} refs/tags/v1.0.0", ObjectId::ZERO, push.commit),
             ]
         );
 

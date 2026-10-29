@@ -40,7 +40,7 @@ export const meta = sqliteTable("meta", {
 
 /** Every snapshot the shelf has had. The manifest (path, sha256, size per file) is the R2 object `digest`. */
 export const snapshot = sqliteTable("snapshot", {
-  /** The Git commit in the shelf's repository that holds these files; null where the deployment has no Artifacts. */
+  /** The Git commit in the shelf's repository that holds these files; null for a snapshot from before Git (`push`). */
   commit: text(),
   createdAt: text("created_at").notNull(),
   /** `sha256:<hex>` of the canonical manifest. */
@@ -68,7 +68,7 @@ export const file = sqliteTable("file", {
 
 /**
  * Every entry of the Git tree of the commit the shelf is indexed at (`meta.commit`), files outside the shelf's paths
- * included, so a commit the Worker makes keeps them. Empty where the deployment has no Artifacts.
+ * included, so a commit the Worker makes keeps them. Empty until the shelf's files are first committed.
  */
 export const repositoryEntry = sqliteTable("repository_entry", {
   /** The Git object id: 40 lowercase hex digits. */

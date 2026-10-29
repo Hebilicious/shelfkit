@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import path from "node:path";
 
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
@@ -18,8 +19,8 @@ import { TEST_OWNER_KEY } from "./test/owner-key.ts";
 const repository = path.resolve(import.meta.dirname, "../..");
 
 /**
- * `wrangler.jsonc` without Artifacts, which Wrangler never simulates (the tests stand in for it themselves), and with no
- * queue consumer: a test runs the jobs it means to with `runJob`, and nothing runs the rest behind its back.
+ * `wrangler.jsonc` with Artifacts on Miniflare's local simulator (`"remote": false`), and with no queue consumer: a test
+ * runs the jobs it means to with `runJob`, and nothing runs the rest behind its back.
  */
 const configPath = writeTestConfig();
 
@@ -114,22 +115,35 @@ const provide = {
  */
 const timeouts = { hookTimeout: 60_000, testTimeout: 60_000 };
 
+/**
+ * How many test files run at once. Each runs in a Miniflare of its own, with its own Artifacts simulator and the Git
+ * processes it starts, and every read of a repository is one of those processes. Vitest's default, one file per core
+ * but one, ran 19 at once on a 22-core machine, and a test that takes five seconds alone took more than thirty; eight
+ * at a time ran the default project in about two minutes.
+ */
+const maxWorkers = Math.max(1, Math.min(8, availableParallelism() - 1));
+
 /** The tests that need GitHub sign-in enabled; every other test runs as a default deployment, without it. */
 const GITHUB_TESTS = ["test/github.test.ts"];
 
 /**
- * The Worker runs in workerd with its real bindings, simulated by Miniflare: the shelf object, R2, and the queue.
- * Artifacts, which Miniflare never simulates, is the stand-in `test/repositories.setup.ts` installs.
- * Files the tests need from the repository are read here, in Node, and provided to them. Two projects: the default
- * deployment (passkeys and links, no GitHub), and one with GitHub sign-in enabled for the GitHub tests.
+ * The Worker runs in workerd with its real bindings, simulated by Miniflare: the shelf object, R2, the queue, and
+ * Artifacts, whose simulator serves each repository with `git http-backend` (Git 2.32 or newer on PATH) and gives each
+ * test file storage of its own. `remoteBindings: false` keeps every binding local: the pool bundles its own copy of
+ * Wrangler's remote-binding selection, which the patch in `patches/` does not reach, and would otherwise open a remote
+ * session for Artifacts. Files the tests need from the repository are read here, in Node, and provided to them. Two
+ * projects: the default deployment (passkeys and links, no GitHub), and one with GitHub sign-in enabled for the GitHub
+ * tests.
  */
 export default defineConfig({
   test: {
+    maxWorkers,
     projects: [
       {
         plugins: [
           cloudflareTest({
             miniflare: { bindings: secrets },
+            remoteBindings: false,
             wrangler: { configPath },
           }),
         ],
@@ -138,7 +152,7 @@ export default defineConfig({
           include: ["test/**/*.test.ts"],
           name: "default",
           provide,
-          setupFiles: ["./test/repositories.setup.ts"],
+          setupFiles: ["./test/webauthn.setup.ts"],
           ...timeouts,
         },
       },
@@ -146,6 +160,7 @@ export default defineConfig({
         plugins: [
           cloudflareTest({
             miniflare: { bindings: { ...secrets, ...github } },
+            remoteBindings: false,
             wrangler: { configPath },
           }),
         ],
@@ -153,7 +168,6 @@ export default defineConfig({
           include: GITHUB_TESTS,
           name: "github",
           provide,
-          setupFiles: ["./test/repositories.setup.ts"],
           ...timeouts,
         },
       },

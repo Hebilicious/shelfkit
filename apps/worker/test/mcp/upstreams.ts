@@ -6,6 +6,8 @@
  *   over an event stream, and records whether the session was ended;
  * - `https://edge.example`: the relay's hard cases (`edges.ts`);
  * - `https://redirect.example`: answers every request with a redirect to `https://evil.example`;
+ * - a loopback address: passed to the platform's `fetch`, unrecorded, since it is the Git remote of a repository on
+ *   the local Artifacts simulator, which a test's shelf pushes to;
  * - anything else: recorded, and answered `502`, so a test can assert it was never called.
  */
 import * as v from "valibot";
@@ -13,6 +15,9 @@ import * as v from "valibot";
 import { IdSchema } from "../../src/mcp/wire.ts";
 import type { Id, JsonObject } from "../../src/mcp/wire.ts";
 import { edge } from "./edges.ts";
+
+/** The platform's `fetch`, kept before a test replaces it with `Upstreams.fetch`. */
+const platformFetch = globalThis.fetch;
 
 /** One request a stand-in received. */
 export interface Received {
@@ -132,7 +137,10 @@ export class Upstreams {
     init?: RequestInit
   ): Promise<Response> => {
     const request = new Request(input, init);
-    const { origin, pathname } = new URL(request.url);
+    const { hostname, origin, pathname } = new URL(request.url);
+    if (hostname === "127.0.0.1") {
+      return await platformFetch(request);
+    }
     const text = request.method === "POST" ? await request.text() : "";
     const parsed = v.safeParse(
       MessageSchema,

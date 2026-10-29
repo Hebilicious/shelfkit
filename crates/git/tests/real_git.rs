@@ -1,16 +1,17 @@
 //! The library against the real `git`: pushes it plans are applied by `git
 //! receive-pack` and pass `git fsck --strict`, its ids are the ones `git`
-//! computes, and it reads packs `git pack-objects` writes, deltas included.
+//! computes, `git index-pack` reads the packs it writes, and it reads the
+//! references `git upload-pack` and `git receive-pack` advertise.
 //!
 //! Each test skips, saying so, when there is no `git` on PATH.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use shelfkit_git::pack;
+use shelfkit_git::pktline::{Packet, Reader};
 use shelfkit_git::receive_pack::{self, parse_report};
 use shelfkit_git::{
-    CommitInput, CommitPlan, FileEntry, Kind, Mode, NewFile, ObjectId, Signature, Source,
-    object_id, plan_commit,
+    AdvertisedRef, CommitInput, CommitPlan, FileEntry, Kind, Mode, NewFile, ObjectId, Signature,
+    Source, object_id, pack, parse_advertisement, plan_commit,
 };
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -128,6 +129,28 @@ fn push(repo: &Path, plan: &CommitPlan) -> receive_pack::Report {
         String::from_utf8_lossy(&output.stderr)
     );
     parse_report(&output.stdout).unwrap()
+}
+
+/// The pack a receive-pack request carries, after its update lines and their
+/// flush.
+fn pack_of(request: &[u8]) -> &[u8] {
+    let mut reader = Reader::new(request);
+    while let Some(Packet::Data(_)) = reader.next_packet().unwrap() {}
+    reader.rest()
+}
+
+/// The id of every object in `pack`, as `git index-pack` reads it in `dir`.
+fn packed_ids(dir: &Path, pack: &[u8]) -> Vec<String> {
+    std::fs::write(dir.join("check.pack"), pack).unwrap();
+    git(dir, &["index-pack", "check.pack"], b"", &[]);
+    let index = std::fs::read(dir.join("check.idx")).unwrap();
+    let listed = text(git(dir, &["show-index"], &index, &[]));
+    std::fs::remove_file(dir.join("check.pack")).unwrap();
+    std::fs::remove_file(dir.join("check.idx")).unwrap();
+    listed
+        .lines()
+        .map(|line| line.split(' ').nth(1).unwrap().to_owned())
+        .collect()
 }
 
 /// `git ls-tree -r` of a revision: path to (mode, id).
@@ -254,12 +277,11 @@ fn pushes_that_real_git_applies() {
     .unwrap();
     // The commit, the root, profiles, profiles/new, and two new blobs.
     assert_eq!(second.objects, 6);
-    let request = receive_pack::parse_request(&second.push.as_ref().unwrap().request).unwrap();
-    let packed = pack::read(&request.pack).unwrap();
+    let packed = packed_ids(&dir.0, pack_of(&second.push.as_ref().unwrap().request));
     assert_eq!(packed.len(), 6);
-    for object in &packed {
-        let exists = git_in(&repo, &["cat-file", "-e", &object.id.to_string()], b"", &[]);
-        assert!(!exists.status.success(), "{} was already there", object.id);
+    for id in &packed {
+        let exists = git_in(&repo, &["cat-file", "-e", id], b"", &[]);
+        assert!(!exists.status.success(), "{id} was already there");
     }
     let report = push(&repo, &second);
     assert!(report.is_ok(), "{report:?}");
@@ -476,14 +498,6 @@ fn ids_match_what_git_computes() {
     })
     .unwrap();
     assert_eq!(plan.push.unwrap().commit, root);
-
-    // Decoding git's commit gives back what was asked for.
-    let body = git(&repo, &["cat-file", "commit", child.trim()], b"", &[]);
-    let decoded = shelfkit_git::Commit::decode(&body).unwrap();
-    assert_eq!(decoded.parents, [root]);
-    assert_eq!(decoded.committer, committer);
-    assert_eq!(decoded.author, signature());
-    assert_eq!(decoded.message, "Child\n");
 }
 
 #[test]
@@ -552,60 +566,120 @@ fn a_commit_creates_its_tags_in_the_same_push() {
 }
 
 #[test]
-fn reads_packs_git_writes_with_deltas() {
-    if !have_git("reads_packs_git_writes_with_deltas") {
+fn git_reads_the_packs_it_writes() {
+    if !have_git("git_reads_the_packs_it_writes") {
         return;
     }
     let dir = TempDir::new("pack");
-    git(&dir.0, &["init", "--bare", "--quiet", "repo"], b"", &[]);
-    let repo = dir.0.join("repo");
-    // Large, similar blobs: git stores all but one as deltas.
-    let base: String = (0..2000)
-        .map(|line| format!("line {line} of the shelf\n"))
+    // A body over 15 bytes, and one over 16 KiB, take more than one byte of
+    // size in their entry's header.
+    let big = vec![b'x'; 70_000];
+    let objects: Vec<(Kind, &[u8])> = vec![
+        (Kind::Blob, b"hello\n"),
+        (Kind::Blob, b""),
+        (Kind::Tree, b""),
+        (Kind::Blob, &big),
+    ];
+    let mut expected: Vec<String> = objects
+        .iter()
+        .map(|(kind, body)| object_id(*kind, body).to_string())
         .collect();
-    let mut blobs = Vec::new();
-    for version in 0..6 {
-        let mut blob = base.clone();
-        blob.insert_str(
-            blob.len() / 2,
-            &format!("an edit made in version {version}\n"),
-        );
-        blob.push_str(&format!("version {version}\n"));
-        blobs.push(blob.into_bytes());
-    }
-    let mut ids = Vec::new();
-    for blob in &blobs {
-        let id = text(git(&repo, &["hash-object", "-w", "--stdin"], blob, &[]));
-        ids.push(id.trim().to_owned());
-    }
-    let listing = ids.join("\n") + "\n";
-    for flags in [&["--delta-base-offset"][..], &[][..]] {
-        let mut args = vec!["pack-objects", "--stdout", "-q"];
-        args.extend_from_slice(flags);
-        let pack_bytes = git(&repo, &args, listing.as_bytes(), &[]);
+    expected.sort();
+    let mut packed = packed_ids(&dir.0, &pack::write(&objects).unwrap());
+    packed.sort();
+    assert_eq!(packed, expected);
+}
 
-        // Prove git deltified: `verify-pack -v` lists a base for each delta.
-        let pack_path = dir.0.join("check.pack");
-        std::fs::write(&pack_path, &pack_bytes).unwrap();
-        git(&dir.0, &["index-pack", "check.pack"], b"", &[]);
-        let verified = text(git(&dir.0, &["verify-pack", "-v", "check.idx"], b"", &[]));
-        let deltas = verified
-            .lines()
-            .filter(|line| line.split_whitespace().count() == 7)
-            .count();
-        assert!(deltas > 0, "git stored no deltas ({flags:?}):\n{verified}");
-        std::fs::remove_file(&pack_path).unwrap();
-        std::fs::remove_file(dir.0.join("check.idx")).unwrap();
-
-        let objects = pack::read(&pack_bytes).unwrap();
-        assert_eq!(objects.len(), blobs.len());
-        let read: BTreeMap<String, (Kind, Vec<u8>)> = objects
-            .into_iter()
-            .map(|object| (object.id.to_string(), (object.kind, object.body)))
-            .collect();
-        for (id, blob) in ids.iter().zip(&blobs) {
-            assert_eq!(read[id].0, Kind::Blob);
-            assert_eq!(&read[id].1, blob, "{id} ({flags:?})");
-        }
+#[test]
+fn reads_the_references_git_advertises() {
+    if !have_git("reads_the_references_git_advertises") {
+        return;
     }
+    let dir = TempDir::new("advertise");
+    git(
+        &dir.0,
+        &["init", "--bare", "--quiet", "--initial-branch=main", "repo"],
+        b"",
+        &[],
+    );
+    let repo = dir.0.join("repo");
+    let advertised = |service: &str| {
+        parse_advertisement(&git(
+            &repo,
+            &[service, "--stateless-rpc", "--advertise-refs", "."],
+            b"",
+            &[],
+        ))
+        .unwrap()
+    };
+    // An empty repository advertises its capabilities alone.
+    let empty = advertised("receive-pack");
+    assert_eq!(empty.refs, []);
+    assert!(
+        empty
+            .capabilities
+            .iter()
+            .any(|capability| capability == "report-status"),
+        "{empty:?}"
+    );
+
+    let first = plan_commit(&CommitInput {
+        parent: None,
+        base: Vec::new(),
+        files: vec![contents("apm.yml", Mode::File, b"version: 1.0.0\n")],
+        reference: "refs/heads/main".to_owned(),
+        tags: vec!["refs/tags/v1.0.0".to_owned()],
+        author: signature(),
+        committer: None,
+        message: "1.0.0".to_owned(),
+    })
+    .unwrap();
+    assert!(push(&repo, &first).is_ok());
+    let commit = first.push.as_ref().unwrap().commit;
+    let env = [
+        ("GIT_COMMITTER_NAME", "ShelfKit Test"),
+        ("GIT_COMMITTER_EMAIL", "test@shelfkit.invalid"),
+    ];
+    git(
+        &repo,
+        &[
+            "tag",
+            "--annotate",
+            "--message",
+            "Annotated",
+            "annotated",
+            "v1.0.0",
+        ],
+        b"",
+        &env,
+    );
+    let annotated: ObjectId = text(git(&repo, &["rev-parse", "refs/tags/annotated"], b"", &[]))
+        .trim()
+        .parse()
+        .unwrap();
+
+    let reference = |name: &str, id: ObjectId, peeled: Option<ObjectId>| AdvertisedRef {
+        name: name.to_owned(),
+        id,
+        peeled,
+    };
+    let upload = advertised("upload-pack");
+    assert_eq!(
+        upload.refs,
+        [
+            reference("HEAD", commit, None),
+            reference("refs/heads/main", commit, None),
+            reference("refs/tags/annotated", annotated, Some(commit)),
+            reference("refs/tags/v1.0.0", commit, None),
+        ]
+    );
+    assert!(
+        upload
+            .capabilities
+            .iter()
+            .any(|capability| capability == "symref=HEAD:refs/heads/main"),
+        "{upload:?}"
+    );
+    let receive = advertised("receive-pack");
+    assert_eq!(receive.refs.len(), 3, "{receive:?}");
 }

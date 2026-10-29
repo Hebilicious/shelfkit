@@ -1,4 +1,7 @@
-/** Talking to the Worker under test the way a client does: over HTTP, through its default export; Git included. */
+/**
+ * Talking to the Worker under test the way a client does: over HTTP, through its default export; Git included. Its
+ * Artifacts binding is Miniflare's local simulator, which the helpers at the end reach directly, around the Worker.
+ */
 import { env, exports } from "cloudflare:workers";
 import * as v from "valibot";
 
@@ -277,4 +280,71 @@ export async function createKey(
     { name, scopes, shelf }
   );
   return { id: found.createKey.key.id, secret: found.createKey.secret };
+}
+
+/** Run `use` with an Artifacts repository's capability from the test deployment's binding, released afterwards. */
+export async function withArtifactsRepo<T>(
+  name: string,
+  use: (repo: ArtifactsRepo) => Promise<T>
+): Promise<T> {
+  const repo = await env.ARTIFACTS.get(name);
+  try {
+    return await use(repo);
+  } finally {
+    repo[Symbol.dispose]();
+  }
+}
+
+/**
+ * Push one commit of exactly `files` straight to an Artifacts repository's Git remote with a token of its own, around
+ * the Worker, as an operator with an Artifacts token would: on top of `parent`, or as a root commit. Planned with the
+ * engine and sent with `fetch`, so no Git binary is needed. Returns the commit.
+ */
+export async function pushToRemote(
+  remote: string,
+  token: string,
+  files: Readonly<Record<string, string>>,
+  parent: string | null
+): Promise<string> {
+  const shelfEngine = await engine();
+  const planned = shelfEngine.gitCommit({
+    author: {
+      email: "ops@example.com",
+      name: "Ops",
+      offset: 0,
+      time: 1_700_000_000,
+    },
+    base: [],
+    files: Object.entries(files).map(([path, contents]) => ({
+      contents,
+      path,
+    })),
+    message: "around the Worker",
+    parent: parent ?? undefined,
+  });
+  if (!planned.ok || planned.value.request === null) {
+    throw new Error(`nothing to push: ${JSON.stringify(planned)}`);
+  }
+  const response = await fetch(`${remote}/git-receive-pack`, {
+    body: Uint8Array.from(planned.value.request),
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/x-git-receive-pack-request",
+    },
+    method: "POST",
+  });
+  const report = shelfEngine.gitReport(
+    new Uint8Array(await response.arrayBuffer())
+  );
+  if (
+    !response.ok ||
+    !report.ok ||
+    !report.value.unpack.ok ||
+    report.value.refs.some((ref) => !ref.ok)
+  ) {
+    throw new Error(
+      `the remote refused the push (${response.status}): ${JSON.stringify(report)}`
+    );
+  }
+  return planned.value.commit;
 }

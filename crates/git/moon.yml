@@ -1,7 +1,7 @@
 language: rust
-# The Git side of a shelf's Artifacts repository: its objects, the pack, and
-# the receive-pack request the Worker pushes (through the WASM engine). No I/O
-# of its own.
+# The client's side of a shelf's Artifacts repository: its objects, the pack,
+# the receive-pack request the Worker pushes, and the ref advertisement it
+# reads (through the WASM engine). No I/O of its own.
 layer: library
 tags: ["crate", "git"]
 

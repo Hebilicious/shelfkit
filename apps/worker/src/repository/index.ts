@@ -7,12 +7,9 @@
  * branch, made by the shelf's object before it records the snapshot. A push to the repository from a Git client
  * reaches it through the Worker's own Git route (`src/git.ts`), and the object indexes the new head afterwards.
  *
- * Artifacts has no local simulator, and never will, so a deployment without the `ARTIFACTS` binding (local mode on
- * Miniflare, with no Cloudflare account) keeps each repository in its R2 bucket and serves Git itself
- * (`LocalRepository`): the same route, the same pushes, and the same index, with no Artifacts.
+ * Local mode and the tests run the same code on Miniflare's local Artifacts simulator (`scripts/local-config.ts`).
  */
 import { ArtifactsRepository } from "./artifacts.ts";
-import { LocalRepository } from "./local.ts";
 import type { ShelfRepository } from "./model.ts";
 
 export type {
@@ -24,15 +21,10 @@ export type {
 } from "./model.ts";
 export { REPOSITORY_BRANCH, RepositoryPendingError } from "./model.ts";
 
-/** Where the deployment keeps shelves' repositories: Artifacts, or R2 in local mode, with no `ARTIFACTS` binding. */
+/** The deployment's repositories, in its Artifacts namespace. */
 export function shelfRepository(env: Env): ShelfRepository {
-  // SAFETY: the binding is declared, but a local configuration (`scripts/local-config.ts`) leaves it out, so it may
-  // be undefined at run time whatever the generated type says.
-  const binding = env.ARTIFACTS as Artifacts | undefined;
-  return binding === undefined
-    ? new LocalRepository(env.BLOBS)
-    : new ArtifactsRepository(
-        binding,
-        async (input, init) => await fetch(input, init)
-      );
+  return new ArtifactsRepository(
+    env.ARTIFACTS,
+    async (input, init) => await fetch(input, init)
+  );
 }

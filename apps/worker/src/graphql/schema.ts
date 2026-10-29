@@ -430,7 +430,7 @@ export function buildSchema(): GraphQLSchema {
       fields: (t) => ({
         commit: t.exposeString("commit", {
           description:
-            "The commit in the shelf's repository that holds these files; null where the deployment has no Artifacts.",
+            "The commit in the shelf's repository that holds these files; null for a snapshot from before Git (`push`).",
           nullable: true,
         }),
         createdAt: t.field({
@@ -2106,8 +2106,7 @@ export function buildSchema(): GraphQLSchema {
           `${new URL(context.request.url).origin}/apm`,
       }),
       repository: t.field({
-        description:
-          "The shelf's Git repository, which holds its files; null where the deployment runs without Artifacts.",
+        description: "The shelf's Git repository, which holds its files.",
         nullable: true,
         resolve: (shelf, _args, context) =>
           shelf.summary.repository === null

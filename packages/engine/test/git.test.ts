@@ -10,7 +10,6 @@ import type {
   EngineResult,
   GitCommitRequest,
   GitCommitted,
-  GitReceived,
   GitReport,
   GitSignature,
 } from "../src/index.ts";
@@ -53,6 +52,11 @@ function answered<T>(result: EngineResult<T>): T {
   return result.value;
 }
 
+/** A pkt-line: four hex digits of length, then the data. */
+function pkt(line: string): string {
+  return `${(new TextEncoder().encode(line).length + 4).toString(16).padStart(4, "0")}${line}`;
+}
+
 function committed(engine: Engine, request: GitCommitRequest): GitCommitted {
   const plan = answered(engine.gitCommit(request));
   if (plan.unchanged) {
@@ -69,7 +73,6 @@ describe("git", () => {
 
   describe("a root commit", () => {
     let plan: GitCommitted;
-    let received: GitReceived;
     beforeAll(() => {
       plan = committed(engine, {
         author,
@@ -84,7 +87,6 @@ describe("git", () => {
         ],
         message: "Create the shelf",
       });
-      received = answered(engine.gitReceive(plan.request));
     });
 
     it("packs the commit, two trees, and two blobs", () => {
@@ -96,38 +98,14 @@ describe("git", () => {
     });
 
     it("creates the reference, asking for report-status", () => {
-      expect(received.updates).toStrictEqual([
-        { name: "refs/heads/main", new: plan.commit, old: ZERO },
-      ]);
-      expect(received.capabilities[0]).toBe("report-status");
-    });
-
-    it("reads back the commit, a blob's bytes, and the root tree", () => {
-      expect(received.objects[0]).toMatchObject({
-        author: { email: author.email, name: author.name },
-        authoredAt: author.time,
-        id: plan.commit,
-        kind: "commit",
-        message: "Create the shelf\n",
-        parents: [],
-        tree: plan.tree,
-      });
-      const tool = received.objects.find(
-        (object) => object.id === plan.files[1]?.id
-      );
-      expect(tool).toStrictEqual({
-        contents: new Uint8Array([0, 255, 1]),
-        id: plan.files[1]?.id,
-        kind: "blob",
-      });
-      const root = received.objects.find((object) => object.id === plan.tree);
-      expect(root).toMatchObject({
-        entries: [
-          { mode: "40000", name: "bin" },
-          { id: plan.files[0]?.id, mode: "100644", name: "shelf.json" },
-        ],
-        kind: "tree",
-      });
+      const request = new TextDecoder().decode(plan.request);
+      const length = Number.parseInt(request.slice(0, 4), 16);
+      const [update = "", capabilities = ""] = request
+        .slice(4, length)
+        .split("\0");
+      expect(update).toBe(`${ZERO} ${plan.commit} refs/heads/main`);
+      expect(capabilities.split(" ")[0]).toBe("report-status");
+      expect(request.slice(length, length + 8)).toBe("0000PACK");
     });
   });
 
@@ -166,13 +144,8 @@ describe("git", () => {
       files: [{ id: submodule, mode: "160000", path: "vendor/sub" }],
       message: "Submodule",
     });
+    // The commit, the root, and `vendor`.
     expect(plan.objects).toBe(3);
-    const vendor = answered(engine.gitReceive(plan.request)).objects.find(
-      (object) => object.kind === "tree" && object.entries[0]?.name === "sub"
-    );
-    expect(vendor).toMatchObject({
-      entries: [{ id: submodule, mode: "160000", name: "sub" }],
-    });
   });
 
   it("names the path of each invalid file", () => {
@@ -202,65 +175,34 @@ describe("git", () => {
     ).toThrow(/parent/u);
   });
 
-  describe("a server's side", () => {
-    const encoder = new TextEncoder();
-
-    it("advertises references, HEAD first for a clone", () => {
-      const id = "1".repeat(40);
-      const body = answered(
-        engine.gitAdvertise({
-          head: "refs/heads/main",
-          refs: [{ id, name: "refs/heads/main" }],
-          service: "git-upload-pack",
-        })
-      );
-      const text = new TextDecoder().decode(body);
-      expect(
-        text.startsWith("001e# service=git-upload-pack\n0000")
-      ).toBeTruthy();
-      expect(text).toContain(`${id} HEAD\0shallow agent=shelfkit/`);
+  it("reads a ref advertisement, and refuses what is not one", () => {
+    const [one, two] = ["1".repeat(40), "2".repeat(40)];
+    const body = new TextEncoder().encode(
+      [
+        pkt("# service=git-upload-pack\n"),
+        "0000",
+        pkt(`${one} HEAD\0symref=HEAD:refs/heads/main agent=git/2\n`),
+        pkt(`${one} refs/heads/main\n`),
+        pkt(`${two} refs/tags/v1.0.0\n`),
+        pkt(`${one} refs/tags/v1.0.0^{}\n`),
+        "0000",
+      ].join("")
+    );
+    expect(engine.gitRefs(body)).toStrictEqual({
+      ok: true,
+      value: {
+        capabilities: ["symref=HEAD:refs/heads/main", "agent=git/2"],
+        refs: [
+          { id: one, name: "HEAD" },
+          { id: one, name: "refs/heads/main" },
+          { id: two, name: "refs/tags/v1.0.0", peeled: one },
+        ],
+      },
     });
-
-    it("reads a clone's request and answers it with a pack", () => {
-      const want = "1".repeat(40);
-      const request = answered(
-        engine.gitUploadRequest(
-          encoder.encode(`0032want ${want}\n000ddeepen 1\n00000009done\n`)
-        )
-      );
-      expect(request).toStrictEqual({
-        capabilities: [],
-        deepens: true,
-        depth: 1,
-        haves: [],
-        negotiation: "done",
-        shallows: [],
-        wants: [want],
-      });
-      const body = answered(
-        engine.gitUploadResponse({
-          common: [],
-          deepens: true,
-          negotiation: "done",
-          pack: [{ body: encoder.encode("x"), kind: "blob" }],
-          shallow: [want],
-          unshallow: [],
-        })
-      );
-      const text = new TextDecoder().decode(body);
-      expect(
-        text.startsWith(`0035shallow ${want}\n00000008NAK\nPACK`)
-      ).toBeTruthy();
-    });
-
-    it("writes the report a client reads", () => {
-      const report: GitReport = {
-        refs: [{ name: "refs/heads/main", ok: false, reason: "fetch first" }],
-        unpack: { ok: true },
-      };
-      const body = answered(engine.gitStatus(report));
-      expect(engine.gitReport(body)).toStrictEqual({ ok: true, value: report });
-    });
+    const refused = engine.gitRefs(new TextEncoder().encode("0000PACK"));
+    expect(
+      refused.ok ? [] : refused.errors.map((error) => error.path)
+    ).toStrictEqual(["advertisement"]);
   });
 
   it("reads a report, and refuses what is not one", () => {
@@ -302,12 +244,23 @@ describe("git", () => {
 
     beforeAll(() => {
       directory = mkdtempSync(path.join(tmpdir(), "shelfkit-engine-git-"));
-      git(directory, ["init", "--bare", "--quiet", "repo"]);
+      git(directory, [
+        "init",
+        "--bare",
+        "--quiet",
+        "--initial-branch=main",
+        "repo",
+      ]);
       repo = path.join(directory, "repo");
       first = committed(engine, {
         author,
         base: [],
         files: [
+          {
+            contents: new Uint8Array([0, 255, 1]),
+            mode: "100755",
+            path: "bin/tool",
+          },
           { contents: "Say hi.\n", path: "items/prompts/hi/prompt.md" },
           { contents: "shelf.json", mode: "120000", path: "link" },
           { contents: "{}\n", path: "shelf.json" },
@@ -321,12 +274,22 @@ describe("git", () => {
       rmSync(directory, { force: true, recursive: true });
     });
 
-    it("applies a root commit", () => {
+    it("applies a root commit, every byte and mode as given", () => {
       expect(push(first.request)).toStrictEqual({
         refs: [{ name: "refs/heads/main", ok: true }],
         unpack: { ok: true },
       });
       expect(git(repo, ["fsck", "--strict", "--no-dangling"]).status).toBe(0);
+      const tool = git(repo, ["cat-file", "blob", "refs/heads/main:bin/tool"]);
+      expect(new Uint8Array(tool.stdout)).toStrictEqual(
+        new Uint8Array([0, 255, 1])
+      );
+      const listed = git(repo, ["ls-tree", "refs/heads/main", "bin/tool"]);
+      expect(listed.stdout.toString()).toMatch(/^100755 blob /u);
+      const shown = git(repo, ["log", "--format=%an <%ae> %at%n%B", "-1"]);
+      expect(shown.stdout.toString()).toBe(
+        `${author.name} <${author.email}> ${author.time}\nCreate\n\n`
+      );
     });
 
     it("applies a change on top, keeping the gitlink", () => {
@@ -367,6 +330,22 @@ describe("git", () => {
       const report = push(stale.request);
       expect(report.unpack.ok).toBeTruthy();
       expect(report.refs[0]?.ok).toBeFalsy();
+    });
+
+    it("reads the references the repository advertises", () => {
+      const advertised = git(repo, [
+        "upload-pack",
+        "--stateless-rpc",
+        "--advertise-refs",
+        ".",
+      ]);
+      const main = git(repo, ["rev-parse", "refs/heads/main"])
+        .stdout.toString()
+        .trim();
+      expect(answered(engine.gitRefs(advertised.stdout)).refs).toStrictEqual([
+        { id: main, name: "HEAD" },
+        { id: main, name: "refs/heads/main" },
+      ]);
     });
   });
 });

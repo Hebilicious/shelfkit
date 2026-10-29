@@ -49,14 +49,7 @@ export function jobDependencies(env: Env): JobDependencies {
           env.GITHUB_TOKEN
         );
       }
-      // SAFETY: the binding is declared, but a local configuration leaves it out, so it may be undefined at run time.
-      const binding = env.ARTIFACTS as Artifacts | undefined;
-      if (binding === undefined) {
-        throw new Error(
-          "this deployment runs without Artifacts, so it indexes only GitHub repositories (owner/repo)"
-        );
-      }
-      return new ArtifactsForge(binding);
+      return new ArtifactsForge(env.ARTIFACTS);
     },
     now: () => `${new Date().toISOString().slice(0, 19)}Z`,
     scanners,

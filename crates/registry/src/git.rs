@@ -95,8 +95,19 @@ pub fn commit(version: &Version<'_>) -> Result<CommitPlan, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shelfkit_git::receive_pack;
+    use shelfkit_git::pktline::{Packet, Reader};
     use std::collections::BTreeMap;
+
+    /// Each update line of a receive-pack request, without its capabilities.
+    fn updates(request: &[u8]) -> Vec<String> {
+        let mut reader = Reader::new(request);
+        let mut lines = Vec::new();
+        while let Some(Packet::Data(line)) = reader.next_packet().unwrap() {
+            let line = String::from_utf8_lossy(line);
+            lines.push(line.split('\0').next().unwrap().trim_end().to_owned());
+        }
+        lines
+    }
 
     fn archive(version: &str) -> Vec<u8> {
         let mut files = BTreeMap::new();
@@ -140,17 +151,11 @@ mod tests {
         };
         let second = commit(&second_version).unwrap();
         let push = second.push.as_ref().unwrap();
-        let request = receive_pack::parse_request(&push.request).unwrap();
-        let updates: Vec<(&str, ObjectId, ObjectId)> = request
-            .updates
-            .iter()
-            .map(|update| (update.name.as_str(), update.old, update.new))
-            .collect();
         assert_eq!(
-            updates,
+            updates(&push.request),
             [
-                ("refs/heads/main", first_commit, push.commit),
-                ("refs/tags/v1.1.0", ObjectId::ZERO, push.commit),
+                format!("{first_commit} {} refs/heads/main", push.commit),
+                format!("{} {} refs/tags/v1.1.0", ObjectId::ZERO, push.commit),
             ]
         );
         // The same version on the same parent is the same commit.

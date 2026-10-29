@@ -6,17 +6,15 @@
  *
  * The registry is the source of truth, and a package's repository follows it. A publish commits its version before it
  * answers, and a clone or a fetch first commits every version the repository lacks, in the order they were published,
- * so a version whose commit failed is committed by the next read. The repositories are the Worker's own, as the
- * archives are, so they live in R2 under `packages/` and `LocalRepository` serves them, with or without Artifacts.
+ * so a version whose commit failed is committed by the next read. The repositories are in Artifacts beside the shelves'
+ * own, each named `<shelf>.<profile>`: Artifacts allows a `.` in a name and a shelf's id has none, so a package's
+ * repository can never be a shelf's. The Worker commits to them and relays Git clients to them as it does for shelves.
  */
-import type { GitVersionRequest } from "@shelfkit/engine";
+import type { Engine, GitVersionRequest } from "@shelfkit/engine";
 
 import { engine } from "./engine.ts";
-import { LocalRepository } from "./repository/local.ts";
+import { shelfRepository } from "./repository/index.ts";
 import { archiveKey } from "./storage/objects.ts";
-
-/** Where the packages' repositories live in the bucket. */
-export const PACKAGES_PREFIX = "packages/";
 
 /** How many times committing starts over when another request committed a version first. */
 const ATTEMPTS = 5;
@@ -30,9 +28,9 @@ export interface PublishedVersion {
   readonly publishedAt: string;
 }
 
-/** The packages' repositories, each named `{shelf}/{profile}`. */
-export function packageRepository(env: Env): LocalRepository {
-  return new LocalRepository(env.BLOBS, PACKAGES_PREFIX);
+/** The Artifacts repository of a published profile: `<shelf>.<profile>`. */
+export function packageRepositoryName(shelf: string, profile: string): string {
+  return `${shelf}.${profile}`;
 }
 
 /** The bytes of a published archive. */
@@ -49,22 +47,39 @@ async function archiveOf(
 }
 
 /**
- * Commit every version of the package `name` (`{shelf}/{profile}`) that its repository lacks, in the order of
- * `versions`, which is the order they were published. Two requests committing the same version make the same commit;
- * the one that loses starts over from the references the other wrote.
+ * Whether the tree `main` is at holds exactly this version's files: another request's push of the version has moved
+ * `main` and not yet created its tag, which the references read before lacked. A version's tree does not depend on its
+ * parent, so the engine plans it as a first version to learn it.
+ */
+function holdsVersion(
+  shelfEngine: Engine,
+  tree: string,
+  request: GitVersionRequest
+): boolean {
+  const alone = shelfEngine.gitVersion({ ...request, base: [] });
+  return alone.ok && alone.value.tree === tree;
+}
+
+/**
+ * Commit every version of the package `{shelf}/{profile}` that its repository lacks, in the order of `versions`, which
+ * is the order they were published. A version is there when its tag is: the repository's ref advertisement says.
+ * Two requests committing the same version make the same commit; the one that loses starts over from the references
+ * the other wrote.
  */
 export async function commitVersions(
   env: Env,
-  name: string,
+  shelf: string,
+  profile: string,
   versions: readonly PublishedVersion[]
 ): Promise<void> {
-  const repository = packageRepository(env);
+  const name = packageRepositoryName(shelf, profile);
+  const repository = shelfRepository(env);
   const shelfEngine = await engine();
   for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- each attempt reads the references the one before lost to.
-    const refs = (await repository.references(name)) ?? {};
+    const refs = (await repository.references(name)) ?? new Map();
     const missing = versions.filter(
-      (published) => refs[`refs/tags/v${published.version}`] === undefined
+      (published) => !refs.has(`refs/tags/v${published.version}`)
     );
     let raced = false;
     for (const published of missing) {
@@ -80,7 +95,7 @@ export async function commitVersions(
         // oxlint-disable-next-line eslint/no-await-in-loop -- as above.
         archive: await archiveOf(env.BLOBS, published.digest),
         base: base.map(({ id, mode, path }) => ({ id, mode, path })),
-        package: name,
+        package: `${shelf}/${profile}`,
         publishedAt: Math.floor(Date.parse(published.publishedAt) / 1000),
         version: published.version,
       };
@@ -88,8 +103,12 @@ export async function commitVersions(
         head === null ? request : { ...request, parent: head.commit }
       );
       if (!planned.ok) {
+        if (head !== null && holdsVersion(shelfEngine, head.tree, request)) {
+          raced = true;
+          break;
+        }
         throw new Error(
-          `committing ${name} ${published.version}: ${planned.errors.map((error) => error.message).join("; ")}`
+          `committing ${shelf}/${profile} ${published.version}: ${planned.errors.map((error) => error.message).join("; ")}`
         );
       }
       // oxlint-disable-next-line eslint/no-await-in-loop -- as above.
@@ -101,7 +120,7 @@ export async function commitVersions(
       if (!pushed.ok) {
         if (pushed.reason !== "conflict") {
           throw new Error(
-            `committing ${name} ${published.version}: ${pushed.message}`
+            `committing ${shelf}/${profile} ${published.version}: ${pushed.message}`
           );
         }
         raced = true;
@@ -113,6 +132,6 @@ export async function commitVersions(
     }
   }
   throw new Error(
-    `${name}'s repository kept moving while its versions were committed`
+    `${shelf}/${profile}'s repository kept moving while its versions were committed`
   );
 }

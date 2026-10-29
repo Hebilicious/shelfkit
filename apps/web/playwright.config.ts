@@ -16,10 +16,10 @@ import { BASE_URL, OWNER_KEY, PORT } from "./test/e2e/support.ts";
 /**
  * The specs drive the built SPA served by the real Worker under `wrangler dev`, with Miniflare's Durable Object, R2 and
  * queue, so every screen goes through the same GraphQL API the CLI uses. It runs the local configuration
- * (`apps/worker/scripts/local-config.ts`), without Artifacts, which Miniflare cannot run, so the Worker keeps each shelf's
- * repository in R2 and serves Git itself. Each run starts from empty storage, and the specs seed their shelves with
- * `git push` to each shelf's repository. The browser signs in as people do by default: one-time links and passkeys,
- * made by Chromium's virtual authenticator. A second Worker has GitHub sign-in enabled, through a stand-in
+ * (`apps/worker/scripts/local-config.ts`), with Artifacts on Miniflare's local simulator, which serves every repository
+ * with `git http-backend` (Git 2.32 or newer on PATH). Each run starts from empty storage, and the specs seed their
+ * shelves with `git push` to each shelf's repository. The browser signs in as people do by default: one-time links and
+ * passkeys, made by Chromium's virtual authenticator. A second Worker has GitHub sign-in enabled, through a stand-in
  * GitHub (`test/e2e/fake-github-server.ts`) that only this configuration points it at; the `github` project's specs
  * run against it.
  */

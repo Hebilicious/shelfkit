@@ -1,4 +1,4 @@
-//! Commit bodies: encoding the commits ShelfKit makes, and decoding any.
+//! Commit bodies: encoding the commits ShelfKit makes.
 
 use crate::object::ObjectId;
 use crate::{Error, Result};
@@ -52,41 +52,6 @@ impl Signature {
             minutes % 60
         ))
     }
-
-    fn decode(line: &str, what: &str) -> Result<Self> {
-        let malformed = || Error::malformed(what, format!("not a signature: `{line}`"));
-        let close = line.rfind('>').ok_or_else(malformed)?;
-        let open = line[..close].rfind('<').ok_or_else(malformed)?;
-        let name = line[..open].trim_end().to_owned();
-        let email = line[open + 1..close].to_owned();
-        let mut when = line[close + 1..].split_whitespace();
-        let time = when
-            .next()
-            .and_then(|seconds| seconds.parse::<i64>().ok())
-            .ok_or_else(malformed)?;
-        let offset = when.next().and_then(parse_offset).ok_or_else(malformed)?;
-        Ok(Self {
-            name,
-            email,
-            time,
-            offset,
-        })
-    }
-}
-
-/// `+hhmm` or `-hhmm` in minutes.
-fn parse_offset(text: &str) -> Option<i32> {
-    let (sign, digits) = match text.split_at_checked(1)? {
-        ("+", digits) => (1, digits),
-        ("-", digits) => (-1, digits),
-        _ => return None,
-    };
-    if digits.len() != 4 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    let hours: i32 = digits[..2].parse().ok()?;
-    let minutes: i32 = digits[2..].parse().ok()?;
-    Some(sign * (hours * 60 + minutes))
 }
 
 /// A commit.
@@ -119,54 +84,6 @@ impl Commit {
             body.push('\n');
         }
         Ok(body.into_bytes())
-    }
-
-    /// Read a commit's body. Headers other than the tree, the parents, the
-    /// author, and the committer (a signature, an encoding) are skipped, and
-    /// the message is read as UTF-8, any invalid byte replaced.
-    pub fn decode(body: &[u8]) -> Result<Self> {
-        let what = "commit";
-        let (headers, message) = match body.windows(2).position(|pair| pair == b"\n\n") {
-            Some(end) => (&body[..end], &body[end + 2..]),
-            None => (body.strip_suffix(b"\n").unwrap_or(body), &b""[..]),
-        };
-        let headers = String::from_utf8_lossy(headers);
-        let mut tree = None;
-        let mut parents = Vec::new();
-        let mut author = None;
-        let mut committer = None;
-        for line in headers.split('\n') {
-            // A continuation line belongs to a multi-line header (`gpgsig`).
-            if line.starts_with(' ') {
-                continue;
-            }
-            let (name, value) = line.split_once(' ').unwrap_or((line, ""));
-            let id = || {
-                value
-                    .parse::<ObjectId>()
-                    .map_err(|_| Error::malformed(what, format!("`{name}` is not an object id")))
-            };
-            match name {
-                "tree" if tree.is_none() => tree = Some(id()?),
-                "parent" => parents.push(id()?),
-                "author" if author.is_none() => author = Some(Signature::decode(value, what)?),
-                "committer" if committer.is_none() => {
-                    committer = Some(Signature::decode(value, what)?);
-                }
-                "tree" | "author" | "committer" => {
-                    return Err(Error::malformed(what, format!("`{name}` is given twice")));
-                }
-                _ => {}
-            }
-        }
-        let missing = |header: &str| Error::malformed(what, format!("no `{header}` header"));
-        Ok(Self {
-            tree: tree.ok_or_else(|| missing("tree"))?,
-            parents,
-            author: author.ok_or_else(|| missing("author"))?,
-            committer: committer.ok_or_else(|| missing("committer"))?,
-            message: String::from_utf8_lossy(message).into_owned(),
-        })
     }
 }
 
@@ -212,23 +129,6 @@ mod tests {
     }
 
     #[test]
-    fn decodes_what_it_encodes() {
-        let original = commit("Subject\n\nBody.\n");
-        let decoded = Commit::decode(&original.encode().unwrap()).unwrap();
-        assert_eq!(decoded, original);
-    }
-
-    #[test]
-    fn skips_headers_it_does_not_know() {
-        let mut body = String::from_utf8(commit("x\n").encode().unwrap()).unwrap();
-        body = body.replace(
-            "\n\nx\n",
-            "\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n abc\n -----END PGP SIGNATURE-----\n\nx\n",
-        );
-        assert_eq!(Commit::decode(body.as_bytes()).unwrap().message, "x\n");
-    }
-
-    #[test]
     fn refuses_signatures_git_would_misread() {
         let mut bad = commit("x");
         bad.author.name = "Eve <evil>".to_owned();
@@ -242,15 +142,5 @@ mod tests {
         let mut bad = commit("x");
         bad.author.name = String::new();
         assert!(bad.encode().is_err());
-    }
-
-    #[test]
-    fn refuses_bodies_that_are_not_commits() {
-        assert!(Commit::decode(b"tree nope\n\nx").is_err());
-        assert!(Commit::decode(b"author A <a> 1 +0000\n\nx").is_err());
-        assert_eq!(parse_offset("+0530"), Some(330));
-        assert_eq!(parse_offset("-0100"), Some(-60));
-        assert_eq!(parse_offset("0100"), None);
-        assert_eq!(parse_offset("+1"), None);
     }
 }

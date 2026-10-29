@@ -48,9 +48,10 @@
   // Content by sha256 under `objects/`; published archives under `archives/`, which a bucket lock keeps immutable;
   // `shelves/` lists the shelves held.
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "shelfkit-blobs" }],
-  // Each shelf's files are a Git repository in this Artifacts namespace, named by the shelf's id (src/repository/).
-  // Artifacts has no local simulator: `remote` says so, and the local configuration (scripts/local-config.ts) that
-  // `worker:dev` and the tests run leaves the binding out.
+  // Each shelf's files are a Git repository in this Artifacts namespace, named by the shelf's id, and each published
+  // profile's versions one named `<shelf>.<profile>` (src/repository/, src/packages.ts). `remote` uses the account's
+  // Artifacts under `wrangler dev`; the local configuration (scripts/local-config.ts) that `worker:dev` and the tests
+  // run sets it to false, for Miniflare's local simulator.
   "artifacts": [
     { "binding": "ARTIFACTS", "namespace": "shelfkit", "remote": true },
   ],
@@ -103,6 +104,15 @@
     "r2_buckets": [
       { "binding": "BLOBS", "bucket_name": "shelfkit-blobs-preview" },
     ],
+    // Previews inherit no binding, and their repositories must not mix with the deployment's: their own namespace,
+    // created once (`cf artifacts namespaces create --namespace shelfkit-preview --jurisdiction eu`).
+    "artifacts": [
+      {
+        "binding": "ARTIFACTS",
+        "namespace": "shelfkit-preview",
+        "remote": true,
+      },
+    ],
     "ratelimits": [
       {
         "name": "CLI_START_LIMIT",
@@ -124,13 +134,13 @@
       "producers": [{ "binding": "JOBS", "queue": "shelfkit-jobs-preview" }],
     },
     "vars": {
-      "SHELFKIT_VERSION": "0.1.0-rc.7",
+      "SHELFKIT_VERSION": "0.1.0-rc.8",
       "GITHUB_URL": "https://github.com",
       "GITHUB_API_URL": "https://api.github.com",
     },
   },
   "vars": {
-    "SHELFKIT_VERSION": "0.1.0-rc.7",
+    "SHELFKIT_VERSION": "0.1.0-rc.8",
     // Where signing in with GitHub goes: the authorize and token endpoints, and the REST API. Only tests point these
     // at a stand-in GitHub; a deployment keeps github.com.
     "GITHUB_URL": "https://github.com",

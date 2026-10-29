@@ -5,7 +5,9 @@ import { RepositoryPendingError } from "../repository/index.ts";
  * repository of its own, read the shelf's files from it with the binding, and delete it. GitHub keeps `GitHubForge`,
  * which also reads private repositories with a token; Artifacts imports public HTTPS remotes only.
  *
- * The temporary repository is named `index.<uuid>`: a shelf's id has no `.`, so it can never be a shelf's.
+ * The temporary repository is named `index.<uuid>`: a shelf's id has no `.`, so it can never be a shelf's, and a
+ * published profile's (`<shelf>.<profile>`, `src/packages.ts`) would need a shelf named `index` with a profile named
+ * by this random UUID.
  */
 import { isShelfPath } from "../shelf/files.ts";
 import type { Forge, ForgeSnapshot } from "./index.ts";

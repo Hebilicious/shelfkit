@@ -152,12 +152,12 @@ tasks:
       runInCI: false
 
   local-config:
-    description: "Write wrangler.local.json: wrangler.jsonc without Artifacts, which has no local simulator, for dev and the tests."
+    description: "Write wrangler.local.json: wrangler.jsonc with Artifacts on Miniflare's local simulator (`remote: false`), for dev and the browser tests."
     command: "../../node_modules/.bin/tsx scripts/local-config.ts"
     options:
       cache: false
   dev:
-    description: "The Worker on Miniflare, with no Cloudflare account, and so without repositories. `wrangler dev` with wrangler.jsonc uses the account's Artifacts."
+    description: "The Worker on Miniflare, with no Cloudflare account, its repositories on the local Artifacts simulator (Git 2.32 or newer on PATH). `wrangler dev` with wrangler.jsonc uses the account's Artifacts."
     command: "node_modules/.bin/wrangler dev -c wrangler.local.json"
     deps:
       - "web:build"

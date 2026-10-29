@@ -926,9 +926,7 @@ type Shelf {
   """The base URL APM's `registries` entry names for this deployment."""
   registryUrl: String!
 
-  """
-  The shelf's Git repository, which holds its files; null where the deployment runs without Artifacts.
-  """
+  """The shelf's Git repository, which holds its files."""
   repository: Repository
   secretNames: [SecretName!]!
   shareLinks: [ShareLink!]!
@@ -1022,7 +1020,7 @@ One state of the shelf's files. Its manifest is the R2 object named by `digest`.
 """
 type Snapshot {
   """
-  The commit in the shelf's repository that holds these files; null where the deployment has no Artifacts.
+  The commit in the shelf's repository that holds these files; null for a snapshot from before Git (`push`).
   """
   commit: String
   createdAt: DateTime!
