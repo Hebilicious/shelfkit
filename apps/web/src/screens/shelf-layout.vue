@@ -2,25 +2,32 @@
 import { onBeforeUnmount, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 
-import { execute } from "../api/graphql.ts";
-import { ShelfSummaryQuery } from "../api/operations.ts";
-import { useQuery } from "../composables/use-query.ts";
-import { followShelf, liveState } from "../composables/use-shelf-events.ts";
-import { shelves, viewer, viewerName } from "../composables/session.ts";
+import { followShelf, liveState, refollow } from "../composables/use-shelf-events.ts";
+import { identity, shelves, viewer, viewerName } from "../composables/session.ts";
 import { useShelfId } from "../composables/shelf-context.ts";
-import { SECTIONS } from "../router.ts";
+import { useShelfIndex, warmShelf } from "../data/shelf.ts";
+import { SECTIONS, sectionOf } from "../navigation.ts";
 
 const shelf = useShelfId();
 const route = useRoute();
 const router = useRouter();
 
-const summary = useQuery(async () => {
-  const data = await execute(ShelfSummaryQuery, { shelf: shelf.value });
-  return data.shelf;
-}, [shelf]);
+const summary = useShelfIndex(shelf);
+const NAV = SECTIONS.filter((section) => section.nav);
 
-watch(shelf, (id) => followShelf(id === "" ? null : id), { immediate: true });
+watch(
+  shelf,
+  (id) => {
+    followShelf(id === "" ? null : id);
+    if (id !== "") {
+      warmShelf(id);
+    }
+  },
+  { immediate: true },
+);
 onBeforeUnmount(() => followShelf(null));
+// A new viewer may read a shelf the last one could not, or no longer read one it could.
+watch(() => identity(viewer.value), refollow);
 
 function switchShelf(event: Event): void {
   if (event.target instanceof HTMLSelectElement) {
@@ -29,8 +36,7 @@ function switchShelf(event: Event): void {
 }
 
 function active(name: string): boolean {
-  const current = String(route.name ?? "");
-  return current === name || (name === "shelf" && current === "item");
+  return sectionOf(String(route.name ?? "")) === name;
 }
 </script>
 
@@ -42,7 +48,7 @@ function active(name: string): boolean {
       </select>
       <strong v-else class="shelf-nav__name">{{ summary.data.value?.name ?? shelf }}</strong>
       <RouterLink
-        v-for="section in SECTIONS"
+        v-for="section in NAV"
         :key="section.name"
         class="shelf-nav__link"
         :class='{ "shelf-nav__link--active": active(section.name) }'
@@ -52,7 +58,13 @@ function active(name: string): boolean {
         {{ section.title }}
       </RouterLink>
       <span class="spacer"></span>
-      <span class="small muted" :title='"Live updates over server-sent events"' data-testid="live">
+      <span
+        class="small muted"
+        :title='liveState === "live"
+          ? "Changes made elsewhere appear here as they happen"
+          : "Reconnecting to receive changes made elsewhere"'
+        data-testid="live"
+      >
         {{ liveState === "live" ? "● live" : liveState === "connecting" ? "○ connecting" : "" }}
       </span>
     </nav>

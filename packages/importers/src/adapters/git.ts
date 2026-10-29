@@ -14,6 +14,13 @@
 import type { ItemKind } from "@shelfkit/schema";
 import * as v from "valibot";
 
+import {
+  docPathIn,
+  firstHeading,
+  followDocs,
+  isDocFile,
+  isDocPath,
+} from "../docs.ts";
 import { frontmatter, skillProblem } from "../frontmatter.ts";
 import {
   GITHUB_API,
@@ -71,6 +78,7 @@ const MAX_BYTES = 5 * 1024 * 1024;
 /** The file a copied artifact's content goes to in its item directory. */
 const CONTENT_FILE = new Map<ItemKind, string>([
   ["agent", "agent.md"],
+  ["doc", "doc.md"],
   ["hook", "hook.json"],
   ["instructions", "AGENTS.fragment.md"],
   ["plugin", "plugin.json"],
@@ -386,6 +394,113 @@ async function readJson<const TSchema extends v.GenericSchema>(
   }
 }
 
+/** A file's text at the snapshot's commit, or `undefined` when it is not there. */
+async function readText(
+  snap: Resolved,
+  path: string
+): Promise<string | undefined> {
+  const bytes = await snap.github.raw(snap.commit, path);
+  return bytes === null ? undefined : new TextDecoder().decode(bytes);
+}
+
+/** A file name without its `.md`. */
+function stem(path: string): string {
+  return basename(path).replace(/\.md$/u, "");
+}
+
+/** What the docs of a tree add to its layouts' artifacts, and what discovery says about them. */
+interface DocArtifacts {
+  readonly artifacts: Artifact[];
+  readonly warnings: string[];
+}
+
+/**
+ * The tree's AGENTS.md as instructions and the docs it links to, or, when the import names one markdown file that is
+ * no primitive of its own, that file as a doc. Only regular files count: a symbolic link (a CLAUDE.md pointing at
+ * AGENTS.md, say) is no document of its own. A doc's `path` is relative to the imported tree, since that is how the
+ * tree's AGENTS.md links to it, and the compiler points those links at the doc's installed copy (`kindFields`).
+ */
+async function docArtifacts(
+  snap: Snapshot,
+  layouts: readonly Artifact[]
+): Promise<DocArtifacts> {
+  const [only] = snap.entries;
+  if (
+    snap.entries.length === 1 &&
+    only?.path === snap.base &&
+    only.type === "blob"
+  ) {
+    if (layouts.length > 0 || only.symlink === true || !isDocFile(only.path)) {
+      return { artifacts: [], warnings: [] };
+    }
+    if (!isDocPath(only.path)) {
+      return {
+        artifacts: [],
+        warnings: [
+          `\`${only.path}\` cannot be a doc's path: a link could not name it plainly`,
+        ],
+      };
+    }
+    const text = await readText(snap, only.path);
+    return {
+      artifacts: [
+        {
+          directory: parent(only.path),
+          key: only.path,
+          kind: "doc",
+          name: stem(only.path),
+          path: only.path,
+          title: text === undefined ? undefined : firstHeading(text),
+        },
+      ],
+      warnings: [],
+    };
+  }
+
+  const prefix = snap.base === "" ? "" : `${snap.base}/`;
+  const agents = `${prefix}AGENTS.md`;
+  const regular = new Set(
+    snap.entries
+      .filter((entry) => entry.type === "blob" && entry.symlink !== true)
+      .map((entry) => entry.path)
+  );
+  if (!regular.has(agents)) {
+    return { artifacts: [], warnings: [] };
+  }
+  const followed = await followDocs(
+    agents,
+    (path) => regular.has(path) && path.startsWith(prefix),
+    async (path) => await readText(snap, path)
+  );
+  const name = basename(snap.base) || snap.github.repository.name;
+  const artifacts: Artifact[] = [
+    {
+      directory: snap.base,
+      key: agents,
+      kind: "instructions",
+      links: followed.links,
+      name,
+      path: agents,
+      title: followed.heading,
+    },
+    ...followed.docs.map((doc): Artifact => ({
+      directory: parent(doc.path),
+      key: doc.path,
+      kind: "doc",
+      links: doc.links,
+      name: stem(doc.path),
+      path: doc.path,
+      title: doc.heading,
+    })),
+  ];
+  const warnings = followed.truncated
+    ? [
+        `${agents} links to more than ${followed.docs.length} docs; only the first ${followed.docs.length} are offered, in the order its links reach them`,
+      ]
+    : [];
+  return { artifacts, warnings };
+}
+
 /** The artifacts a plugin manifest or a marketplace adds to the layouts' own. */
 async function manifestArtifacts(snap: Snapshot): Promise<Artifact[]> {
   const manifests = manifestsToRead(snap.entries, snap.base);
@@ -447,10 +562,13 @@ async function discover(
   context: AdapterContext
 ): Promise<Discovery> {
   const snap = await snapshot(source, context);
-  const artifacts = [
+  const layouts = [
     ...findArtifacts(snap.entries, snap.base),
     ...(await manifestArtifacts(snap)),
   ];
+  const docs = await docArtifacts(snap, layouts);
+  const artifacts = [...layouts, ...docs.artifacts];
+  const offered = new Set(artifacts.map((artifact) => artifact.key));
   const ids = uniqueIds(
     artifacts.map((artifact) => ({
       name: artifact.name,
@@ -468,19 +586,23 @@ async function discover(
       license: licence.statement,
       linkOnly: !licence.permitsCopy,
       path: artifact.path,
-      title: titleOf(artifact.name),
+      title: artifact.title ?? titleOf(artifact.name),
       upstream: { ref: snap.ref, resolvedCommit: snap.commit, url: repo },
     };
     if (licence.id !== undefined) {
       candidate.licenseId = licence.id;
     }
+    const requires = (artifact.links ?? []).filter((key) => offered.has(key));
+    if (requires.length > 0) {
+      candidate.requires = requires;
+    }
     return candidate;
   });
-  const warnings: string[] = [];
+  const warnings = [...docs.warnings];
   if (candidates.length === 0) {
     const where = snap.base === "" ? repo : `${repo}/${snap.base}`;
     warnings.push(
-      `${where} at ${snap.commit} has none of APM's package layouts`
+      `${where} at ${snap.commit} has none of APM's package layouts, no AGENTS.md, and is no markdown file to import as a doc`
     );
   }
   const linkOnly = candidates.filter((candidate) => candidate.linkOnly).length;
@@ -580,6 +702,31 @@ async function mcpFields(
     );
   }
   return { ...fields, name };
+}
+
+/**
+ * What an item's kind adds to its common fields: a marketplace server's definition, or a doc's `path`, relative to the
+ * imported tree (the import's `path`, unless that names the doc itself), which is how the tree's AGENTS.md links to it.
+ */
+async function kindFields(
+  snap: Resolved,
+  source: ImportSource,
+  candidate: Candidate
+): Promise<object> {
+  if (candidate.kind === "mcp") {
+    return await mcpFields(snap, candidate);
+  }
+  if (candidate.kind !== "doc") {
+    return {};
+  }
+  const path = candidate.path ?? "";
+  const relative = docPathIn(cleanPath(source.path), path);
+  if (!isDocPath(relative)) {
+    throw new Error(
+      `${repositoryUrl(snap.github.repository)}/${path}: \`${relative}\` cannot be a doc's path`
+    );
+  }
+  return { path: relative };
 }
 
 /** Blob listings of `directory` and every directory above it, at the snapshot's commit. */
@@ -749,8 +896,7 @@ async function fetchItem(
     candidate.kind === "skill" || path === "" ? "tree" : "blob"
   );
   const copied = await content(snap, candidate, id);
-  const fields =
-    candidate.kind === "mcp" ? await mcpFields(snap, candidate) : {};
+  const fields = await kindFields(snap, source, candidate);
   const main = copied.files.find(
     (file) =>
       file.path ===
@@ -759,6 +905,9 @@ async function fetchItem(
         : CONTENT_FILE.get(candidate.kind))
   );
   const meta = frontmatter(textOf(main));
+  // A doc is titled by its first heading; an AGENTS.md's heading is already its candidate's title.
+  const heading =
+    candidate.kind === "doc" ? firstHeading(textOf(main)) : undefined;
   const { licence } = copied;
   const item = {
     ...fields,
@@ -781,6 +930,7 @@ async function fetchItem(
     title:
       meta.title ??
       (candidate.kind === "skill" ? undefined : meta.name) ??
+      heading ??
       candidate.title,
   };
   const warnings =

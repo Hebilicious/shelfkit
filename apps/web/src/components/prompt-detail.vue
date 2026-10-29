@@ -2,7 +2,6 @@
 import { computed, reactive, ref, watch } from "vue";
 
 import { execute, messageOf } from "../api/graphql.ts";
-import type { ResultOf } from "../api/graphql.ts";
 import { readVariables } from "../api/json.ts";
 import {
   DeleteItemMutation,
@@ -13,24 +12,33 @@ import {
 } from "../api/operations.ts";
 import { copyToClipboard } from "../composables/clipboard.ts";
 import { notify, notifyError } from "../composables/toasts.ts";
-import { useQuery } from "../composables/use-query.ts";
+import { invalidate, shelfKey, shelfPrefix, useQuery } from "../data/cache.ts";
+import { patchIndexItem, useShelfIndex } from "../data/shelf.ts";
+import type { IndexItem } from "../data/shelf.ts";
 import { copyText, missingRequired, placeholders } from "../lib/prompt.ts";
+import { shortRevision } from "../lib/vocabulary.ts";
 import type { CopyFormat, PromptSource, PromptVariable } from "../lib/prompt.ts";
 import DiffView from "./diff-view.vue";
 import MarkdownView from "./markdown-view.ts";
 import QueryState from "./query-state.vue";
 
-const { shelf, id, changes } = defineProps<{ shelf: string; id: string; changes: number }>();
+const { shelf, id } = defineProps<{ shelf: string; id: string }>();
 const emit = defineEmits<{ favourite: [id: string, favourite: boolean]; deleted: [] }>();
 
-type PromptItem = NonNullable<NonNullable<ResultOf<typeof PromptQuery>["shelf"]>["item"]>;
+// The prompt itself is in the shelf's index, so it shows at once; its files and history load beside it.
+const index = useShelfIndex(computed(() => shelf));
+const item = computed<IndexItem | null>(
+  () => index.data.value?.items.find((entry) => entry.id === id && entry.kind === "prompt") ?? null,
+);
+const canWrite = computed(() => index.data.value?.viewerAccess.write === true);
 
-const query = useQuery(async () => {
-  const data = await execute(PromptQuery, { id, shelf });
-  return data.shelf;
-}, [() => changes]);
-const item = computed<PromptItem | null>(() => query.data.value?.item ?? null);
-const canWrite = computed(() => query.data.value?.viewerAccess.write === true);
+const query = useQuery(
+  () => shelfKey(shelf, "prompt", id),
+  async () => {
+    const data = await execute(PromptQuery, { id, shelf });
+    return data.shelf?.item ?? null;
+  },
+);
 
 const tab = ref<"use" | "edit" | "history">("use");
 
@@ -223,9 +231,21 @@ async function save(): Promise<void> {
       saveError.value = problemText(result);
       return;
     }
-    notify("Saved as a new revision.");
+    notify("Saved as a new version.");
+    const saved = {
+      asCommand: draft.asCommand,
+      body: draft.body,
+      description: draft.description,
+      tags: draft.tags
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry !== ""),
+      title: draft.title,
+      variables: draftVariables(),
+    };
+    patchIndexItem(shelf, id, (entry) => ({ ...entry, ...saved }));
     tab.value = "use";
-    await query.refresh();
+    invalidate(shelfPrefix(shelf));
     resetDraft();
   } catch (error) {
     saveError.value = messageOf(error);
@@ -241,7 +261,7 @@ async function remove(): Promise<void> {
     return;
   }
   const { document } = current;
-  const files = current.files
+  const files = (query.data.value?.files ?? [])
     .filter((file) => file.path !== "item.json")
     .map((file) => ({ contents: file.contents, encoding: file.encoding, path: file.path }));
   try {
@@ -272,7 +292,7 @@ async function remove(): Promise<void> {
 
 // History: every revision of prompt.md, diffed against the one before it.
 
-const revisions = computed(() => item.value?.revisions ?? []);
+const revisions = computed(() => query.data.value?.revisions ?? []);
 const selectedRevision = ref(0);
 
 function fileAt(at: number, path: string): string {
@@ -297,9 +317,9 @@ async function restore(at: number): Promise<void> {
       notify(problemText(result), null, "error");
       return;
     }
-    notify("Restored as a new revision.");
+    notify("Restored as a new version.");
     selectedRevision.value = 0;
-    await query.refresh();
+    invalidate(shelfPrefix(shelf));
   } catch (error) {
     notifyError(error);
   }
@@ -313,10 +333,10 @@ function when(timestamp: string): string {
 <template>
   <section aria-label="Prompt" class="detail">
     <QueryState
-      :loading="query.loading.value"
-      :error="query.error.value"
+      :loading="index.loading.value"
+      :error="index.error.value"
       :empty="item === null"
-      empty-text="No such prompt."
+      empty-text="This shelf has no such prompt."
     />
     <template v-if="item !== null && source !== null">
       <header class="detail__header">
@@ -332,7 +352,11 @@ function when(timestamp: string): string {
             >
               {{ item.favourite ? "★" : "☆" }}
             </button>
-            <span v-if="item.asCommand" class="badge">command</span>
+            <span
+              v-if="item.asCommand"
+              class="badge"
+              title="Harnesses with slash commands offer it as one"
+            >slash command</span>
             <span v-for="entry in item.tags" :key="entry" class="chip">#{{ entry }}</span>
           </div>
           <p class="muted">{{ item.description }}</p>
@@ -354,7 +378,7 @@ function when(timestamp: string): string {
             :aria-selected='tab === "history"'
             @click='tab = "history"'
           >
-            History ({{ revisions.length }})
+            History{{ revisions.length > 0 ? ` (${revisions.length})` : "" }}
           </button>
         </div>
       </header>
@@ -432,7 +456,7 @@ function when(timestamp: string): string {
           <label class="field">Tags, comma-separated <input v-model="draft.tags" name="tags" /></label>
           <label class="row small"><input v-model="draft.asCommand" type="checkbox" /> Offer as a slash command</label>
           <div class="field">
-            <label for="prompt-body">prompt.md — write a variable as <code v-pre>{{name}}</code></label>
+            <label for="prompt-body">Prompt text. Write a variable as <code v-pre>{{name}}</code></label>
             <textarea
               id="prompt-body"
               v-model="draft.body"
@@ -481,10 +505,10 @@ function when(timestamp: string): string {
             </div>
             <button class="small" type="button" @click='declare("")'>Add variable</button>
           </fieldset>
-          <label class="field">Revision message <input v-model="draft.message" name="message" placeholder="optional" /></label>
+          <label class="field">What changed <input v-model="draft.message" name="message" placeholder="optional" /></label>
           <p v-if="saveError !== null" class="error-text small" role="alert">{{ saveError }}</p>
           <div class="row">
-            <button class="primary" type="submit" :disabled="saving">Save revision</button>
+            <button class="primary" type="submit" :disabled="saving">Save changes</button>
             <button type="button" @click='tab = "use"'>Cancel</button>
             <span class="spacer"></span>
             <button class="danger" type="button" @click="remove">Delete prompt</button>
@@ -496,7 +520,7 @@ function when(timestamp: string): string {
         </div>
       </form>
       <div v-else class="detail__panes">
-        <ol aria-label="Revisions" class="list panel">
+        <ol aria-label="Versions" class="list panel">
           <li v-for="(revision, at) in revisions" :key="revision.revision">
             <button
               class="list-row quiet revision-row"
@@ -504,7 +528,7 @@ function when(timestamp: string): string {
               :class="{ active: at === selectedRevision }"
               @click="selectedRevision = at"
             >
-              <span class="mono small">{{ revision.revision.slice(7, 19) }}</span>
+              <span class="mono small">{{ shortRevision(revision.revision) }}</span>
               <span class="small ellipsis">{{ revision.message ?? (at === revisions.length - 1 ? "created" : "edited") }}</span>
               <span class="spacer"></span>
               <span class="small muted">{{ when(revision.createdAt) }}</span>
@@ -524,7 +548,7 @@ function when(timestamp: string): string {
             :after='fileAt(selectedRevision, "item.json")'
           />
           <div v-if="canWrite && selectedRevision > 0" class="row">
-            <button type="button" @click="restore(selectedRevision)">Restore this revision</button>
+            <button type="button" @click="restore(selectedRevision)">Restore this version</button>
           </div>
         </div>
       </div>

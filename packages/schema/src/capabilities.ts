@@ -189,7 +189,8 @@ export const shelfItemGet = {
 } as const;
 
 /**
- * Something the user must be told about a compile. The first two codes are the resolver's notices; `hook-approval`
+ * Something the user must be told about a compile. The first two codes and `skill-frontmatter` are the resolver's
+ * notices; `hook-approval`
  * says the profile vendors a hook, which APM gates behind approval; `hosted-mcp` says a server ShelfKit relays compiles
  * to no `dependencies.mcp` entry; and `mcp-schema-mismatch` says an MCP entry uses the object form APM documents, which
  * the published OpenAPM v0.1 JSON Schema rejects.
@@ -202,6 +203,8 @@ export const CompileNoteSchema = v.strictObject({
     "hook-approval",
     "hosted-mcp",
     "mcp-schema-mismatch",
+    "skill-frontmatter",
+    "doc-link",
   ]),
 });
 

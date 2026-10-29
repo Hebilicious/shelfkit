@@ -1,6 +1,6 @@
 /**
  * YAML frontmatter: what a Markdown primitive says about itself, and whether a SKILL.md is one the shelf loader
- * accepts. The loader (`crates/core`, `load.rs`) checks SKILL.md against agentskills.io; an import that copied a
+ * accepts. The loader (`crates/core`, `skill.rs`) refuses a SKILL.md an agent cannot use; an import that copied a
  * SKILL.md it rejects would fail the whole import's snapshot, so the adapter checks first and imports such a skill as
  * a link instead, rather than editing the author's file.
  */
@@ -77,50 +77,27 @@ export function frontmatter(text: string): Meta {
   return meta;
 }
 
-/** Code points, as Rust's `chars().count()` counts them. */
-function codePoints(text: string): number {
-  let count = 0;
-  for (const _point of text) {
-    count += 1;
-  }
-  return count;
-}
-
-/** SKILL.md's frontmatter as agentskills.io allows it, which is what the shelf loader checks. */
+/**
+ * SKILL.md's frontmatter as the shelf loader requires it: a `name` equal to the item id and a non-empty
+ * `description`. Other agentskills.io deviations (unknown keys, a long description, nested `metadata`) load, and
+ * `shelfkit check` reports them as `skill-frontmatter` notices, so they do not stop an import.
+ */
 function skillSchema(id: string) {
-  return v.strictObject({
-    "allowed-tools": v.optional(v.string()),
-    compatibility: v.optional(
-      v.pipe(
-        v.string(),
-        v.check(
-          (text) => codePoints(text) <= 500,
-          "compatibility must be at most 500 characters"
-        )
-      )
-    ),
+  return v.looseObject({
     description: v.pipe(
-      v.string(),
-      v.check(
-        (text) => text.trim() !== "" && codePoints(text) <= 1024,
-        "description must be 1 to 1024 characters"
-      )
-    ),
-    license: v.optional(v.string()),
-    metadata: v.optional(
-      v.record(v.string(), v.string(), "metadata must map strings to strings")
+      v.string("description is required and must be a string"),
+      v.check((text) => text.trim() !== "", "description must be non-empty")
     ),
     name: v.pipe(
-      v.string(),
+      v.string("name is required and must be a string"),
       v.check((name) => name === id, `name must be the item id \`${id}\``)
     ),
   });
 }
 
 /**
- * Why a SKILL.md would not load as the skill `id`, or `undefined` when it would: agentskills.io keys only, `name`
- * equal to the id, a description of 1 to 1024 characters, string-valued `license`, `compatibility` (at most 500
- * characters), and `allowed-tools`, and a `metadata` of strings.
+ * Why a SKILL.md would not load as the skill `id`, or `undefined` when it would: it needs YAML frontmatter that
+ * parses to a mapping, a `name` equal to the id, and a non-empty `description`.
  */
 export function skillProblem(text: string, id: string): string | undefined {
   const yaml = parsedYaml(text);
@@ -135,5 +112,5 @@ export function skillProblem(text: string, id: string): string | undefined {
     const path = v.getDotPath(issue);
     return path === null ? issue.message : `${path}: ${issue.message}`;
   });
-  return `SKILL.md's frontmatter is not what agentskills.io allows (${problems.join("; ")})`;
+  return `SKILL.md's frontmatter is not one the shelf loads (${problems.join("; ")})`;
 }

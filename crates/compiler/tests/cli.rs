@@ -37,7 +37,13 @@ impl System for NoProcesses {
     fn capture(&self, program: &Path, _: &[&str]) -> io::Result<(i32, String)> {
         panic!("ran {}", program.display());
     }
-    fn run(&self, program: &Path, _: &[String], _: &Path) -> io::Result<i32> {
+    fn run(
+        &self,
+        program: &Path,
+        _: &[String],
+        _: &Path,
+        _: &[(String, String)],
+    ) -> io::Result<i32> {
         panic!("ran {}", program.display());
     }
     fn platform(&self) -> Platform {
@@ -74,7 +80,13 @@ impl System for FakeMachine {
             "Agent Package Manager (APM) CLI version 0.33.0 (abc1234)\n".to_owned(),
         ))
     }
-    fn run(&self, program: &Path, args: &[String], dir: &Path) -> io::Result<i32> {
+    fn run(
+        &self,
+        program: &Path,
+        args: &[String],
+        dir: &Path,
+        _: &[(String, String)],
+    ) -> io::Result<i32> {
         self.ran
             .borrow_mut()
             .push((program.to_path_buf(), args.to_vec(), dir.to_path_buf()));
@@ -290,7 +302,8 @@ fn an_existing_manifest_keeps_its_own_declarations_and_conflicts_follow_on_confl
     assert_eq!(
         manifest,
         "name: my-app\nversion: \"2.0.0\"\ntargets:\n  - claude\n  - copilot\ndependencies:\n  apm:\n    \
-         - acme/standards#v1\n    - ./vendor/base\n"
+         - acme/standards#v1\n    - ./vendor/base\ncompilation:\n  strategy: single-file\n  agents_md:\n    \
+         mode: managed_section\n  resolve_links: false\n"
     );
 }
 
@@ -488,6 +501,206 @@ fn init_add_ls_show_and_rm_manage_a_shelf() {
 }
 
 #[test]
+fn add_imports_a_directorys_agents_md_and_every_doc_its_links_reach() {
+    let root = scratch("agents-docs");
+    let shelf = root.join("shelf");
+    assert_eq!(shelfkit(&root, &NoProcesses, &["init", "shelf"]).code, 0);
+
+    // A plain repository: no APM layout, an AGENTS.md linking two docs (one of which links a third), plus links that
+    // are no docs of it.
+    let repo = root.join("acme-app");
+    for (path, text) in [
+        (
+            "AGENTS.md",
+            "# Acme conventions\n\nRead [the domain](docs/domain.md#terms) and [the ops guide](./ops/guide.md \"Ops\").\n\
+             [Missing](docs/missing.md), [elsewhere](https://example.com/x.md), [setup](#setup), and \
+             [Claude](CLAUDE.md) are not docs of this repository.\n\n```md\n[fenced](docs/fenced.md)\n```\n\n\
+             [guide]: docs/guide.md\n",
+        ),
+        (
+            "docs/domain.md",
+            "# Domain\n\nSee [the glossary](../GLOSSARY.md).\n",
+        ),
+        (
+            "docs/guide.md",
+            "---\ndescription: How to work here.\n---\n\n# Working guide\n",
+        ),
+        ("docs/fenced.md", "# Fenced\n"),
+        ("ops/guide.md", "Deploy on Tuesdays.\n"),
+        (
+            "GLOSSARY.md",
+            "# Glossary\n\nBack to [the domain](docs/domain.md).\n",
+        ),
+    ] {
+        let file = repo.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("AGENTS.md", repo.join("CLAUDE.md")).unwrap();
+
+    let ran = shelfkit(&shelf, &NoProcesses, &["add", "../acme-app"]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let added: Vec<&str> = ran
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with("added"))
+        .collect();
+    assert_eq!(
+        added,
+        [
+            "added instructions acme-app",
+            "added doc domain",
+            "added doc guide",
+            "added doc guide-doc",
+            "added doc glossary",
+        ],
+        "{}",
+        ran.stdout
+    );
+
+    let item = |kind: &str, id: &str| -> serde_json::Value {
+        let path = shelf.join(format!("items/{kind}/{id}/item.json"));
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    let agents = item("instructions", "acme-app");
+    assert_eq!(agents["title"], "Acme conventions");
+    assert_eq!(
+        agents["requires"],
+        serde_json::json!(["domain", "guide", "guide-doc"])
+    );
+    assert_eq!(agents["source"]["path"], "AGENTS.md");
+    assert!(
+        std::fs::read_to_string(shelf.join("items/instructions/acme-app/AGENTS.fragment.md"))
+            .unwrap()
+            .contains("[the domain](docs/domain.md#terms)")
+    );
+    // Two docs named guide.md: the one linked first keeps the name.
+    assert_eq!(item("docs", "guide")["path"], "ops/guide.md");
+    let guide = item("docs", "guide-doc");
+    assert_eq!(guide["path"], "docs/guide.md");
+    assert_eq!(guide["title"], "Working guide");
+    assert_eq!(guide["description"], "How to work here.");
+    assert_eq!(
+        item("docs", "domain")["requires"],
+        serde_json::json!(["glossary"])
+    );
+    assert_eq!(
+        item("docs", "glossary")["requires"],
+        serde_json::json!(["domain"])
+    );
+    assert!(!shelf.join("items/docs/fenced").exists());
+    assert!(shelf.join("items/docs/glossary/doc.md").is_file());
+
+    // Selecting AGENTS.md brings its docs, and its links point at their installed copies.
+    std::fs::write(
+        shelf.join("profiles/default.json"),
+        r#"{ "id": "default", "title": "Default", "items": ["acme-app"] }"#,
+    )
+    .unwrap();
+    let dry = shelfkit(&shelf, &NoProcesses, &["compile", "--dry-run", "--json"]);
+    assert_eq!(dry.code, 0, "{}", dry.stderr);
+    for doc in [
+        "docs/domain.md",
+        "docs/guide.md",
+        "ops/guide.md",
+        "GLOSSARY.md",
+    ] {
+        assert!(
+            dry.stdout.contains(&format!("-docs/{doc}")),
+            "{doc}: {}",
+            dry.stdout
+        );
+    }
+    assert!(
+        dry.stdout.contains("-docs/docs/domain.md#terms"),
+        "{}",
+        dry.stdout
+    );
+}
+
+#[test]
+fn add_has_agents_md_require_the_doc_the_shelf_already_has_at_a_linked_path() {
+    let root = scratch("agents-shelf-docs");
+    let shelf = root.join("shelf");
+    assert_eq!(shelfkit(&root, &NoProcesses, &["init", "shelf"]).code, 0);
+    // The shelf's own doc at docs/domain.md, under an id of its own.
+    let own = shelf.join("items/docs/domain-words");
+    std::fs::create_dir_all(&own).unwrap();
+    std::fs::write(own.join("doc.md"), "# Domain\n\nOur words.\n").unwrap();
+    std::fs::write(
+        own.join("item.json"),
+        r#"{ "id": "domain-words", "kind": "doc", "title": "Domain", "path": "docs/domain.md" }"#,
+    )
+    .unwrap();
+
+    let repo = root.join("acme-app");
+    for (path, text) in [
+        (
+            "AGENTS.md",
+            "# Acme\n\nRead [the domain](docs/domain.md) and [the glossary](GLOSSARY.md).\n",
+        ),
+        ("docs/domain.md", "# Domain\n"),
+        (
+            "GLOSSARY.md",
+            "# Glossary\n\nBack to [the domain](docs/domain.md).\n",
+        ),
+    ] {
+        let file = repo.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+
+    let ran = shelfkit(&shelf, &NoProcesses, &["add", "../acme-app"]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let added: Vec<&str> = ran
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with("added"))
+        .collect();
+    assert_eq!(
+        added,
+        ["added instructions acme-app", "added doc glossary"],
+        "{}",
+        ran.stdout
+    );
+    assert!(
+        ran.stderr
+            .contains("docs/domain.md: the shelf has it already, as doc `domain-words`"),
+        "{}",
+        ran.stderr
+    );
+    let item = |kind: &str, id: &str| -> serde_json::Value {
+        let path = shelf.join(format!("items/{kind}/{id}/item.json"));
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    assert_eq!(
+        item("instructions", "acme-app")["requires"],
+        serde_json::json!(["domain-words", "glossary"])
+    );
+    assert_eq!(
+        item("docs", "glossary")["requires"],
+        serde_json::json!(["domain-words"])
+    );
+    assert!(!shelf.join("items/docs/domain").exists());
+
+    // Selecting AGENTS.md brings the shelf's doc, and its link points at that doc's installed copy.
+    std::fs::write(
+        shelf.join("profiles/default.json"),
+        r#"{ "id": "default", "title": "Default", "items": ["acme-app"] }"#,
+    )
+    .unwrap();
+    let dry = shelfkit(&shelf, &NoProcesses, &["compile", "--dry-run", "--json"]);
+    assert_eq!(dry.code, 0, "{}", dry.stderr);
+    assert!(dry.stdout.contains("Our words."), "{}", dry.stdout);
+    assert!(
+        dry.stdout.contains("[the domain](.agents/skills/"),
+        "{}",
+        dry.stdout
+    );
+}
+
+#[test]
 fn add_hands_a_source_that_is_not_local_to_the_hosted_import_and_reads_nothing_itself() {
     let root = scratch("add-remote");
     assert_eq!(shelfkit(&root, &NoProcesses, &["init"]).code, 0);
@@ -624,6 +837,34 @@ fn apm_install_accepts_compiled_manifests_when_apm_is_present() {
         own.join("apm.lock.yaml").is_file(),
         "APM wrote no lockfile for shelf/"
     );
+    // The instructions, tech stacks, and library notes reach every agent through one section of AGENTS.md, which
+    // `apm compile` wrote, and none of them is a rule file (`vendor.rs` says why).
+    let agents = std::fs::read_to_string(own.join("AGENTS.md")).expect("no AGENTS.md was compiled");
+    let start = agents.find("<!-- apm:start -->").expect(&agents);
+    let end = agents.find("<!-- apm:end -->").expect(&agents);
+    let section = &agents[start..end];
+    for text in ["The crates are the product", "Valibot"] {
+        assert!(
+            section.contains(text),
+            "AGENTS.md lacks {text:?}:\n{agents}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(own.join("CLAUDE.md")).unwrap(),
+        "@AGENTS.md\n"
+    );
+    for rules in [".claude/rules", ".cursor/rules", ".github/instructions"] {
+        assert!(
+            !own.join(rules).exists(),
+            "APM wrote rule files into {rules}"
+        );
+    }
+    assert!(
+        !own.join(".github/copilot-instructions.md").exists(),
+        "Copilot reads AGENTS.md; a second copy of the instructions is not wanted"
+    );
+    // Skills and prompts still install where each agent reads them.
+    assert!(own.join(".claude/skills/update-goldens/SKILL.md").is_file());
 
     // A registry on loopback, a Git item under its default, an MCP object.
     let port = registry::serve(&[(
@@ -671,9 +912,36 @@ fn apm_install_accepts_compiled_manifests_when_apm_is_present() {
         ),
         ("items/prompts/hello/prompt.md".to_owned(), "Say hello.\n".to_owned()),
         (
+            "items/instructions/house-rules/item.json".to_owned(),
+            r#"{ "id": "house-rules", "kind": "instructions", "title": "House rules", "requires": ["glossary"] }"#
+                .to_owned(),
+        ),
+        (
+            "items/instructions/house-rules/AGENTS.fragment.md".to_owned(),
+            "Use the words in [the glossary](docs/GLOSSARY.md#terms).\n".to_owned(),
+        ),
+        (
+            "items/docs/glossary/item.json".to_owned(),
+            r#"{ "id": "glossary", "kind": "doc", "title": "Glossary", "path": "docs/GLOSSARY.md" }"#.to_owned(),
+        ),
+        (
+            "items/docs/glossary/doc.md".to_owned(),
+            "# Glossary\n\n- **Widget**: the thing we sell.\n".to_owned(),
+        ),
+        (
+            "items/skills/ask-first/item.json".to_owned(),
+            r#"{ "id": "ask-first", "kind": "skill", "title": "Ask first" }"#.to_owned(),
+        ),
+        (
+            "items/skills/ask-first/SKILL.md".to_owned(),
+            "---\nname: ask-first\ndescription: Runs only when a person asks for it.\n\
+             disable-model-invocation: true\n---\n\nAsk before doing anything, in [our words](../../../docs/GLOSSARY.md).\n"
+                .to_owned(),
+        ),
+        (
             "profiles/mixed.json".to_owned(),
-            r#"{ "id": "mixed", "title": "Mixed", "items": ["conventions", "frontend-design", "echo", "hello"],
-                 "compile": { "targets": ["claude"] } }"#
+            r#"{ "id": "mixed", "title": "Mixed", "items": ["conventions", "frontend-design", "echo", "hello", "ask-first", "house-rules"],
+                 "compile": { "targets": ["claude", "codex"] } }"#
                 .to_owned(),
         ),
     ] {
@@ -705,6 +973,45 @@ fn apm_install_accepts_compiled_manifests_when_apm_is_present() {
         lock.contains("dbd4588f9e1033efb41dad4bef2f7947c8993d44"),
         "{lock}"
     );
+    // Codex reads `disable-model-invocation` from the skill's agents/openai.yaml, which APM installs with the skill.
+    let codex = std::fs::read_to_string(repo.join(".agents/skills/ask-first/agents/openai.yaml"))
+        .expect("the skill Codex reads has no agents/openai.yaml");
+    assert!(
+        codex.contains("allow_implicit_invocation: false"),
+        "{codex}"
+    );
+    assert!(repo.join(".claude/skills/ask-first/SKILL.md").is_file());
+
+    // A doc installs in the profile's docs skill, and AGENTS.md links to that copy rather than pasting it in.
+    let agents =
+        std::fs::read_to_string(repo.join("AGENTS.md")).expect("no AGENTS.md was compiled");
+    assert!(
+        agents.contains("[the glossary](.agents/skills/mixed-docs/docs/GLOSSARY.md#terms)"),
+        "{agents}"
+    );
+    assert!(
+        !agents.contains("the thing we sell"),
+        "the doc was pasted into AGENTS.md:\n{agents}"
+    );
+    assert!(
+        repo.join(".agents/skills/mixed-docs/docs/GLOSSARY.md")
+            .is_file()
+    );
+    assert!(repo.join(".agents/skills/mixed-docs/SKILL.md").is_file());
+    // A skill's link to a doc stays inside the skill, where APM leaves it as written, and the doc is there.
+    for root in [".agents/skills", ".claude/skills"] {
+        let skill =
+            std::fs::read_to_string(repo.join(format!("{root}/ask-first/SKILL.md"))).unwrap();
+        assert!(
+            skill.contains("[our words](docs/GLOSSARY.md)"),
+            "{root}: {skill}"
+        );
+        assert!(
+            repo.join(format!("{root}/ask-first/docs/GLOSSARY.md"))
+                .is_file(),
+            "{root}"
+        );
+    }
 }
 
 /// A minimal OpenAPM registry on loopback, enough for `apm install`: the
@@ -988,7 +1295,7 @@ fn compile_deletes_only_inside_packages_carrying_its_marker() {
 }
 
 #[test]
-fn install_on_a_registry_manifest_explains_the_flag_and_never_sets_it() {
+fn install_on_a_registry_manifest_turns_on_apms_registry_flag_first() {
     let repo = scratch("install-registry");
     std::fs::write(
         repo.join("apm.yml"),
@@ -998,22 +1305,22 @@ fn install_on_a_registry_manifest_explains_the_flag_and_never_sets_it() {
     let machine = FakeMachine::with(&["uvx"]);
     let ran = shelfkit(&repo, &machine, &["install"]);
     assert_eq!(ran.code, 0, "{}", ran.stderr);
-    let note = ran
+    let enable = ran
         .stderr
-        .find("uvx --from apm-cli==0.33.0 apm experimental enable registries")
+        .find("$ uvx --from apm-cli==0.33.0 apm experimental enable registries")
         .unwrap();
     let command = ran
         .stderr
         .find("$ uvx --from apm-cli==0.33.0 apm install")
         .unwrap();
-    assert!(note < command, "{}", ran.stderr);
+    assert!(enable < command, "{}", ran.stderr);
     let calls = machine.ran.borrow();
+    let runs: Vec<&str> = calls.iter().map(|(_, args, _)| args[3].as_str()).collect();
     assert_eq!(
-        calls.len(),
-        1,
-        "install must not change APM's configuration"
+        runs,
+        ["experimental", "install"],
+        "no compile without instructions to compile"
     );
-    assert_eq!(calls[0].1[3], "install");
 
     let shelf = repository_root().join("crates/compiler/tests/fixtures/registry");
     let dry = shelfkit(
@@ -1029,7 +1336,7 @@ fn install_on_a_registry_manifest_explains_the_flag_and_never_sets_it() {
     );
     assert!(
         dry.stderr
-            .contains("run `apm experimental enable registries` once"),
+            .contains("`apm experimental enable registries` once per computer"),
         "{}",
         dry.stderr
     );

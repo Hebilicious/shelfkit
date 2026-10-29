@@ -3,12 +3,29 @@
   "id": "default",
   "title": "ShelfKit development",
   "description": "The conventions this repository is built to.",
-  "items": ["shelfkit-stack", "typescript-strict", "commit-style"],
+  "items": [
+    "shelfkit-stack",
+    "shelfkit-rules",
+    "typescript-strict",
+    "drizzle-durable-sqlite",
+    "valibot",
+    "registry-rule",
+    "update-goldens",
+    "registry-reviewer",
+    "commit-style",
+    "pr-description",
+    "review-diff"
+  ],
   "bundles": [],
   "extends": [],
   "compile": {
     "name": "shelfkit",
-    "targets": ["claude", "copilot", "cursor", "codex"],
+    "targets": [
+      "claude",
+      "copilot",
+      "cursor",
+      "codex"
+    ],
     "pin": "revision",
     "onConflict": "fail",
     "vendorAuthored": true

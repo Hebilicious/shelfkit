@@ -13,27 +13,26 @@ import {
 import QueryState from "../components/query-state.vue";
 import { useShelfId } from "../composables/shelf-context.ts";
 import { notify, notifyError } from "../composables/toasts.ts";
-import { useQuery } from "../composables/use-query.ts";
+import { invalidate, shelfKey, shelfPrefix, useQuery } from "../data/cache.ts";
+import { importStatusLabel, KINDS, SOURCE_KINDS, sourceKindLabel } from "../lib/vocabulary.ts";
 
 const shelf = useShelfId();
 
-const query = useQuery(async () => {
-  const data = await execute(ImportJobsQuery, { shelf: shelf.value });
-  return data.shelf;
-}, [shelf]);
+const query = useQuery(
+  () => shelfKey(shelf.value, "imports"),
+  async () => {
+    const data = await execute(ImportJobsQuery, { shelf: shelf.value });
+    return data.shelf;
+  },
+);
 
 const jobs = computed(() => query.data.value?.importJobs ?? []);
 const sources = computed(() => readSources(query.data.value?.sources ?? null));
 
 // Starting an import: paste where it comes from, or pick a configured source.
 
-const KINDS = [
-  { hint: "A Git repository of skills, prompts, or a plugin", kind: "git" },
-  { hint: "An OpenAPM registry package", kind: "apm-registry" },
-  { hint: "A profile of another ShelfKit shelf", kind: "shelfkit" },
-  { hint: "An MCP server catalog", kind: "catalog" },
-  { hint: "A plugin marketplace", kind: "marketplace" },
-] as const;
+/** What an import can read from here; a local folder is only reachable from `shelf.json`'s sources. */
+const IMPORT_KINDS = SOURCE_KINDS.filter((entry) => entry.kind !== "path");
 
 const form = reactive({
   kind: "git",
@@ -84,8 +83,8 @@ async function start(): Promise<void> {
   startError.value = null;
   try {
     await execute(StartImportMutation, { shelf: shelf.value, source: sourceInput() });
-    notify("Import queued: its candidates appear below when discovery finishes.");
-    await query.refresh();
+    notify("Looking for items. They appear below for you to choose from when the search finishes.");
+    invalidate(shelfPrefix(shelf.value));
   } catch (error) {
     startError.value = messageOf(error);
   } finally {
@@ -144,8 +143,8 @@ async function pick(job: string, candidates: readonly ImportCandidate[]): Promis
   }
   try {
     await execute(PickImportMutation, { job, picks, shelf: shelf.value });
-    notify(`Importing ${picks.length} items.`);
-    await query.refresh();
+    notify(`Importing ${picks.length} ${picks.length === 1 ? "item" : "items"}.`);
+    invalidate(shelfPrefix(shelf.value));
   } catch (error) {
     notifyError(error);
   }
@@ -163,10 +162,22 @@ async function index(): Promise<void> {
       root: indexForm.root.trim() === "" ? null : indexForm.root.trim(),
       shelf: shelf.value,
     });
-    notify("Indexing queued: the shelf updates when it finishes.");
+    notify("Copying the shelf: this one updates when that finishes.");
   } catch (error) {
     notifyError(error);
   }
+}
+
+/**
+ * The titles of the candidates one links to. It requires them, so a profile that selects it gets them: those imported
+ * with it, and for one left out, the doc the shelf already has at its path (`requireLinked` in `@shelfkit/importers`).
+ */
+function linkedTitles(candidates: readonly ImportCandidate[], candidate: ImportCandidate): string {
+  const linked = new Set(candidate.requires);
+  return candidates
+    .filter((entry) => linked.has(entry.key))
+    .map((entry) => entry.title)
+    .join(", ");
 }
 
 function when(timestamp: string): string {
@@ -177,48 +188,52 @@ function when(timestamp: string): string {
 <template>
   <main class="page">
     <h1>Import</h1>
-    <p class="small muted">
-      Bring items in from a repository, a registry, a catalog, or another shelf. Discovery runs in the background; pick
-      what to keep, rename it, and pin it. A source with no licence contributes a link, never its content.
+    <p class="muted">
+      Bring items into this shelf from somewhere else: a Git repository, an APM registry, an MCP server catalog, a
+      plugin marketplace, or another shelf. ShelfKit looks through the source in the background; you then choose what
+      to keep. An item whose licence does not allow copying is kept as a link to where it lives, not as a copy.
     </p>
     <div class="columns">
       <form aria-label="Start an import" class="panel" @submit.prevent="start">
-        <h2>From a source</h2>
+        <h2>Import from a source</h2>
         <div v-if="sources.length > 0" class="field">
-          <label for="import-source">A configured source</label>
+          <label for="import-source">A saved source</label>
           <select id="import-source" v-model="form.sourceId">
-            <option value="">None: paste one below</option>
-            <option v-for="entry in sources" :key="entry.id" :value="entry.id">{{ entry.id }} ({{ entry.kind }})</option>
+            <option value="">None: enter one below</option>
+            <option v-for="entry in sources" :key="entry.id" :value="entry.id">{{ entry.id }} ({{ sourceKindLabel(entry.kind) }})</option>
           </select>
         </div>
         <div v-if='form.sourceId === ""' class="field">
-          <label for="import-kind">Kind</label>
+          <label for="import-kind">What it is</label>
           <select id="import-kind" v-model="form.kind">
-            <option v-for="entry in KINDS" :key="entry.kind" :value="entry.kind">{{ entry.kind }}: {{ entry.hint }}</option>
+            <option v-for="entry in IMPORT_KINDS" :key="entry.kind" :value="entry.kind">{{ entry.label }}</option>
           </select>
         </div>
         <label class="field">Repository <input v-model="form.repo" name="repo" placeholder="https://github.com/owner/repo" /></label>
         <label class="field">URL <input v-model="form.url" name="url" placeholder="https://registry.example/…" /></label>
         <div class="row">
-          <label class="field">Ref <input v-model="form.ref" name="ref" placeholder="main, v1.2.0, a commit" /></label>
-          <label class="field">Path <input v-model="form.path" name="path" placeholder="skills/" /></label>
+          <label class="field">Branch, tag or commit <input v-model="form.ref" name="ref" placeholder="main, v1.2.0, a commit" /></label>
+          <label class="field">Folder in it <input v-model="form.path" name="path" placeholder="skills/" /></label>
           <label v-if='form.kind === "shelfkit"' class="field">Profile <input v-model="form.profile" name="profile" /></label>
         </div>
         <p v-if="startError !== null" class="error-text small" role="alert">{{ startError }}</p>
         <div class="row">
-          <button class="primary" type="submit" :disabled="starting">Discover</button>
+          <button class="primary" type="submit" :disabled="starting">Look for items</button>
         </div>
       </form>
-      <form aria-label="Index a GitHub repository" class="panel" @submit.prevent="index">
-        <h2>A whole shelf from GitHub</h2>
-        <p class="small muted">Read a shelf (a directory with a shelf.json) from a GitHub repository into this one.</p>
+      <form aria-label="Copy a whole shelf from GitHub" class="panel" @submit.prevent="index">
+        <h2>Copy a whole shelf from GitHub</h2>
+        <p class="small muted">
+          Read every item and profile of a shelf (a folder with a <code>shelf.json</code>) in a GitHub repository into
+          this one.
+        </p>
         <label class="field">Repository <input v-model="indexForm.repository" placeholder="owner/repo" required /></label>
         <div class="row">
-          <label class="field">Ref <input v-model="indexForm.ref" placeholder="the default branch" /></label>
-          <label class="field">Directory <input v-model="indexForm.root" placeholder="the root" /></label>
+          <label class="field">Branch, tag or commit <input v-model="indexForm.ref" placeholder="the default branch" /></label>
+          <label class="field">Folder <input v-model="indexForm.root" placeholder="the root" /></label>
         </div>
         <div class="row">
-          <button type="submit">Index</button>
+          <button type="submit">Copy the shelf</button>
         </div>
       </form>
     </div>
@@ -231,7 +246,7 @@ function when(timestamp: string): string {
     />
     <section v-for="job in jobs" :key="job.id" class="panel" :data-job="job.id">
       <div class="row">
-        <span class="badge" :class='{ danger: job.status === "failed", info: job.status === "done" }'>{{ job.status }}</span>
+        <span class="badge" :class='{ danger: job.status === "failed", info: job.status === "done" }'>{{ importStatusLabel(job.status) }}</span>
         <code class="small">{{ pretty(job.source) }}</code>
         <span class="spacer"></span>
         <span class="small muted">{{ when(job.updatedAt) }}</span>
@@ -242,15 +257,19 @@ function when(timestamp: string): string {
       </ul>
       <p v-if="job.imported.length > 0" class="small">Imported: <span class="mono">{{ job.imported.join(", ") }}</span></p>
       <template v-if='job.status === "ready" && readCandidates(job.candidates).length > 0'>
+        <p class="small muted">
+          Tick what to keep. You can give an item another id on this shelf, and lock it to a branch, tag, commit or
+          version of the source; left empty, it follows what the source holds now.
+        </p>
         <table class="table">
           <thead>
             <tr>
               <th><span class="visually-hidden">Import</span></th>
-              <th>Candidate</th>
-              <th>Id</th>
+              <th>Item</th>
+              <th>Id on this shelf</th>
               <th>Licence</th>
-              <th>Pin ref</th>
-              <th>Pin version</th>
+              <th>Branch, tag or commit</th>
+              <th>Version</th>
             </tr>
           </thead>
           <tbody>
@@ -263,8 +282,15 @@ function when(timestamp: string): string {
                 />
               </td>
               <td>
-                <span class="badge">{{ candidate.kind }}</span> {{ candidate.title }}
+                <span class="badge">{{ KINDS[candidate.kind].label }}</span> {{ candidate.title }}
                 <div class="small muted">{{ candidate.description ?? candidate.path ?? "" }}</div>
+                <div
+                  v-if='linkedTitles(readCandidates(job.candidates), candidate) !== ""'
+                  class="small muted"
+                >
+                  Links to {{ linkedTitles(readCandidates(job.candidates), candidate) }}. Ticked, they come with it; left
+                  unticked, it uses the doc this shelf already has at the same path, if there is one.
+                </div>
               </td>
               <td><input
                   v-model="draftFor(job.id, candidate).id"
@@ -297,7 +323,7 @@ function when(timestamp: string): string {
           </tbody>
         </table>
         <div class="row">
-          <button class="primary" type="button" @click="pick(job.id, readCandidates(job.candidates))">Import the chosen items</button>
+          <button class="primary" type="button" @click="pick(job.id, readCandidates(job.candidates))">Import the ticked items</button>
         </div>
       </template>
     </section>

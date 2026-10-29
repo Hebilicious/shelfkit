@@ -50,6 +50,15 @@ export function splitFrontmatter(text: string): Frontmatter | null {
   return null;
 }
 
+/**
+ * Whether a `SKILL.md` keeps its skill from the model unless a person asks for it (`disable-model-invocation: true`).
+ * Claude Code, Cursor, and Copilot read the key; Codex gets it from the `agents/openai.yaml` the compiler adds.
+ */
+export function disablesModelInvocation(skillMd: string): boolean {
+  const yaml = splitFrontmatter(skillMd)?.yaml ?? "";
+  return /^disable-model-invocation:\s*true\s*$/mu.test(yaml);
+}
+
 /** The body without its frontmatter, leading blank lines dropped. */
 export function bodyText(text: string): string {
   const split = splitFrontmatter(text);

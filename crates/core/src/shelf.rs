@@ -69,10 +69,17 @@ pub enum NoticeCode {
     /// A profile includes an `lsp` item, whose `dependencies.lsp` key is
     /// absent from the published OpenAPM v0.1 schema.
     UnratifiedLsp,
+    /// A skill's `SKILL.md` frontmatter deviates from agentskills.io in a way
+    /// harnesses tolerate and strict clients and uploaders may refuse.
+    SkillFrontmatter,
 }
 
 impl NoticeCode {
-    pub const ALL: [Self; 2] = [Self::ProducerNonconformantTarget, Self::UnratifiedLsp];
+    pub const ALL: [Self; 3] = [
+        Self::ProducerNonconformantTarget,
+        Self::UnratifiedLsp,
+        Self::SkillFrontmatter,
+    ];
 }
 
 impl std::fmt::Display for Notice {
@@ -101,6 +108,7 @@ impl Shelf {
             .flat_map(|resolved| resolved.notices)
             .collect();
         for loaded in self.items.values() {
+            notices.extend(crate::skill::notices(loaded));
             for slug in &loaded.item.targets {
                 if crate::target::classify(slug) == Ok(crate::target::TargetClass::CliOnly) {
                     notices.push(Notice {

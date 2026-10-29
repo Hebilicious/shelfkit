@@ -1,18 +1,21 @@
 /**
  * Live updates: `subscription { shelfChanged(shelf) }` over server-sent events, pushed from the shelf's own Durable
- * Object (`docs/PRD.md` section 10.2). Every event bumps `shelfChanges`, which every `useQuery` watches, so a prompt
- * edited in another tab, an import finishing, or a `shelfkit push` shows up without a reload. `EventSource` reconnects
- * by itself after a dropped connection.
+ * Object (`docs/PRD.md` section 10.2). Every event marks the shelf's cached answers stale (`data/cache.ts`), so a
+ * prompt edited in another tab, an import finishing, or a `shelfkit push` shows up without a reload, while every screen
+ * keeps showing what it has until the new answer lands. `EventSource` reconnects by itself after a dropped connection.
  */
 import * as v from "valibot";
 import { ref } from "vue";
 
 import { getUrl } from "../api/graphql.ts";
 import { ShelfChangedSubscription } from "../api/operations.ts";
+import { invalidate, shelfPrefix } from "../data/cache.ts";
 import { loadSession } from "./session.ts";
 
-/** How many changes the current shelf has seen since the page loaded. */
-export const shelfChanges = ref(0);
+/** Every cached answer about `shelf` is out of date. */
+function changed(shelf: string): void {
+  invalidate(shelfPrefix(shelf));
+}
 
 /** The connection's state, for the indicator in the header. */
 export const liveState = ref<"off" | "connecting" | "live">("off");
@@ -29,6 +32,8 @@ export const lastChange = ref<ShelfChange | null>(null);
 
 let source: EventSource | null = null;
 let subscribed: string | null = null;
+/** The server refused the current subscription: the viewer cannot read the shelf. */
+let refused = false;
 
 const EventSchema = v.object({
   data: v.object({
@@ -40,17 +45,26 @@ const EventSchema = v.object({
   }),
 });
 
+/** A `next` event that carries errors: the server refused the subscription (a shelf this viewer cannot read). */
+const RefusalSchema = v.object({
+  errors: v.pipe(v.array(v.unknown()), v.minLength(1)),
+});
+
 /**
- * One `next` event's change, or `null` for anything else.
- * BOUNDARY: an SSE message's data is unparsed text; `EventSchema` parses it here.
+ * One `next` event: a change, a refusal, or `null` for anything else.
+ * BOUNDARY: an SSE message's data is unparsed text; `EventSchema` and `RefusalSchema` parse it here.
  */
-function readEvent(data: unknown): ShelfChange | null {
+function readEvent(data: unknown): ShelfChange | "refused" | null {
   if (!v.is(v.string(), data)) {
     return null;
   }
   try {
-    const parsed = v.safeParse(EventSchema, JSON.parse(data));
-    return parsed.success ? parsed.output.data.shelfChanged : null;
+    const value: unknown = JSON.parse(data);
+    const parsed = v.safeParse(EventSchema, value);
+    if (parsed.success) {
+      return parsed.output.data.shelfChanged;
+    }
+    return v.is(RefusalSchema, value) ? "refused" : null;
   } catch {
     // Not JSON: a message this client does not know.
     return null;
@@ -84,11 +98,12 @@ function scheduleReconnect(shelf: string): void {
 
 /**
  * Open the subscription. `EventSource` retries a dropped connection by itself, but gives up for good on an error
- * answer (a 503, say): then this reconnects, backing off. A connection that opens after any error refetches every
- * screen's data, since changes made while it was down sent no event.
+ * answer (a 503, say): then this reconnects, backing off. A connection that opens after any error marks every
+ * answer about the shelf stale, since changes made while it was down sent no event.
  */
 function connect(shelf: string): void {
   disconnect();
+  refused = false;
   liveState.value = "connecting";
   let missedChanges = reconnectDelay !== RECONNECT_FIRST_MS;
   const next = new EventSource(getUrl(ShelfChangedSubscription, { shelf }), {
@@ -99,7 +114,7 @@ function connect(shelf: string): void {
     reconnectDelay = RECONNECT_FIRST_MS;
     if (missedChanges) {
       missedChanges = false;
-      shelfChanges.value += 1;
+      changed(shelf);
     }
   });
   next.addEventListener("error", () => {
@@ -111,22 +126,34 @@ function connect(shelf: string): void {
   });
   next.addEventListener("next", (message: MessageEvent<unknown>) => {
     const event = readEvent(message.data);
+    if (event === "refused") {
+      // This viewer cannot read the shelf. Asking again would be refused again, and each new connection marks the
+      // shelf stale, so its page would load over and over; signing in follows the shelf anew (`followShelf`).
+      refused = true;
+      return;
+    }
     if (event !== null) {
       lastChange.value = event;
-      shelfChanges.value += 1;
+      changed(shelf);
       // A key was created or revoked: it may be the one this browser holds.
       if (event.kind === "keys") {
         void loadSession();
       }
     }
   });
-  // The server ended the subscription; the shelf is still followed, so subscribe again.
+  // The server ended the subscription; the shelf is still followed, so subscribe again, unless it refused.
   next.addEventListener("complete", () => {
     next.close();
-    if (source === next) {
-      liveState.value = "connecting";
-      scheduleReconnect(shelf);
+    if (source !== next) {
+      return;
     }
+    if (refused) {
+      source = null;
+      liveState.value = "off";
+      return;
+    }
+    liveState.value = "connecting";
+    scheduleReconnect(shelf);
   });
   source = next;
 }
@@ -144,4 +171,12 @@ export function followShelf(shelf: string | null): void {
     return;
   }
   connect(shelf);
+}
+
+/** Subscribe again to the shelf followed now, as a viewer who signed in may read what was refused before. */
+export function refollow(): void {
+  if (subscribed !== null && typeof EventSource !== "undefined") {
+    reconnectDelay = RECONNECT_FIRST_MS;
+    connect(subscribed);
+  }
 }

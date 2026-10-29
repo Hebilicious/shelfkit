@@ -16,6 +16,7 @@ export const ItemKindSchema = v.picklist([
   "lsp",
   "library",
   "stack",
+  "doc",
 ]);
 
 /** `sha256-<64 lowercase hex>`: the content address of an item or of a resolved profile. */
@@ -201,6 +202,19 @@ const McpSchema = v.variant("flavour", [
   }),
 ]);
 
+/**
+ * A doc's `path`: where it lives in the repository it was written for, which is how instructions link to it:
+ * relative, `/` separated, with no empty, `.`, or `..` segment and nothing a link cannot name plainly. One pattern, as
+ * the catalog's JSON Schema carries it; the Rust model checks the same (`validate_doc_path`).
+ */
+export const DocPathSchema = v.pipe(
+  v.string(),
+  v.regex(
+    /^(?!(?:.*\/)?\.\.?(?:\/|$))(?:[^/\s#?\\:]+\/)*[^/\s#?\\:]+$/u,
+    "must be a path relative to the repository's root, with no `.` or `..` segment"
+  )
+);
+
 /** An item, exactly as `items/<kind>/<id>/item.json` holds it. */
 export const ItemSchema = v.variant("kind", [
   v.strictObject({ ...common, kind: v.literal("skill") }),
@@ -255,6 +269,11 @@ export const ItemSchema = v.variant("kind", [
   }),
   v.strictObject({
     ...common,
+    kind: v.literal("doc"),
+    path: DocPathSchema,
+  }),
+  v.strictObject({
+    ...common,
     conventions: v.optional(v.array(SectionSchema)),
     kind: v.literal("stack"),
     markers: MarkersSchema,
@@ -274,7 +293,11 @@ export const ItemSummarySchema = v.strictObject({
 
 /** What `shelfkit check` reports that does not stop a load: the Rust `Notice`. */
 export const NoticeSchema = v.strictObject({
-  code: v.picklist(["producer-nonconformant-target", "unratified-lsp"]),
+  code: v.picklist([
+    "producer-nonconformant-target",
+    "unratified-lsp",
+    "skill-frontmatter",
+  ]),
   message: v.string(),
   /** The file the notice is about, relative to the shelf root. */
   path: v.string(),

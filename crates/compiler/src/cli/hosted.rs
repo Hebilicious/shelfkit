@@ -1,10 +1,14 @@
 //! The hosted service's client: `shelfkit login`, `logout`, `open`, `push`,
 //! and `fetch` (`docs/PRD.md` sections 4.1 and 10.3).
 //!
-//! A deployment is addressed by its URL. `login` asks for a key created in
-//! the web UI (or the owner key `moon run worker:setup` printed), checks it,
-//! and keeps it in the OS keychain under the service `shelfkit` with the URL
-//! as the account; it also remembers the URL as the default. Every other
+//! A deployment is addressed by its URL. `login` signs the CLI in through
+//! the browser: it starts a login at `/auth/cli/start`, opens the page that
+//! approves it, and polls `/auth/cli/poll` until the person signed in there
+//! approves it, which hands the CLI a key that acts as them. With `--key`, or
+//! without a terminal (CI), it asks for a key created in the web UI (or the
+//! owner key `moon run worker:setup` printed) instead. Either way it checks
+//! the key and keeps it in the OS keychain under the service `shelfkit` with
+//! the URL as the account; it also remembers the URL as the default. Every other
 //! command reads the key from `SHELFKIT_KEY` when it is set (for CI and
 //! agents), else from the keychain. A key is never printed, logged, or put
 //! in an error.
@@ -90,7 +94,7 @@ fn pretty(value: &Value) -> String {
 
 /// The deployment a command talks to: `--url`, else `SHELFKIT_URL`, else the
 /// one `login` remembered.
-fn deployment(system: &dyn System, url: Option<&str>) -> Result<String, String> {
+pub(super) fn deployment(system: &dyn System, url: Option<&str>) -> Result<String, String> {
     let chosen = url
         .map(str::to_owned)
         .or_else(|| system.var(URL_ENV))
@@ -190,7 +194,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// `+` and anything else outside the URL path's unreserved set, escaped.
-fn encode_segment(text: &str) -> String {
+pub(super) fn encode_segment(text: &str) -> String {
     text.bytes()
         .map(|byte| {
             if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
@@ -202,19 +206,25 @@ fn encode_segment(text: &str) -> String {
         .collect()
 }
 
-const VIEWER: &str = "query Viewer { viewer { authenticated owner shelf keyName } }";
+const VIEWER: &str = "query Viewer { viewer { authenticated owner name shelf keyName } }";
 
-/// `shelfkit login [URL]`: check a key against the deployment and keep it in
-/// the OS keychain.
-pub(super) fn login(ctx: &mut Context<'_>, url: Option<&str>) -> Outcome {
+/// `shelfkit login [URL]`: sign the CLI in through the browser, or with
+/// `--key` (or without a terminal) read a key, then check it against the
+/// deployment and keep it in the OS keychain.
+pub(super) fn login(ctx: &mut Context<'_>, url: Option<&str>, paste: bool) -> Outcome {
     let url = deployment(ctx.system, url)?;
-    let key = ctx
-        .system
-        .read_secret(&format!("Key for {url}: "))
-        .map_err(|error| format!("reading the key: {error}"))?;
-    if key.is_empty() {
-        return Err("no key given".to_owned().into());
-    }
+    let key = if paste || !ctx.system.stdin_is_terminal() {
+        let key = ctx
+            .system
+            .read_secret(&format!("Key for {url}: "))
+            .map_err(|error| format!("reading the key: {error}"))?;
+        if key.is_empty() {
+            return Err("no key given".to_owned().into());
+        }
+        key
+    } else {
+        browser_login(ctx, &url)?
+    };
     let remote = Remote {
         key,
         system: ctx.system,
@@ -231,6 +241,8 @@ pub(super) fn login(ctx: &mut Context<'_>, url: Option<&str>) -> Outcome {
     remember_url(ctx.system, &url)?;
     let who = if viewer["owner"] == Value::Bool(true) {
         "the owner".to_owned()
+    } else if let Some(name) = viewer["name"].as_str() {
+        name.to_owned()
     } else {
         format!(
             "a key of the shelf `{}`",
@@ -244,6 +256,171 @@ pub(super) fn login(ctx: &mut Context<'_>, url: Option<&str>) -> Outcome {
         super::system::KEYCHAIN_SERVICE
     );
     Ok(())
+}
+
+/// What one of the deployment's plain routes answered: its JSON, or `429`
+/// with the seconds to wait before asking again.
+enum Posted {
+    Json(Value),
+    Limited(u64),
+}
+
+/// The longest the CLI waits when the deployment asks it to slow down, and
+/// what it waits when the deployment does not say.
+const MAX_RETRY_SECONDS: u64 = 60;
+const DEFAULT_RETRY_SECONDS: u64 = 10;
+
+/// POST JSON to one of the deployment's plain routes, without a key, and read
+/// the JSON it answers.
+fn post_json(system: &dyn System, url: &str, path: &str, body: &Value) -> Result<Posted, String> {
+    let response = system
+        .http(&HttpRequest {
+            body: serde_json::to_vec(body).unwrap_or_default(),
+            headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+            method: "POST",
+            url: format!("{url}{path}"),
+        })
+        .map_err(|error| format!("POST {url}{path}: {error}"))?;
+    if response.status == 404 {
+        return Err(format!(
+            "{url} does not sign the CLI in through the browser: run `shelfkit login --key {url}` with a key made in \
+             Settings"
+        ));
+    }
+    if response.status == 429 {
+        // `Retry-After` in seconds; its HTTP-date form, which the deployment never sends, waits the default.
+        let seconds = response
+            .header("retry-after")
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_RETRY_SECONDS)
+            .clamp(1, MAX_RETRY_SECONDS);
+        return Ok(Posted::Limited(seconds));
+    }
+    if !(200..300).contains(&response.status) {
+        return Err(format!("{url}{path} answered {}", response.status));
+    }
+    serde_json::from_slice(&response.body)
+        .map(Posted::Json)
+        .map_err(|_| format!("{url}{path} answered with a body that is not JSON"))
+}
+
+/// The longest the CLI waits between two polls, whatever the deployment asks.
+const MAX_POLL_SECONDS: u64 = 30;
+
+/// Sign the CLI in through the browser: start a login, show its code, open
+/// the page that approves it, and poll until it is approved (its key),
+/// denied, or expired. The device code is the CLI's secret and is never
+/// printed; neither is the key.
+fn browser_login(ctx: &mut Context<'_>, url: &str) -> Result<String, Failure> {
+    let device = ctx
+        .system
+        .hostname()
+        .unwrap_or_else(|| "a computer".to_owned());
+    let started = match post_json(
+        ctx.system,
+        url,
+        "/auth/cli/start",
+        &json!({ "device": device }),
+    )? {
+        Posted::Json(started) => started,
+        Posted::Limited(seconds) => {
+            return Err(format!(
+                "{url} has started too many logins from this address in the last minute: run `shelfkit login {url}` \
+                 again in {seconds} seconds"
+            )
+            .into());
+        }
+    };
+    let fields = (
+        started["userCode"].as_str(),
+        started["deviceCode"].as_str(),
+        started["verificationUrl"].as_str(),
+    );
+    let (Some(code), Some(device_code), Some(page)) = fields else {
+        return Err(format!("{url}/auth/cli/start answered without a code").into());
+    };
+    let (code, device_code, page) = (code.to_owned(), device_code.to_owned(), page.to_owned());
+    let interval = started["interval"]
+        .as_u64()
+        .unwrap_or(2)
+        .clamp(1, MAX_POLL_SECONDS);
+    let expires_in = started["expiresIn"].as_u64().unwrap_or(600);
+    let _ = writeln!(
+        ctx.stderr,
+        "To sign this computer in, approve the login in your browser:\n\n  {page}\n\nCheck that the page shows the \
+         code {code}, the same as here. Approve only a code you see in your own terminal."
+    );
+    let opened = browser_opener(ctx.system).is_some_and(|(program, meaningful)| {
+        let cwd = absolute(ctx, None);
+        ctx.system
+            .run(&program, std::slice::from_ref(&page), &cwd, &[])
+            .is_ok_and(|exit| !meaningful || exit == 0)
+    });
+    let _ = writeln!(
+        ctx.stderr,
+        "{}Waiting for approval (Ctrl-C to stop)…",
+        if opened {
+            "Opened the page in your browser. "
+        } else {
+            "Open the page in a browser. "
+        }
+    );
+    // One poll more than the login lasts, so its expiry is the deployment's answer, not a guess.
+    // A poll the deployment refuses as too frequent (`429`) waits its `Retry-After` and polls again; it still counts
+    // as a poll, so the loop only ever lasts longer than the login.
+    let polls = expires_in / interval + 2;
+    let mut wait = interval;
+    let mut slowed = false;
+    for _ in 0..polls {
+        ctx.system.sleep(std::time::Duration::from_secs(wait));
+        wait = interval;
+        let answer = match post_json(
+            ctx.system,
+            url,
+            "/auth/cli/poll",
+            &json!({ "deviceCode": device_code }),
+        )? {
+            Posted::Json(answer) => answer,
+            Posted::Limited(seconds) => {
+                if !slowed {
+                    slowed = true;
+                    let _ = writeln!(
+                        ctx.stderr,
+                        "{url} asked this computer to poll less often; still waiting for approval…"
+                    );
+                }
+                wait = seconds;
+                continue;
+            }
+        };
+        match answer["status"].as_str() {
+            Some("pending") => {}
+            Some("approved") => {
+                return answer["key"]
+                    .as_str()
+                    .filter(|key| !key.is_empty())
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("{url} approved the login but sent no key").into());
+            }
+            Some("denied") => {
+                return Err(format!(
+                    "the login was denied in the browser, so this computer is not signed in. Run `shelfkit login \
+                     {url}` to try again"
+                )
+                .into());
+            }
+            _ => {
+                return Err(expired(url).into());
+            }
+        }
+    }
+    Err(expired(url).into())
+}
+
+fn expired(url: &str) -> String {
+    format!(
+        "the login expired before it was approved: run `shelfkit login {url}` again, and approve it within 10 minutes"
+    )
 }
 
 /// `shelfkit logout [URL]`: forget the key kept for a deployment.
@@ -281,6 +458,19 @@ fn browser_opener(system: &dyn System) -> Option<(PathBuf, bool)> {
         .map(|path| (path, meaningful))
 }
 
+/// The path a URL names after its host, as `/shelves/x` in `https://host/shelves/x`; `None` for the bare origin.
+fn url_path(text: &str) -> Option<String> {
+    let (_, rest) = text.trim().split_once("://")?;
+    let path = rest[rest.find('/')?..].trim_end_matches('/');
+    (!path.is_empty()).then(|| path.to_owned())
+}
+
+/// A sign-in link that goes on to `path` once used: the web UI reads `?next=`, and the token stays in the fragment.
+fn continue_to(link: &str, path: &str) -> String {
+    let (base, token) = link.split_once('#').unwrap_or((link, ""));
+    format!("{base}?next={}#{token}", encode_segment(path))
+}
+
 /// `shelfkit open [URL]`: make a one-time sign-in link with the owner key and open it in the browser. The link is a
 /// credential until used, so it is printed only with `--print`; without it, a failure to open says to use `--print`.
 pub(super) fn open(ctx: &mut Context<'_>, url: Option<&str>, print: bool) -> Outcome {
@@ -294,18 +484,21 @@ pub(super) fn open(ctx: &mut Context<'_>, url: Option<&str>, print: bool) -> Out
     }
     let data = remote.graphql(SIGN_IN_LINK, json!({})).map_err(|error| {
         format!(
-            "{error}: `shelfkit open` needs the owner key, which signs the browser in as the owner"
+            "{error}: `shelfkit open` needs the owner key, or a key from signing the CLI in through the browser"
         )
     })?;
     let link = data["createSignInLink"]["url"]
         .as_str()
-        .ok_or_else(|| format!("{} answered with no sign-in link", remote.url()))?
-        .to_owned();
+        .ok_or_else(|| format!("{} answered with no sign-in link", remote.url()))?;
+    let link = match url.and_then(url_path) {
+        Some(path) => continue_to(link, &path),
+        None => link.to_owned(),
+    };
     if print {
         let _ = writeln!(ctx.stdout, "{link}");
         let _ = writeln!(
             ctx.stderr,
-            "This link signs a browser in as the owner. It works once, within 15 minutes: open it, add a passkey \
+            "This link signs a browser in as you. It works once, within 15 minutes: open it, add a passkey \
              there, and let nobody else see it."
         );
         return Ok(());
@@ -318,7 +511,7 @@ pub(super) fn open(ctx: &mut Context<'_>, url: Option<&str>, print: bool) -> Out
     let cwd = absolute(ctx, None);
     let code = ctx
         .system
-        .run(&program, &[link], &cwd)
+        .run(&program, &[link], &cwd, &[])
         .map_err(|error| format!("opening the browser: {error}; run `shelfkit open --print`"))?;
     if meaningful && code != 0 {
         return Err(format!(
@@ -329,7 +522,7 @@ pub(super) fn open(ctx: &mut Context<'_>, url: Option<&str>, print: bool) -> Out
     }
     let _ = writeln!(
         ctx.stdout,
-        "Opened {} in your browser, signed in as the owner. Add a passkey there to sign in on that device without a \
+        "Opened {} in your browser, signed in as you. Add a passkey there to sign in on that device without a \
          link; the link itself works once, within 15 minutes.",
         remote.url()
     );
@@ -877,6 +1070,20 @@ mod tests {
         assert!(normalize_url("http://shelf.example.dev").is_err());
         assert!(normalize_url("https://user@shelf.example.dev").is_err());
         assert!(normalize_url("shelf.example.dev").is_err());
+    }
+
+    #[test]
+    fn a_sign_in_link_goes_on_to_the_page_the_url_names() {
+        assert_eq!(url_path("https://shelf.example.dev"), None);
+        assert_eq!(url_path("https://shelf.example.dev/"), None);
+        assert_eq!(
+            url_path("https://shelf.example.dev/shelves/jarettes-box/"),
+            Some("/shelves/jarettes-box".to_owned())
+        );
+        assert_eq!(
+            continue_to("https://shelf.example.dev/link#ssl_abc", "/shelves/x"),
+            "https://shelf.example.dev/link?next=%2Fshelves%2Fx#ssl_abc"
+        );
     }
 
     #[test]

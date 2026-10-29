@@ -60,6 +60,11 @@ export const CandidateSchema = v.strictObject({
   linkOnly: v.boolean(),
   /** Where it is inside the source. */
   path: v.optional(v.string()),
+  /**
+   * The keys of other candidates it links to (the docs an AGENTS.md or a doc links to). Imported together, the item
+   * `requires` them, so a profile that selects it gets them too (`requireLinked`).
+   */
+  requires: v.optional(v.array(v.string())),
   title: v.string(),
   /** What it is pinned to now. */
   upstream: UpstreamPinSchema,

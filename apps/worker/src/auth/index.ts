@@ -6,7 +6,8 @@
  * Programs present a key: `Authorization: Bearer <key>`, or HTTP Basic with the key as the password (the registry's
  * alternative form). A browser presents the session cookie that signing in sets (`browser.ts`): with a passkey
  * (`passkeys.ts`), a one-time link (`links.ts`), or GitHub when it is enabled (`github.ts`). It names a principal and
- * holds no key. An `Authorization` header wins over the cookie. `/mcp` is for programs and reads the header only
+ * holds no key. A CLI signed in through the browser (`cli.ts`) holds a key that acts as the person who approved it.
+ * An `Authorization` header wins over the cookie. `/mcp` is for programs and reads the header only
  * (`authenticateHeader`). See `docs/PRD.md` section 10.3.
  */
 import { ShelfIdSchema } from "@shelfkit/schema";
@@ -230,8 +231,9 @@ export async function grantedShelves(
 export const SHELF_MARKERS = "shelves/";
 
 /**
- * Whether the deployment holds `shelf`. Checked before any request touches a shelf's object, because naming a
- * Durable Object creates it: a request for a shelf that does not exist must never make one.
+ * Whether the deployment holds `shelf`, from its marker in R2. Checked before a request that may write touches a
+ * shelf's object: a request for a shelf that does not exist must never make one. The reads `shelfStub` names skip
+ * it, because an object that holds no shelf answers them without writing.
  */
 export async function shelfExists(env: Env, shelf: string): Promise<boolean> {
   if (!v.is(ShelfIdSchema, shelf)) {
@@ -270,9 +272,28 @@ export async function existingShelf(env: Env, shelf: string) {
   return (await shelfExists(env, shelf)) ? shelfStub(env, shelf) : null;
 }
 
-/** Resolve a key: the owner key against `OWNER_KEY_HASH`, a scoped key in its own shelf's object. */
+/**
+ * Resolve a key: the owner key against `OWNER_KEY_HASH`, a scoped key in its own shelf's object, and a CLI key in its
+ * person's account object, as that person: the owner, or someone whose grants each shelf reads on every call.
+ */
 export async function sessionForKey(env: Env, key: string): Promise<Session> {
   const parsed = parseSecret(key);
+  if (parsed.kind === "cli") {
+    // A GitHub account's key, the owner's included, lasts only while the deployment signs people in with GitHub.
+    if (parsed.principal.startsWith("github:") && !githubSignInEnabled(env)) {
+      return { kind: "invalid" };
+    }
+    const person = await accountStub(env, parsed.principal).resolveCliKey(
+      await secretHash(key)
+    );
+    if (person === null) {
+      return { kind: "invalid" };
+    }
+    // The owner's CLI key is the owner, as the owner key is: a program's credential, not a browser's sign-in.
+    return person.id === OWNER_PRINCIPAL
+      ? { keyId: "owner", kind: "owner" }
+      : sessionForPerson(env, person);
+  }
   if (parsed.kind === "owner") {
     const expected = env.OWNER_KEY_HASH;
     if (expected === undefined || expected === "") {
@@ -285,12 +306,12 @@ export async function sessionForKey(env: Env, key: string): Promise<Session> {
   if (parsed.kind !== "key") {
     return { kind: "invalid" };
   }
-  // A well-formed key of a shelf the deployment does not hold is no key, and its shelf's object is never created.
-  const stub = await existingShelf(env, parsed.shelf);
-  if (stub === null) {
-    return { kind: "invalid" };
-  }
-  const found = await stub.resolveKey(await secretHash(key));
+  // A well-formed key of a shelf the deployment does not hold is no key. Its shelf's object is asked without asking R2
+  // first whether the shelf exists: an object that holds no shelf holds no keys, and answers without writing
+  // anything, so no object is left behind (`ShelfIndex`'s constructor).
+  const found = await shelfStub(env, parsed.shelf).resolveKey(
+    await secretHash(key)
+  );
   if (found === null) {
     return { kind: "invalid" };
   }
@@ -304,8 +325,10 @@ export async function sessionForKey(env: Env, key: string): Promise<Session> {
 }
 
 /**
- * The shelf's Durable Object. One per shelf, named by the shelf's id. Naming it creates it, so a request reaches a
- * shelf through `existingShelf` unless it is creating the shelf (the owner's first push).
+ * The shelf's Durable Object. One per shelf, named by the shelf's id. An object that holds no shelf writes nothing
+ * until it is written to, so the reads that answer "not found" for such an object (a shelf's summary, its grants,
+ * a key) reach it directly; everything else reaches a shelf through `existingShelf` unless it is creating the shelf
+ * (the owner's first push).
  */
 export function shelfStub(env: Env, shelf: string) {
   return env.SHELF.get(env.SHELF.idFromName(shelf));

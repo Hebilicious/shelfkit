@@ -1,63 +1,61 @@
 <script setup lang="ts">
-import type { OnConflict, RepositoryOutput } from "@shelfkit/engine";
-import { computed, ref, shallowRef, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+/**
+ * Install a profile into a repository. The profile is in the shelf's registry (`shelfkit push` publishes it), so stock
+ * APM installs it: the repository's apm.yml names the registry and the profile, and `apm install` puts each item
+ * where each agent reads it. The ShelfKit CLI is the default way there, and APM alone the other; each as a prompt for an
+ * agent or commands for a terminal. Everything here is computed from the profiles and the index already in memory.
+ */
+import * as v from "valibot";
+import { computed, ref, watch } from "vue";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 
-import { execute, messageOf } from "../api/graphql.ts";
-import type { ResultOf } from "../api/graphql.ts";
-import { readPlan, readResolution } from "../api/json.ts";
-import { CompileQuery, ReportActivityMutation, StackMatchQuery } from "../api/operations.ts";
+import { readProfile } from "../api/json.ts";
+import InstallPlaces from "../components/install-places.vue";
 import QueryState from "../components/query-state.vue";
 import { copyToClipboard } from "../composables/clipboard.ts";
 import { useShelfId } from "../composables/shelf-context.ts";
 import { notify, notifyError } from "../composables/toasts.ts";
-import { useQuery } from "../composables/use-query.ts";
-import { loadEngine } from "../engine/browser.ts";
+import { useProfiles, useShelfIndex } from "../data/shelf.ts";
+import type { IndexItem, ItemKind } from "../data/shelf.ts";
 import {
-  applyOutput,
-  canOpenDirectories,
-  pickRepository,
-  readRepository,
-  textDigest,
-} from "../lib/repository.ts";
-import type { OpenedRepository } from "../lib/repository.ts";
-import { param } from "../router.ts";
+  apmAgentPrompt,
+  apmTerminalSteps,
+  cliAgentPrompt,
+  cliTerminalSteps,
+} from "../lib/install.ts";
+import type { InstallTarget } from "../lib/install.ts";
+import { KIND_ORDER, KINDS, RULES_NOTE, docsFolder } from "../lib/vocabulary.ts";
+import { param } from "../navigation.ts";
 
 const shelf = useShelfId();
 const route = useRoute();
 const router = useRouter();
 const profileId = computed(() => param(route.params.profile));
 
-const query = useQuery(async () => {
-  const data = await execute(CompileQuery, {
-    profile: profileId.value === "" ? "-" : profileId.value,
-    shelf: shelf.value,
-  });
-  return data.shelf;
-}, [shelf, profileId]);
+const profilesQuery = useProfiles(shelf);
+const index = useShelfIndex(shelf);
 
-const profiles = computed(() => query.data.value?.profiles ?? []);
-const profile = computed(() =>
-  profileId.value === "" ? null : (query.data.value?.profile ?? null),
-);
-const plan = computed(() => readPlan(profile.value?.plan.plan?.json ?? null));
-const planErrors = computed(() => profile.value?.plan.errors ?? []);
-/** The resolved profile's `onConflict`, after `extends`: what the CLI settles a merge by. */
-const onConflict = computed<OnConflict>(
-  () => readResolution(profile.value?.resolution.json ?? null)?.compile.onConflict ?? "fail",
+const profiles = computed(() => profilesQuery.data.value?.profiles ?? []);
+const profile = computed(
+  () => profiles.value.find((entry) => entry.id === profileId.value) ?? null,
 );
 
 // With no profile chosen, open the shelf's default (or first) one.
 watch(
-  () => query.data.value,
-  (data) => {
-    if (profileId.value === "" && data !== null) {
-      const [first] = data.profiles;
-      if (first !== undefined) {
-        void router.replace({ name: "compile", params: { profile: first.id, shelf: shelf.value } });
+  profiles,
+  (list) => {
+    if (profileId.value === "" && list.length > 0) {
+      const chosen =
+        list.find((entry) => entry.id === profilesQuery.data.value?.defaultProfile) ?? list[0];
+      if (chosen !== undefined) {
+        void router.replace({
+          name: "compile",
+          params: { profile: chosen.id, shelf: shelf.value },
+        });
       }
     }
   },
+  { immediate: true },
 );
 
 function choose(event: Event): void {
@@ -69,345 +67,284 @@ function choose(event: Event): void {
   }
 }
 
-async function copy(text: string, what: string): Promise<void> {
+/** The profile's items, by kind in the sidebar's order. */
+const groups = computed(() => {
+  const byId = new Map((index.data.value?.items ?? []).map((item) => [item.id, item]));
+  const items = (profile.value?.resolution.items ?? [])
+    .map((entry) => byId.get(entry.id))
+    .filter((item): item is IndexItem => item !== undefined);
+  return KIND_ORDER.map((kind) => ({
+    items: items.filter((item) => item.kind === kind),
+    kind,
+  })).filter((group) => group.items.length > 0);
+});
+
+/** Where this profile's docs install: `.agents/skills/<this>/`. */
+const profileDocsFolder = computed(() => {
+  const [namespace = "", id = ""] = (profile.value?.apmCoordinate ?? "").split("/");
+  return namespace === "" || id === "" ? "" : docsFolder(namespace, id);
+});
+
+/** The kinds that go into AGENTS.md. */
+const RULE_KINDS: ReadonlySet<ItemKind> = new Set(["instructions", "stack", "library"]);
+const hasRules = computed(() => groups.value.some((group) => RULE_KINDS.has(group.kind)));
+
+const published = computed(() => (profile.value?.published ?? null) !== null);
+
+/** BOUNDARY: a published profile's versions, as the Worker lists them, newest first. */
+const VersionsSchema = v.array(v.object({ version: v.string() }));
+const newestVersion = computed(() => {
+  const parsed = v.safeParse(VersionsSchema, profile.value?.published?.versions);
+  return parsed.success ? (parsed.output[0]?.version ?? null) : null;
+});
+
+const target = computed<InstallTarget | null>(() => {
+  const current = profile.value;
+  const summary = index.data.value;
+  if (current === null || summary === null) {
+    return null;
+  }
+  return {
+    coordinate: current.apmCoordinate,
+    docs: groups.value.some((group) => group.kind === "doc"),
+    instructions: hasRules.value,
+    isPrivate: !summary.public,
+    origin: new URL(summary.registryUrl).origin,
+    profile: current.id,
+    registryUrl: summary.registryUrl,
+    targets: readProfile(current.document)?.compile.targets ?? [],
+    title: current.title,
+    version: newestVersion.value,
+  };
+});
+
+/** Who runs the install: an agent given a prompt, or you in a terminal. */
+type Way = "agent" | "terminal";
+const WAYS: readonly { way: Way; label: string }[] = [
+  { label: "Ask your agent", way: "agent" },
+  { label: "Terminal", way: "terminal" },
+];
+/** What installs: the ShelfKit CLI (the default), or APM alone. */
+type Tool = "cli" | "apm";
+
+const cliWay = ref<Way>("agent");
+/** APM alone is the other way, shown on request. */
+const showApm = ref(false);
+const apmWay = ref<Way>("agent");
+
+function textFor(tool: Tool, way: Way): string {
+  const current = target.value;
+  if (current === null) {
+    return "";
+  }
+  if (tool === "cli") {
+    return way === "agent" ? cliAgentPrompt(current) : cliTerminalSteps(current);
+  }
+  return way === "agent" ? apmAgentPrompt(current) : apmTerminalSteps(current);
+}
+
+const cliText = computed(() => textFor("cli", cliWay.value));
+const apmText = computed(() => textFor("apm", apmWay.value));
+
+async function copy(text: string, way: Way): Promise<void> {
   try {
     await copyToClipboard(text);
-    notify(`${what} copied.`);
+    notify(
+      way === "agent"
+        ? "Prompt copied: paste it to your agent in the repository."
+        : "Commands copied: paste them in the repository's folder.",
+    );
   } catch (error) {
     notifyError(error);
   }
 }
-
-// The local repository.
-
-const canPick = canOpenDirectories();
-const directory = shallowRef<FileSystemDirectoryHandle | null>(null);
-const repository = shallowRef<OpenedRepository | null>(null);
-const output = shallowRef<RepositoryOutput | null>(null);
-const outputErrors = ref<string[]>([]);
-const stacks = ref<string[] | null>(null);
-const busy = ref(false);
-const problem = ref<string | null>(null);
-const written = ref(false);
-
-type Match = NonNullable<ResultOf<typeof StackMatchQuery>["shelf"]>["stackMatch"];
-
-async function matchStacks(opened: OpenedRepository): Promise<void> {
-  if (opened.packageJson === null) {
-    stacks.value = null;
-    return;
-  }
-  try {
-    const data = await execute(StackMatchQuery, {
-      files: [...opened.rootNames],
-      packageJson: opened.packageJson,
-      shelf: shelf.value,
-    });
-    const match: Match | null = data.shelf?.stackMatch ?? null;
-    stacks.value = match?.stacks ?? [];
-  } catch {
-    stacks.value = null;
-  }
-}
-
-/** Ask the engine what compiling into the opened repository does, exactly as `shelfkit compile --repo` would. */
-/** What compiling into a repository would do, or why it cannot be planned. */
-interface Planned {
-  readonly output: RepositoryOutput | null;
-  readonly errors: string[];
-}
-
-async function planFor(opened: OpenedRepository | null): Promise<Planned> {
-  const current = plan.value;
-  if (opened === null || current === null || opened.refusal !== null) {
-    return { errors: [], output: null };
-  }
-  const engine = await loadEngine();
-  const result = engine.output(current, opened.snapshot, onConflict.value);
-  return result.ok
-    ? { errors: [], output: result.value }
-    : { errors: result.errors.map((error) => `${error.path}: ${error.message}`), output: null };
-}
-
-async function plannedOutput(): Promise<void> {
-  output.value = null;
-  outputErrors.value = [];
-  const planned = await planFor(repository.value);
-  output.value = planned.output;
-  outputErrors.value = planned.errors;
-}
-
-/** The repository changed between opening it and writing: the plan shown was replaced, and nothing was written. */
-const changedSinceOpen = ref(false);
-
-async function open(): Promise<void> {
-  problem.value = null;
-  written.value = false;
-  changedSinceOpen.value = false;
-  try {
-    const handle = await pickRepository();
-    busy.value = true;
-    directory.value = handle;
-    repository.value = await readRepository(handle);
-    await Promise.all([plannedOutput(), matchStacks(repository.value)]);
-  } catch (error) {
-    if (!(error instanceof DOMException && error.name === "AbortError")) {
-      problem.value = messageOf(error);
-    }
-  } finally {
-    busy.value = false;
-  }
-}
-
-// A refetch hands back an equal plan as a new object (a live update after the write reports its activity does), so
-// the write is forgotten only when what would be written changes.
-watch(
-  () => (plan.value === null ? null : `${plan.value.profileRevision} ${plan.value.apmYmlDigest}`),
-  async () => {
-    written.value = false;
-    await plannedOutput();
-  },
-);
-
-/** Write the compile into the repository, then record it as activity: which repository compiled which revision. */
-async function write(): Promise<void> {
-  const handle = directory.value;
-  const planned = output.value;
-  const current = plan.value;
-  if (handle === null || planned === null || current === null) {
-    return;
-  }
-  busy.value = true;
-  problem.value = null;
-  changedSinceOpen.value = false;
-  try {
-    // Read the repository again and plan again right before writing: what was planned when it was opened may no
-    // longer fit it. If the plan differs from the one shown, show the new one and write nothing.
-    const fresh = await readRepository(handle);
-    const replanned = await planFor(fresh);
-    repository.value = fresh;
-    if (JSON.stringify(replanned.output) !== JSON.stringify(planned)) {
-      output.value = replanned.output;
-      outputErrors.value = replanned.errors;
-      changedSinceOpen.value = true;
-      return;
-    }
-    await applyOutput(handle, planned);
-    written.value = true;
-    notify(`Wrote ${planned.write.length} files into ${handle.name}.`);
-    const manifest = planned.write.find((file) => file.path === "apm.yml");
-    await execute(ReportActivityMutation, {
-      input: {
-        apmYmlDigest:
-          manifest === undefined ? current.apmYmlDigest : await textDigest(manifest.contents),
-        outcome: "applied",
-        profile: current.profile,
-        profileRevision: current.profileRevision,
-        repository: handle.name,
-        shelf: shelf.value,
-      },
-    });
-    repository.value = await readRepository(handle);
-    await plannedOutput();
-  } catch (error) {
-    problem.value = messageOf(error);
-  } finally {
-    busy.value = false;
-  }
-}
-
-function download(): void {
-  const current = plan.value;
-  if (current === null) {
-    return;
-  }
-  const url = URL.createObjectURL(new Blob([current.apmYml], { type: "text/yaml" }));
-  const anchor = window.document.createElement("a");
-  anchor.href = url;
-  anchor.download = "apm.yml";
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-const cliCommand = computed(() => `shelfkit compile ${profileId.value} --repo .`);
 </script>
 
 <template>
-  <main class="page compile">
-    <header class="row">
-      <h1>Compile</h1>
-      <label class="small muted" for="compile-profile">Profile</label>
-      <select id="compile-profile" :value="profileId" data-testid="compile-profile" @change="choose">
-        <option v-for="entry in profiles" :key="entry.id" :value="entry.id">{{ entry.title }} ({{ entry.id }})</option>
-      </select>
+  <main class="page install">
+    <header class="stack">
+      <RouterLink class="small" :to='{ name: "profiles", params: { shelf } }'>← Profiles</RouterLink>
+      <div class="row">
+        <h1>Install {{ profile?.title ?? profileId }}</h1>
+        <span class="spacer"></span>
+        <label class="small muted" for="compile-profile">Profile</label>
+        <select
+          id="compile-profile"
+          :value="profileId"
+          data-testid="compile-profile"
+          @change="choose"
+        >
+          <option v-for="entry in profiles" :key="entry.id" :value="entry.id">{{ entry.title }}</option>
+        </select>
+        <RouterLink
+          v-if='profileId !== ""'
+          class="button"
+          :to='{ name: "compose", params: { shelf, profile: profileId } }'
+        >
+          Edit profile
+        </RouterLink>
+      </div>
+      <p class="muted">
+        Installing puts each item of this profile into a repository, in the files each agent reads. APM does the
+        installing, from this shelf's registry; the ShelfKit CLI, your agent, or you only tell it which profile to
+        fetch.
+      </p>
     </header>
     <QueryState
-      :loading="query.loading.value"
-      :error="query.error.value"
-      :empty="profiles.length === 0"
-      empty-text="This shelf has no profile yet. Compose one first."
+      :loading="profilesQuery.loading.value"
+      :error="profilesQuery.error.value"
+      :empty="profile === null"
+      empty-text="This shelf has no such profile."
     />
-    <template v-if="profile !== null">
-      <ul v-if="planErrors.length > 0" class="error-text small" role="alert">
-        <li v-for="error in planErrors" :key="`${error.path} ${error.message}`">{{ error.path }}: {{ error.message }}</li>
-      </ul>
-      <div v-if="plan !== null" class="columns">
-        <section class="panel">
-          <div class="row">
-            <h2>1. The manifest</h2>
+    <template v-if="profile !== null && target !== null">
+      <p v-if="!published" class="severity-warning small" role="alert">
+        This profile is not in the shelf's registry yet, so nothing below can fetch it. <code>shelfkit push</code>
+        publishes it.
+      </p>
+      <section class="stack" data-testid="install-cli">
+        <h2>With the ShelfKit CLI</h2>
+        <p class="small muted">
+          One command adds the profile to the repository's apm.yml, keeping what is there, and runs APM. The CLI
+          installs itself once per computer<template v-if="target.isPrivate">, and for this private shelf
+            <code>shelfkit login</code> signs the CLI in through your browser and keeps its key in the OS keychain, so
+            the key is never copied, in a file, or in front of an agent</template>.
+        </p>
+        <div class="tabs" role="tablist">
+          <button
+            v-for="entry in WAYS"
+            :key="entry.way"
+            role="tab"
+            type="button"
+            :aria-selected="cliWay === entry.way"
+            :data-testid="`install-cli-${entry.way}`"
+            @click="cliWay = entry.way"
+          >
+            {{ entry.label }}
+          </button>
+        </div>
+        <div class="panel copy-block">
+          <div class="row copy-block__bar">
+            <span class="small muted">
+              {{
+                cliWay === "agent"
+                  ? "Paste to Claude Code, Codex, or any agent working in the repository"
+                  : "Run in the repository's folder"
+              }}
+            </span>
             <span class="spacer"></span>
-            <button type="button" @click='copy(plan.apmYml, "apm.yml")'>Copy</button>
-          </div>
-          <pre data-testid="compile-apm-yml">{{ plan.apmYml }}</pre>
-          <details v-if="plan.files.length > 0">
-            <summary class="small">{{ plan.files.length }} vendored files under <code>vendor/{{ plan.profile }}</code></summary>
-            <ul class="small mono">
-              <li v-for="file in plan.files" :key="file.path">{{ file.path }}</li>
-            </ul>
-          </details>
-          <ul v-if="plan.notes.length > 0" class="small">
-            <li
-              v-for="note in plan.notes"
-              :key="`${note.code} ${note.path}`"
-              class="severity-warning"
-            >{{ note.message }}</li>
-          </ul>
-        </section>
-        <section aria-label="Repository" class="panel">
-          <h2>2. Your repository</h2>
-          <template v-if="canPick">
-            <p class="small muted">
-              Open a local repository. The browser compiles into it exactly as <code>shelfkit compile</code> does: it merges
-              into an existing <code>apm.yml</code> by the profile's <code>onConflict</code> ({{ onConflict }}), writes the
-              vendored packages, and never runs APM.
-            </p>
-            <div class="row">
-              <button
-                class="primary"
-                type="button"
-                :disabled="busy"
-                data-testid="open-repository"
-                @click="open"
-              >
-                {{ repository === null ? "Open a repository…" : "Open another…" }}
-              </button>
-              <span v-if="repository !== null" class="mono" data-testid="repository-name">{{ repository.name }}</span>
-            </div>
-          </template>
-          <template v-else>
-            <p class="small muted">
-              This browser cannot write into a folder. Download the manifest, or run the CLI in the repository:
-            </p>
-            <div class="row">
-              <button type="button" @click="download">Download apm.yml</button>
-              <code class="small">{{ cliCommand }}</code>
-            </div>
-            <p
-              v-if="plan.files.length > 0"
-              class="small severity-warning"
-              data-testid="download-incomplete"
-            >
-              This manifest installs <code>./vendor/{{ plan.profile }}</code>, whose {{ plan.files.length }} vendored files
-              the download does not include: <code>apm install</code> fails without them. Run the CLI command above to
-              write them too.
-            </p>
-          </template>
-          <p v-if="problem !== null" class="error-text small" role="alert">{{ problem }}</p>
-          <template v-if="repository !== null">
-            <p v-if="stacks !== null" class="small" data-testid="repository-stacks">
-              <template v-if="stacks.length === 0">No stack of this shelf matches its package.json.</template>
-              <template v-else>Matches: <span v-for="stack in stacks" :key="stack" class="chip on">{{ stack }}</span></template>
-            </p>
-            <p
-              v-if="changedSinceOpen"
-              class="severity-warning small"
-              data-testid="output-changed"
-              role="alert"
-            >
-              The repository changed since it was opened, so nothing was written. This is the plan for it as it is now;
-              write again to apply it.
-            </p>
-            <p v-if="repository.refusal !== null" class="error-text small" role="alert">{{ repository.refusal }}</p>
-            <ul
-              v-if="outputErrors.length > 0"
-              class="error-text small"
-              data-testid="output-errors"
-              role="alert"
-            >
-              <li v-for="error in outputErrors" :key="error">{{ error }}</li>
-            </ul>
-            <template v-if="output !== null">
-              <ul
-                v-if="output.refused.length > 0"
-                class="error-text small"
-                data-testid="output-refused"
-                role="alert"
-              >
-                <li v-for="reason in output.refused" :key="reason">{{ reason }}</li>
-              </ul>
-              <div v-if="output.conflicts.length > 0" class="small severity-warning">
-                Settled by <code>onConflict: {{ onConflict }}</code>:
-                <ul>
-                  <li v-for="conflict in output.conflicts" :key="conflict">{{ conflict }}</li>
-                </ul>
-              </div>
-              <div v-if="output.refused.length === 0" class="stack small" data-testid="output-plan">
-                <span>{{ output.write.length }} files to write, {{ output.remove.length }} stale files to remove.</span>
-                <details>
-                  <summary>Files</summary>
-                  <ul class="mono">
-                    <li v-for="file in output.write" :key="file.path">+ {{ file.path }}</li>
-                    <li v-for="path in output.remove" :key="path" class="severity-error">− {{ path }}</li>
-                  </ul>
-                </details>
-                <div class="row">
-                  <button
-                    class="primary"
-                    type="button"
-                    :disabled="busy"
-                    data-testid="write-repository"
-                    @click="write"
-                  >
-                    Write into {{ repository.name }}
-                  </button>
-                  <span v-if="written" class="severity-info" data-testid="written" role="status">Written.</span>
-                </div>
-              </div>
-            </template>
-          </template>
-        </section>
-        <section class="panel">
-          <h2>3. Install</h2>
-          <p class="small muted">In the repository, APM installs what the manifest declares:</p>
-          <div class="row">
-            <pre class="install" data-testid="install-command">{{ plan.installCommand }}</pre>
             <button
               class="primary"
               data-testid="copy-install"
               type="button"
-              @click='copy(plan.installCommand, "Install command")'
+              @click="copy(cliText, cliWay)"
             >
-              Copy
+              {{ cliWay === "agent" ? "Copy prompt" : "Copy" }}
             </button>
           </div>
+          <pre class="copy-block__text" data-testid="install-text">{{ cliText }}</pre>
+        </div>
+      </section>
+      <section class="stack" data-testid="install-apm">
+        <div class="row">
+          <h2>With APM alone</h2>
+          <span class="small muted">no ShelfKit CLI</span>
+          <span class="spacer"></span>
+          <button
+            class="quiet"
+            type="button"
+            :aria-expanded="showApm"
+            data-testid="install-apm-toggle"
+            @click="showApm = !showApm"
+          >
+            {{ showApm ? "Hide" : "Show" }}
+          </button>
+        </div>
+        <template v-if="showApm">
           <p class="small muted">
-            Or install the published profile from this shelf's registry as <code>{{ profile.apmCoordinate }}</code>.
+            The repository's apm.yml names the shelf's registry and the profile, and APM, run through uv, installs it.
+            <template v-if="target.isPrivate">
+              For a private shelf, APM needs the registry in its user config and a key in the environment.
+            </template>
           </p>
-        </section>
-      </div>
+          <div class="tabs" role="tablist">
+            <button
+              v-for="entry in WAYS"
+              :key="entry.way"
+              role="tab"
+              type="button"
+              :aria-selected="apmWay === entry.way"
+              :data-testid="`install-apm-${entry.way}`"
+              @click="apmWay = entry.way"
+            >
+              {{ entry.label }}
+            </button>
+          </div>
+          <div class="panel copy-block">
+            <div class="row copy-block__bar">
+              <span class="small muted">
+                {{
+                  apmWay === "agent"
+                    ? "Paste to an agent working in the repository"
+                    : "Run in the repository's folder, which has no apm.yml yet"
+                }}
+              </span>
+              <span class="spacer"></span>
+              <button
+                class="primary"
+                data-testid="copy-install-apm"
+                type="button"
+                @click="copy(apmText, apmWay)"
+              >
+                {{ apmWay === "agent" ? "Copy prompt" : "Copy" }}
+              </button>
+            </div>
+            <pre class="copy-block__text" data-testid="install-text-apm">{{ apmText }}</pre>
+          </div>
+        </template>
+      </section>
+      <section class="stack">
+        <h2>What lands in the repository</h2>
+        <p class="small muted">
+          {{ profile.resolution.items.length }} items. Commit what APM writes along with apm.yml and apm.lock.yaml, so
+          everyone working in the repository gets the same.
+        </p>
+        <p v-if="hasRules" class="small">
+          <strong>Instructions, tech stacks, and library notes</strong> install the same way: together, into one
+          section of the repository's AGENTS.md, which every agent reads in every session. {{ RULES_NOTE }}
+        </p>
+        <details v-for="group in groups" :key="group.kind" class="panel">
+          <summary>
+            <strong>{{ KINDS[group.kind].plural }}</strong>
+            <span class="muted small"> · {{ group.items.map((item) => item.title).join(", ") }}</span>
+          </summary>
+          <InstallPlaces
+            :id='group.items.length === 1 ? (group.items[0]?.id ?? "<id>") : "<id>"'
+            :kind="group.kind"
+            :docs-folder="profileDocsFolder"
+          />
+        </details>
+      </section>
     </template>
   </main>
 </template>
 
 <style scoped>
-.columns {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--layout-measure-pane)), 1fr));
-  gap: var(--spacing-size-4);
-  align-items: start;
+.install {
+  max-width: var(--layout-measure-page);
 }
 
-.install {
-  flex: 1;
+.copy-block {
+  padding: 0;
+}
+
+.copy-block__bar {
+  padding: var(--spacing-size-2) var(--spacing-size-3);
+  border-bottom: var(--hairline);
+}
+
+.copy-block__text {
+  margin: 0;
+  padding: var(--spacing-size-3);
+  white-space: pre-wrap;
 }
 </style>

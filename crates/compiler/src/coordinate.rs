@@ -146,6 +146,17 @@ pub fn upstream(
     let Some(repo) = source.repo.as_deref() else {
         return Ok(None);
     };
+    // APM installs instructions only from an `.instructions.md` file. Instructions copied from any other markdown file
+    // (a repository's AGENTS.md) have nothing upstream APM could install, so they compile from their copy, in the
+    // vendored package, where links to the profile's docs are pointed at the docs' installed copies too.
+    if kind == ItemKind::Instructions
+        && source
+            .path
+            .as_deref()
+            .is_some_and(|path| path.ends_with(".md") && !path.ends_with(".instructions.md"))
+    {
+        return Ok(None);
+    }
     let repository = normalize_repository(repo)?;
     let path = match source.path.as_deref().map(clean_path).transpose()? {
         Some(path) => Some(primitive_path(kind, path)?),
@@ -503,6 +514,20 @@ mod tests {
         assert_eq!(
             entry(ItemKind::Skill, &skill, Pin::Revision).unwrap(),
             "e:\n  git: o/r/skills/a\n  ref: v1\n"
+        );
+    }
+
+    #[test]
+    fn instructions_from_an_agents_md_are_no_reference() {
+        let agents = git_source("o/r", Some("AGENTS.md"), Some("v1"), Some("c1"));
+        assert_eq!(
+            upstream(ItemKind::Instructions, &agents, &[], Pin::Revision),
+            Ok(None)
+        );
+        let file = git_source("o/r", Some("a/x.instructions.md"), Some("v1"), None);
+        assert_eq!(
+            entry(ItemKind::Instructions, &file, Pin::Revision).unwrap(),
+            "e:\n  git: o/r/a/x.instructions.md\n  ref: v1\n"
         );
     }
 

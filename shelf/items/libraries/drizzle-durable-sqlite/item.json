@@ -1,0 +1,15 @@
+{
+  "id": "drizzle-durable-sqlite",
+  "kind": "library",
+  "title": "Drizzle on Durable Object SQLite",
+  "description": "How the shelf's Durable Object uses drizzle-orm/durable-sqlite.",
+  "tags": ["db", "cloudflare"],
+  "detect": { "dependencies": ["drizzle-orm"] },
+  "docs": "https://orm.drizzle.team/docs/connect-cloudflare-do",
+  "notes": [
+    "The schema is `apps/worker/src/db/schema.ts`. Generate the next migration with `moon run worker:db-generate` and commit it; never hand-write one.",
+    "Migrations run inside the object behind `blockConcurrencyWhile`; there is no CLI path to its SQLite, and `PRAGMA user_version` is unsupported.",
+    "A statement binds at most 100 values: split an `inArray` over a list that can grow into chunks.",
+    "Store metadata only. File contents go to R2, keyed by sha256."
+  ]
+}

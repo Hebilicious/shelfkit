@@ -11,7 +11,7 @@
 
 ShelfKit is a registry and curation layer for agent context, built on [APM](https://github.com/microsoft/apm) and [OpenAPM](https://microsoft.github.io/apm/specs/openapm-v01/).
 
-A **shelf** is a Git repository of selected context: skills, prompts, instructions, agents, hooks, plugins, MCP servers, LSP servers, libraries, and tech stacks. A **profile** is a named selection from a shelf. Compiling a profile writes an `apm.yml`, which `apm install` turns into a configured repository.
+A **shelf** is a Git repository of selected context: skills, prompts, instructions, agents, hooks, plugins, MCP servers, LSP servers, libraries, tech stacks, and docs. A **profile** is a named selection from a shelf. Compiling a profile writes an `apm.yml`, which `apm install` turns into a configured repository.
 
 ShelfKit does three things APM does not:
 
@@ -79,7 +79,7 @@ dependencies:
       transport: http
 ```
 
-Three things worth noting. A ShelfKit instance can be declared as a **registry**, with `default` as a sibling key rather than a per-entry field, so a shelf is installable by stock APM without the ShelfKit CLI installed. Registry-routed dependencies use the object form with `id` and `version`, since a version selector is not a Git ref. And shelf-authored items compile into a local `.apm/` package under `vendor/`, because that is APM's layout for "N independent primitives" and it is exactly what those items are.
+Three things worth noting. A ShelfKit instance can be declared as a **registry**, with `default` as a sibling key rather than a per-entry field, so a shelf is installable by stock APM without the ShelfKit CLI installed. Registry-routed dependencies use the object form with `id` and `version`, since a version selector is not a Git ref. And shelf-authored items compile into a local `.apm/` package under `vendor/`, because that is APM's layout for "N independent primitives" and it is exactly what those items are, with one deliberate exception: instructions, tech stacks, and library notes go into the package's `.github/instructions/`, for the reason in section 4.2.
 
 Two parser rules the compiler must respect, because getting either wrong produces a manifest APM rejects. A Git pin is `#<ref>` and nothing else, where the ref is a tag, branch, or commit. That object form also accepts a semver range in `ref:` resolved against remote tags. `@` is never a ref separator, though it may appear inside a literal ref.
 
@@ -113,6 +113,8 @@ One consequence to accept: because APM owns install, **an APM breaking change is
 
 `packages/compiler` and `packages/core` are Rust crates with no Cloudflare dependency, compiled to a single static binary. The same crates are compiled to WASM for the Worker, so the browser preview and the CLI cannot disagree about what a profile compiles to.
 
+**Distribution.** A tag `v<version>` publishes the binary for Linux and macOS (x86-64 and ARM) and Windows (x86-64) as a GitHub release with a `SHA256SUMS`. Every deployment serves `/install.sh` and `/install.ps1`, which install the release of the deployment's own version into `~/.local/bin` (or `SHELFKIT_INSTALL_DIR`) after checking its checksum, and change nothing else on the machine. The CLI a deployment hands out therefore always speaks its API.
+
 | Command | Purpose |
 | --- | --- |
 | `shelfkit init` | Scaffold a shelf |
@@ -120,12 +122,25 @@ One consequence to accept: because APM owns install, **an APM breaking change is
 | `shelfkit search <query>` | Search the shelf, and optionally federated sources |
 | `shelfkit serve` | Run a shelf locally as an OpenAPM registry |
 | `shelfkit compile` | Write `apm.yml` and vendored content |
-| `shelfkit install` | Run APM, resolved from the path or through `uvx`, with the compiled flags |
+| `shelfkit install [<shelf>/<profile> --url <deployment>]` | Add a hosted profile to the repository's `apm.yml` (its registry, and the profile pinned to its newest published version, which running it again moves), then run APM, resolved from the path or through `uvx`, handing it the key `shelfkit login` keeps for each ShelfKit registry `apm.yml` names. Without a profile, run APM on the `apm.yml` there |
 | `shelfkit check` | Validate the shelf: schemas, coordinates, references, unratified keys, target conformance |
 | `shelfkit verify` | The manifest still matches the profile it came from |
 | `shelfkit recommend` | Propose items and profiles from detected stack markers |
 | `shelfkit doctor` | Detect `apm`, harnesses, and source drift |
-| `shelfkit login` / `push` | The hosted service |
+| `shelfkit login` / `push` | The hosted service. `login` signs the CLI in through the browser (section 10.3); `--key` reads a key instead, as CI does |
+
+### 4.2 How a profile reaches the agents
+
+APM decides where each kind lands, and for most kinds its choice is the only sensible one: a skill folder in `.claude/skills/` and `.agents/skills/`, a prompt as a slash command, an MCP server in each harness's configuration. Instructions are the exception. APM 0.33's installer turns each one into a rule file per agent (`.claude/rules/`, `.cursor/rules/`, `.github/instructions/`); Codex reads none of those, and Cursor and Copilot read AGENTS.md as well, so the same text arrives twice. **ShelfKit sends instructions, tech stacks, and library notes through AGENTS.md instead, for every agent:**
+
+- The compiler writes them to the package's `.github/instructions/`, which `apm install` does not deploy and `apm compile` reads. No rule file is written for any agent.
+- The repository's `apm.yml` gets `compilation: { strategy: single-file, agents_md: { mode: managed_section } }`: `apm compile` writes every instruction into the root AGENTS.md, a scoped one as a section naming the files it applies to, between `<!-- apm:start -->` and `<!-- apm:end -->`, and keeps the rest of the file byte for byte.
+- `shelfkit install` adds those two lines to the end of an AGENTS.md that lacks them (or writes a file with only them), makes CLAUDE.md import AGENTS.md with `@AGENTS.md` (appending the line to a CLAUDE.md that lacks it, writing one that is only it, and leaving a symbolic link alone), and runs `apm compile --target codex`, whose only output is AGENTS.md. Codex, Cursor, and Copilot read AGENTS.md; Claude Code reads CLAUDE.md and, through the import, AGENTS.md. Not compiling for `claude` or `copilot` keeps APM from writing CLAUDE.md or `.github/copilot-instructions.md` copies of the same text.
+- These marker and import lines are the only lines ShelfKit writes outside `apm.yml`, and only to make APM's own managed-section mode work; the instructions themselves are written by APM.
+
+Docs, the longer documents instructions link to, travel the same way through a skill folder of the profile's, with the instructions' links pointed at it (section 5.2, `doc`).
+
+Two limits. This rests on APM 0.33's installer and compiler reading different directories, which nothing in APM promises; the compiler's APM test installs ShelfKit's own shelf and fails if a rule file appears or AGENTS.md lacks the instructions, so an APM release that changes it is caught before the pin moves. And an instruction that is an upstream dependency (a file in another repository, pinned) is installed by APM as a package of its own, so it still becomes rule files.
 
 ---
 
@@ -200,7 +215,7 @@ A **revision** is an immutable snapshot of one item: `sha256` over a canonical s
 
 #### `skill`
 
-A directory with `SKILL.md`, following [agentskills.io](https://agentskills.io/specification). Only spec frontmatter is used (`name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools`), because clients and uploaders reject unknown keys.
+A directory with `SKILL.md`, following [agentskills.io](https://agentskills.io/specification). A skill fails to load only when an agent could not use it: no frontmatter, frontmatter that is not a YAML mapping, a `name` that is not the item id, or no `description`. Every other deviation from the spec (an unknown key such as Claude Code's `disable-model-invocation`, a description over 1024 characters, nested `metadata`) is a `skill-frontmatter` notice from `check`, and the file is kept as written: harnesses read such skills, while strict clients and uploaders, such as claude.ai's skill upload, may refuse them. Each notice says what the deviation costs in each agent. `disable-model-invocation: true` (the skill runs only when a person asks for it) is read by Claude Code, Cursor, and Copilot at the top level only, and by Codex not at all, so the compiled skill gets `agents/openai.yaml` with `policy: allow_implicit_invocation: false`, Codex's own setting for the same thing. A skill that has its own `agents/openai.yaml` keeps it; when it disagrees, `check` says so.
 
 #### `prompt`
 
@@ -225,7 +240,7 @@ APM treats prompts and commands as one primitive with one source layout, `.apm/p
 
 #### `instructions`
 
-Project conventions as structured `sections`, plus `markers` that make a stack detectable. Compiles into an APM `.apm/instructions/` primitive, or into a harness instruction file for the harnesses APM does not cover.
+Project conventions as structured `sections`, plus `markers` that make a stack detectable. Compiles into an `.instructions.md` file that reaches every agent through one section of the repository's AGENTS.md (section 4.2).
 
 #### `agent`
 
@@ -307,6 +322,22 @@ A tech stack: markers for detection plus the conventions that follow from it.
 
 `markers` are what make `shelfkit recommend` work, and they are the difference between a stack item and an instructions item.
 
+#### `doc`
+
+A reference document that instructions link to: a glossary, a guide to one subsystem, a runbook. It is longer than an instruction and read only when an instruction or the task points to it, so it costs an agent nothing until then. `path` is where it lives in the repository it was written for, which is how that repository's instructions link to it; `doc.md` is the document.
+
+```json
+{
+  "id": "domain",
+  "kind": "doc",
+  "title": "Domain docs",
+  "description": "The words the code uses, and what each means.",
+  "path": "docs/agents/domain.md"
+}
+```
+
+A profile's docs install together as one skill, `<namespace>-<profile>-docs`, each at its `path` inside the skill's folder, so links between docs keep working; the skill's `SKILL.md`, which the compiler writes, lists them, so an agent sees them among its skills. A link in an instruction to a doc of the profile, written `docs/agents/domain.md`, `./docs/agents/domain.md`, or climbing to the repository's root with `../`, with or without a `#fragment`, is pointed at the installed copy, `.agents/skills/<namespace>-<profile>-docs/docs/agents/domain.md`; a link to anything else is left as written. A skill that links to a doc gets a copy of it, and of the docs that one links to, inside its own folder at the doc's path, and its link points there: APM 0.33 keeps a link that stays inside a skill's folder as written, but rewrites one that leaves it, even to a sibling skill of the same package, to the package's copy under `apm_modules/`, which a repository does not commit. A link from an instruction or a skill to a markdown file the profile does not ship (a doc of the shelf the profile leaves out, or a file no doc provides) is a `doc-link` note in the plan and in `check`: installed elsewhere, it leads nowhere. Links to the profile's own skills and to AGENTS.md are fine and not noted. APM 0.33 has no primitive for a document and installs no loose file, but it copies a skill folder whole into `.agents/skills/` and `.claude/skills/`, which a repository commits. The compiled `apm.yml` therefore sets `compilation.resolve_links: false`, without which `apm compile` would paste every linked document into AGENTS.md, and adds `agent-skills` to `targets` that install no skills into `.agents/skills/` (only `claude` does not). An instruction that needs a doc lists it in `requires`, so a profile that selects the instruction gets the doc. `shelfkit add <file>.md` imports any other markdown file as a doc, its `path` taken from where it sits in its repository. `shelfkit add <dir>` and the hosted importer read a repository's root AGENTS.md as instructions and import each markdown file its relative links reach (inline or reference links, `./` and `#fragment` allowed, followed from doc to doc up to 40 docs) as a doc, its `path` relative to the imported directory; each item requires the docs it links to, so selecting AGENTS.md brings them: a doc imported with it, or, for a linked file left out of the import (or, locally, one the shelf already has), the doc the shelf already has at that `path`, which is the doc its link is pointed at. When the shelf has more than one doc at that path, the item requires none of them and the import warns. A doc that is imported later is not added to the `requires` of an item already on the shelf; the item's `doc-link` note names it. APM installs instructions from upstream only from an `.instructions.md` file and installs no document at all, so an imported AGENTS.md and its docs compile from their copies: one whose licence permits no copy imports as a link (section 6), and a profile that selects it fails to compile, saying why.
+
 ### 5.3 Profiles
 
 ```json
@@ -360,6 +391,8 @@ ShelfKit uses both. Importing a repository yields many items; importing one prom
 | `git` repo, `plugin.json` | A Claude plugin collection **or** an Agent Plugin, depending on `$schema` | N items, or one `plugin` item |
 | `git` repo, marketplace with inline `mcpServers`/`lspServers` | Synthesized server definitions | `mcp` items |
 | `git` repo, single `*.prompt.md` / `*.instructions.md` / `*.agent.md` at a known path | One file dependency | One item pinned to that path |
+| `git` repo, root `AGENTS.md` (a regular file, not a symbolic link) | The repository's conventions, and the markdown files its relative links reach, directly or through another of them | One `instructions` item, its text copied, and one `doc` per linked file at its path in the tree; each requires the docs it links to, picked with it or already on the shelf at that path |
+| `git` repo, single other `*.md` at a known path | One document | One `doc` item, at that path |
 | `apm-registry` | Versioned packages via `GET /v1/packages/{owner}/{repo}/versions` | Items whose `apm.coordinate` pins a resolved version and digest |
 | `shelfkit` (another instance) | Its public profiles and items | Items re-exported with provenance pointing at that instance |
 | `catalog` (MCP registry, Docker, Cline, ClawHub) | Server definitions and skill records | `mcp`, `skill`, and `plugin` items |
@@ -393,7 +426,7 @@ ShelfKit is not a silo. A shelf can subscribe to:
 
 - another **ShelfKit instance**, importing a public profile and re-exporting it with provenance and a pin;
 - an **APM registry**, resolving packages through the same protocol it serves;
-- a **plain Git repo**, discovering primitives through APM's package layouts;
+- a **plain Git repo**, discovering primitives through APM's package layouts, and its AGENTS.md with the docs it links to;
 - a **catalog** (official MCP registry, Docker, Cline, ClawHub, awesome-copilot), importing server definitions and skill records with licence metadata.
 
 Imports are pinned to a resolved commit, version, or digest, and the UI shows drift when upstream moves. Curation is then a local act on imported material: rename, tag, bundle, exclude, or override the description, without rewriting the artifact.
@@ -461,14 +494,17 @@ Vue 3, Vite, Vize, CSSForge. Everything goes through the same API as the CLI.
 
 | Screen | Purpose |
 | --- | --- |
-| **Shelf** | Inventory. Search, filter by kind and tag, bulk-select into a profile. |
+| **Browse** | The shelf's items. Search, filter by kind and tag, bulk-select into a profile. |
 | **Prompts** | The prompt library, treated as a first-class surface rather than a filtered list. |
-| **Item** | Rendered content, revisions and diffs, provenance, reverse dependencies, the APM coordinate. |
-| **Compose** | Build a profile: drag items in, watch resolution and conflicts, see the `apm.yml` update live. |
-| **Compile** | Pick a profile and repository, read the manifest, copy the install command. |
+| **Item** | Rendered content, what installing it writes, history and diffs, origin, what uses it, scans. |
+| **Profiles** | Every profile, what it installs, and the way to edit or install it. |
+| **Edit profile** | Build a profile: drag items in, see what it installs and any conflicts, see the `apm.yml` update live. Reached from a profile, not the navigation. |
+| **Install** | Install a profile from the shelf's registry. The default is the ShelfKit CLI: a prompt that has an agent install the CLI if it is missing and run `shelfkit install`, or the same as terminal steps. APM alone is the other way, again as a prompt or terminal steps. A private shelf's steps sign the CLI in once with `shelfkit login`, so no key is ever in a file or in front of an agent. Below, which file each item becomes for each agent. Reached from a profile. |
 | **Import** | Paste a repo, registry, catalog, or shelf URL; pick items; set pins. |
-| **Activity** | Which repositories compiled which profile revision, and what is stale. |
+| **Repositories** | Which repositories installed which profile version, and which are behind. |
 | **Settings** | Your passkeys and devices, people and invites, API keys for programs, sources, secret names, registry visibility. |
+
+Two rules hold on every screen. **Moving between screens never waits on the network** for what the shelf's index already holds: opening a shelf loads every item once, keeps it across visits, and the live subscription marks it stale. **The UI speaks plainly**: the format's own terms (kind slugs such as `library` and `stack`, `vendored`, compile, resolution, revision hashes) are shown as a label with a sentence saying what they do for the agent, and APM's words (`apm.yml`, `apm install`) are kept because the reader meets them in the repository.
 
 Signing in is "Sign in with a passkey", or a one-time link on a device without one; "Sign in with GitHub" appears only on a deployment that enables it. No key is ever typed into the browser.
 
@@ -483,9 +519,9 @@ Prompts are the most-used kind and deserve more than a list, because the actual 
 - **Editing in place**, with revision history. A prompt is short enough that the list, the editor, and the preview fit on one screen.
 - **Import from anywhere**, because prompts are collected from chats, docs, and other people's shelves.
 
-### 9.2 The composer
+### 9.2 The profile editor
 
-The composer is the profile editor: a three-pane screen with the item inventory on the left, the profile in the middle as an ordered, grouped list, and a live resolution rail on the right showing resolved items, unpinned items, conflicts by severity, and the resulting APM coordinates. Underneath, a `apm.yml` preview updates as items move, so the authored selection and the compiled output are visible at the same time. A stack-marker tester takes a sample `package.json` and reports which stacks match.
+The profile editor (the composer): a three-pane screen with the item inventory on the left, the profile in the middle as an ordered, grouped list, and a live resolution rail on the right showing resolved items, unpinned items, conflicts by severity, and the resulting APM coordinates. Underneath, a `apm.yml` preview updates as items move, so the authored selection and the compiled output are visible at the same time. A stack-marker tester takes a sample `package.json` and reports which stacks match.
 
 ---
 
@@ -498,6 +534,7 @@ Cloudflare Worker  (single deployable)
   /graphql       API for the UI and the CLI, including keys, links, invites, and passkeys
   /auth/passkey/* passkey sign-in for the browser
   /auth/github/*  GitHub sign-in, when enabled
+  /auth/cli/*     signing the CLI in through the browser (`shelfkit login`)
   /*             static SPA
 
   Resolver (Rust/WASM)   Importer   Registry
@@ -517,7 +554,7 @@ Four consequences to accept, all of them real:
 - **Every query is a round trip to a named object**, so the API layer batches work into single object methods rather than issuing many small calls.
 - **A shelf is single-threaded and pinned to one location**, with a soft ceiling around 1,000 requests per second for a pass-through object and considerably less for one doing work. A hot shelf is bounded by its object.
 - **There is no cross-object query of any kind.** No join, no global index, no cross-shelf transaction. This is the constraint that shapes the next paragraph.
-- **Migrations run inside the object at runtime**, in the constructor behind `blockConcurrencyWhile`, because there is no CLI path to a Durable Object's SQLite. `PRAGMA user_version` is unsupported, so schema versioning is explicit. **The cap is 10 GB per object**, not per class, so capacity scales with shelf count. A full object fails writes with `SQLITE_FULL` while reads and deletes keep working, which is why the shelf reports its own storage usage instead of waiting to discover the ceiling.
+- **Migrations run inside the object at runtime**, behind `blockConcurrencyWhile`, because there is no CLI path to a Durable Object's SQLite. An object that holds a shelf migrates in its constructor, and a wake whose `schema_version` is already current skips the migrator. An object that has never been written migrates on its first write instead, so a read of an unknown shelf id answers "not found" and leaves no storage behind. `PRAGMA user_version` is unsupported, so schema versioning is explicit. **The cap is 10 GB per object**, not per class, so capacity scales with shelf count. A full object fails writes with `SQLITE_FULL` while reads and deletes keep working, which is why the shelf reports its own storage usage instead of waiting to discover the ceiling.
 
 #### Search is per shelf
 
@@ -537,7 +574,7 @@ Subscriptions work: a Durable Object per shelf already exists, so it fans out ch
 
 ### 10.3 Auth
 
-Deliberately minimal. People sign in with passkeys; programs present keys. There are no passwords, no device flow, and no roles, and nobody pastes a key into a browser.
+Deliberately minimal. People sign in with passkeys; programs present keys, and a person's CLI gets its key by being approved in their browser. There are no passwords and no roles, and nobody pastes a key into a browser.
 
 **People** sign in with a **passkey** (WebAuthn), and a **one-time link** opens a browser that has none:
 
@@ -553,9 +590,26 @@ On Linux, a browser makes and uses passkeys through a passkey provider: its own 
 
 **GitHub sign-in is opt-in.** With `moon run worker:setup -- --github-sign-in`, setup creates the deployment's own GitHub App (asking for no permissions), records the owner's GitHub account by numeric id, and the sign-in screen offers "Sign in with GitHub". `/auth/github/start` and `/auth/github/callback` run the authorization code flow with PKCE; the Worker uses GitHub's token once, to read who signed in, and revokes it. The owner's GitHub account signs in as the owner principal, and the owner grants other GitHub accounts scopes as for anyone else. Without the flag, no GitHub App exists and no button is shown. `--no-github-sign-in` turns it off again by deleting its secrets: every GitHub session, the owner's included, then ends at its next request, and GitHub accounts' grants hold nothing.
 
+**Signing the CLI in through the browser.** `shelfkit login <url>`, run in a terminal, signs the CLI in the way a device-authorization flow does, so a person never copies a key:
+
+1. The CLI posts `/auth/cli/start` with a name for its computer (the hostname). The Worker answers with a **user code** of 8 characters from an alphabet without look-alikes (`ABCD-EFGH`), a **device code** (`<user code>.<secret>`), the page that approves it (`/cli/ABCD-EFGH`), and a poll interval. The pending login lives in its own Durable Object, named by the user code, which keeps only the SHA-256 of the device code's secret and expires after 10 minutes; an alarm deletes whatever is left.
+2. The CLI prints the page and the code and opens the page in the browser. A browser that is not signed in goes through sign-in and back. The page shows the code, the device name the CLI sent (which proves nothing), the account that approves, and what its key may do, and says to approve only a code shown in one's own terminal right now: the code is the phishing surface of any such flow. Only a browser signed in by its cookie approves or denies (`approveCliLogin`, `denyCliLogin`), never a key, under the same-origin rules as every cookie request.
+3. Approving makes a **CLI key**, `skc_<account>_<secret>`, named "CLI on <device>", kept by its hash in the approver's account object. It acts as that person on every surface: the owner's is the owner, and an invited person's or a GitHub account's holds what each shelf grants them, read on every request, so a narrowed or revoked grant, or removing the person, takes effect on the CLI at once. The key waits in the login for one pickup.
+4. The CLI posts `/auth/cli/poll` with the device code every interval until it hears `approved` (with the key, deleted from the login in the same step), `denied`, or `expired`. A wrong secret and an unknown code are answered as `expired`, so the poll tells nobody more about a code than its CLI may know. A key approved for a CLI that never comes back for it is revoked when the login expires.
+
+The CLI then checks the key and keeps it in the OS keychain, as with a pasted key. Each person sees the keys their CLIs hold under "CLI sign-ins" and revokes them there; the owner also revokes any key from Settings. Rotating the session secret signs browsers out, not CLIs. With 32^8 codes that each live 10 minutes, guessing one that someone else is about to approve is not practical, and the device code's secret is 256 bits; the flow is still **rate limited**, so that nobody can make the deployment hold logins, run objects, or try codes at whatever speed they like. The limits are Workers Rate Limiting bindings declared in `wrangler.jsonc` (again in its `previews` block, with namespaces of their own, so a Preview never spends production's budget), and `src/auth/limits.ts` names the same numbers:
+
+| What | Counted per | Limit | Why that number |
+| --- | --- | --- | --- |
+| Starting a login (`/auth/cli/start`) | client address (`CF-Connecting-IP`) | 10 a minute | A person needs one login, and each holds a Durable Object for 10 minutes; ten leave room for a few people behind one address and a retry or two. |
+| Polling (`/auth/cli/poll`) | client address | 20 every 10 seconds | A CLI polls every 2 seconds, 5 polls in a window, so four CLIs behind one address poll at full speed and a fifth slows down. The short window keeps the wait short. |
+| Looking a code up, approving, or denying (`cliLogin`, `approveCliLogin`, `denyCliLogin`) | signed-in account | 20 a minute | Handling one login takes two or three; the limit caps how fast a session, whoever holds its cookie, can try codes. |
+
+A route over its limit answers `429` as an RFC 7807 problem with `Retry-After` in seconds (the limit's window), and GraphQL refuses with `RATE_LIMITED` and `retryAfter` in the error's extensions. The CLI waits a poll's `Retry-After` and polls again, and a refused start tells the person to run `shelfkit login` again in that many seconds. The platform's limiter counts per Cloudflare location and is approximate by design: on a Preview, 40 starts sent within a minute from one address were refused only after the 48th, and 60 polls in 11 seconds were not refused at all, since a burst spends itself before the counts meet. That is enough for the address limits, which bound abuse; the 256-bit secret, not a limit, is what keeps a login safe. One limit is exact, because it costs nothing: each poll already reaches its login's object, which refuses a poll that holds the secret and comes less than a second after the last one (half the CLI's interval, leaving room for a slow answer) with `429` and `Retry-After: 2` (RFC 8628's `slow_down`). A poll with the wrong secret does not count, so seeing a code is not enough to slow its CLI down. A CLI key opens `/mcp` as its person: the owner's as the owner, and anyone else's with what each shelf grants them, read on every call, reporting only on a profile the grant lets them publish, as a key does.
+
 **Programs.** The CLI, agents, CI, and APM's registry client send `Authorization: Bearer <key>`, the header the registry wire contract defines. A deployment has an **owner key** and any number of **scoped API keys**, and a middleware in the Worker resolves a key to a scope set before any resolver runs. The scope vocabulary is shared with the registry, so one key can read, publish, or both.
 
-Keys, links, invites, and passkeys are managed over GraphQL, not REST, because they are a UI and CLI concern like every other operation:
+Keys, links, invites, passkeys, and CLI logins are managed over GraphQL, not REST, because they are a UI and CLI concern like every other operation:
 
 ```graphql
 type Mutation {
@@ -566,11 +620,14 @@ type Mutation {
   redeemLink(token: String!): LinkRedemption!
   revokeAccess(shelf: ID!, principal: ID!): Boolean!
   removePerson(shelf: ID!, principal: ID!): Boolean!
+  approveCliLogin(code: String!): CliLoginApproval! # the CLI picks the key up once, from /auth/cli/poll
+  denyCliLogin(code: String!): Boolean!
+  revokeCliKey(id: ID!): Boolean!
 }
 ```
 
 - A key never goes into a browser. Settings creates one and shows it once, to copy into CI or an agent's configuration.
-- `shelfkit login` asks for a key created in the UI and stores it in the OS keychain.
+- `shelfkit login` signs the CLI in through the browser and stores the key it is given in the OS keychain. With `--key`, or when standard input is not a terminal (CI), it reads a key created in the UI instead. `shelfkit install` hands it to APM in `APM_REGISTRY_TOKEN_<NAME>` for each ShelfKit registry an `apm.yml` names, so installing from a private shelf needs the key typed once per computer, by a person, and never in a file, a command line, or an agent's context.
 - The registry endpoints read the same header, which is why declaring a ShelfKit instance in `apm.yml` needs no separate credential.
 - A request the cookie authenticates must be same-origin: a `POST` is JSON only and carries this origin's `Origin` header, and there is no CORS. `/mcp` reads the header only.
 
@@ -628,7 +685,7 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 
 ### M1: Format, compiler, CLI, and local registry
 
-- [ ] Shelf format: ten kinds, profiles, bundles, revisions, hashing
+- [ ] Shelf format: eleven kinds, profiles, bundles, revisions, hashing
 - [ ] Rust compiler: profile to `apm.yml` and vendored `.apm/` content
 - [ ] Validation against the OpenAPM published JSON Schema
 - [ ] `init`, `add`, `search`, `compile`, `verify`, `doctor`

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { SECTIONS } from "../router.ts";
+import { SECTIONS } from "../navigation.ts";
 
 const emit = defineEmits<{ close: [] }>();
 </script>

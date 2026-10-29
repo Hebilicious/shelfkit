@@ -7,8 +7,12 @@ project:
   description: "Repository-wide checks and the git hooks. Each project's own tasks live in its moon.yml."
 
 fileGroups:
+  # Every TypeScript file oxlint reads: a file it lints but this group leaves out would leave root:lint cached
+  # after it changed, so a local run passed what CI then refused (apps' tests and scripts, once).
   typescript:
     - "apps/*/src/**/*"
+    - "apps/*/test/**/*.ts"
+    - "apps/*/scripts/**/*.ts"
     - "apps/*/*.ts"
     - "packages/*/src/**/*.ts"
     - "packages/*/scripts/**/*.ts"

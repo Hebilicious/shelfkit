@@ -169,7 +169,9 @@ fn item_coordinate(shelf: &Shelf, item: &Item) -> Coordinate {
         Payload::Lsp(lsp) => Coordinate::Lsp {
             name: lsp.name.clone(),
         },
-        Payload::Hook(_) | Payload::Library(_) | Payload::Stack(_) => Coordinate::Vendored,
+        Payload::Hook(_) | Payload::Library(_) | Payload::Stack(_) | Payload::Doc(_) => {
+            Coordinate::Vendored
+        }
         _ => match item.source.as_ref().map(|source| {
             coordinate::upstream(item.kind(), source, &shelf.manifest.sources, Pin::Revision)
         }) {

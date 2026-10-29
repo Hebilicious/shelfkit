@@ -71,6 +71,7 @@ tasks:
       - "@group(sources)"
       - "test/**/*"
       - "vitest.config.ts"
+      - "scripts/jsonc.ts"
       - "/crates/registry/conformance/**/*"
       - "/crates/core/tests/fixtures/all-kinds/**/*"
       - "/packages/importers/test/fixtures/http/**/*"
@@ -86,6 +87,7 @@ tasks:
       - "@group(sources)"
       - "test/**/*"
       - "vitest.config.ts"
+      - "scripts/jsonc.ts"
   mcp-conform:
     description: "Run acid-cat conform against the /mcp composition (AcidCat's binding plus the relay), in Node."
     command: "node_modules/.bin/vitest run --config test/mcp/conform.config.ts"
@@ -119,6 +121,7 @@ tasks:
       - "src/durable-objects.ts"
       - "src/index.ts"
       - "wrangler.jsonc"
+      - "scripts/jsonc.ts"
   db-generate:
     description: "Generate the shelf object's next migration from src/db/schema.ts with Drizzle Kit. Commit it."
     command: "node_modules/.bin/drizzle-kit generate"
@@ -155,6 +158,15 @@ tasks:
       - "engine:build"
     options:
       persistent: true
+      runInCI: false
+  preview:
+    description: "Upload the checked-out branch as a Worker Preview named after the branch, with its own Durable Objects. Pass the account as CLOUDFLARE_ACCOUNT_ID."
+    command: "node_modules/.bin/wrangler preview"
+    deps:
+      - "web:build"
+      - "engine:build"
+    options:
+      cache: false
       runInCI: false
   deploy:
     command: "node_modules/.bin/wrangler deploy"

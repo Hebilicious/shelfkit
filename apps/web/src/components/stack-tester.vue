@@ -5,6 +5,7 @@ import { execute, messageOf } from "../api/graphql.ts";
 import type { ResultOf } from "../api/graphql.ts";
 import { readRecommendedProfiles } from "../api/json.ts";
 import { StackMatchQuery } from "../api/operations.ts";
+import { KINDS } from "../lib/vocabulary.ts";
 
 const { shelf, inProfile } = defineProps<{ shelf: string; inProfile: ReadonlySet<string> }>();
 const emit = defineEmits<{ add: [id: string] }>();
@@ -39,9 +40,13 @@ async function test(): Promise<void> {
 </script>
 
 <template>
-  <section aria-label="Stack-marker tester" class="panel tester">
-    <h2>Stack-marker tester</h2>
-    <p class="small muted">Paste a repository's package.json to see which stacks match and what they recommend.</p>
+  <section aria-label="Which tech stacks match a repository" class="panel tester">
+    <h2>Which tech stacks match a repository</h2>
+    <p class="small muted">
+      Each tech stack on this shelf says how to recognise a repository that uses it. Paste a repository's
+      <code>package.json</code> and the files at its root to see which stacks match, and what they suggest adding to
+      the profile.
+    </p>
     <div class="tester__grid">
       <form class="stack" @submit.prevent="test">
         <div class="field">
@@ -59,21 +64,21 @@ async function test(): Promise<void> {
           <input v-model="files" placeholder="wrangler.jsonc, Cargo.toml" />
         </label>
         <div class="row">
-          <button type="submit" :disabled="busy">Test markers</button>
+          <button type="submit" :disabled="busy">Find matching stacks</button>
         </div>
         <p v-if="problem !== null" class="error-text small">{{ problem }}</p>
       </form>
       <div v-if="result !== null" class="stack" data-testid="stack-match">
-        <p v-if="result.stacks.length === 0" class="muted">No stack matches.</p>
+        <p v-if="result.stacks.length === 0" class="muted">No tech stack on this shelf matches.</p>
         <p v-else>
-          Matches:
+          Matching tech stacks:
           <strong v-for="stack in result.stacks" :key="stack" class="chip on">{{ stack }}</strong>
         </p>
         <ul class="list">
           <li v-for="entry in result.items" :key="entry.item.id" class="list-row">
-            <span class="badge">{{ entry.item.kind }}</span>
+            <span class="badge">{{ KINDS[entry.item.kind].label }}</span>
             <span>{{ entry.item.title }}</span>
-            <span v-if="entry.recommendedBy.length > 0" class="small muted">recommended by {{ entry.recommendedBy.join(", ") }}</span>
+            <span v-if="entry.recommendedBy.length > 0" class="small muted">suggested by {{ entry.recommendedBy.join(", ") }}</span>
             <span class="spacer"></span>
             <span v-if="inProfile.has(entry.item.id)" class="small muted">✓ in the profile</span>
             <button v-else class="small" type="button" @click='emit("add", entry.item.id)'>Add</button>
@@ -84,7 +89,7 @@ async function test(): Promise<void> {
           :key="profile.id"
           class="small"
         >
-          Profile <strong>{{ profile.title }}</strong> fits ({{ profile.items.length }} items).
+          The profile <strong>{{ profile.title }}</strong> fits it ({{ profile.items.length }} items).
         </p>
       </div>
     </div>

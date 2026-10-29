@@ -1,0 +1,11 @@
+{
+  "id": "playwright",
+  "kind": "mcp",
+  "title": "Playwright",
+  "description": "A browser the agent can drive, to check the web UI it changed.",
+  "tags": ["testing", "browser"],
+  "flavour": "stdio",
+  "name": "microsoft/playwright-mcp",
+  "command": "npx",
+  "args": ["-y", "@playwright/mcp@latest"]
+}

@@ -1,24 +1,27 @@
 <script setup lang="ts">
+import type { ConflictSeverity as Severity } from "@shelfkit/engine";
 import { computed } from "vue";
 
-import type { InventoryItem } from "../api/types.ts";
 import type { Preview } from "../composables/use-preview.ts";
-import type { ConflictSeverity as Severity } from "@shelfkit/engine";
+import type { IndexItem } from "../data/shelf.ts";
+import { KINDS, shortRevision } from "../lib/vocabulary.ts";
 
-const { preview, inventory, error } = defineProps<{
+const { preview, inventory, error, profile } = defineProps<{
   preview: Preview | null;
-  inventory: readonly InventoryItem[];
+  inventory: readonly IndexItem[];
   error: string | null;
+  /** The id of the profile being edited, to tell its own items from those another profile brings in. */
+  profile: string;
 }>();
 
 const byId = computed(() => new Map(inventory.map((item) => [item.id, item])));
 const items = computed(() => preview?.resolution?.items ?? []);
-const unpinned = computed(() => items.value.filter((item) => !item.pinned));
+const following = computed(() => items.value.filter((item) => !item.pinned));
 
 const SEVERITIES: readonly { severity: Severity; label: string }[] = [
-  { label: "Errors", severity: "error" },
+  { label: "Must fix before it installs", severity: "error" },
   { label: "Warnings", severity: "warning" },
-  { label: "Info", severity: "info" },
+  { label: "Notes", severity: "info" },
 ];
 
 const bySeverity = computed(() => {
@@ -31,36 +34,49 @@ const bySeverity = computed(() => {
 
 type Origin = NonNullable<Preview["resolution"]>["items"][number]["origin"];
 
+/** Why an item is in the profile: chosen here, or brought in by a group, another item, or another profile. */
 function why(origin: Origin): string {
   if (origin.via === "bundle") {
-    return `bundle ${origin.bundle}`;
+    return `from the group ${origin.bundle}`;
   }
   if (origin.via === "requires") {
-    return `required by ${origin.item}`;
+    return `needed by ${titleOf(origin.item)}`;
   }
-  return `profile ${origin.profile}`;
+  return origin.profile === profile ? "chosen here" : `from the profile ${origin.profile}`;
 }
 
-function coordinate(id: string): string {
+function titleOf(id: string): string {
+  return byId.value.get(id)?.title ?? id;
+}
+
+/** Where the item lands in the repository, in a few words. */
+function installsAs(id: string): string {
   const found = byId.value.get(id)?.coordinate;
   if (found === undefined) {
     return "";
   }
-  return found.name ?? found.entry?.trim() ?? found.kind;
+  if (found.kind === "vendored") {
+    return `copied into vendor/${profile}/`;
+  }
+  if (found.kind === "unresolvable") {
+    return "cannot be installed: nowhere to fetch it from";
+  }
+  return found.name ?? found.entry?.trim() ?? "";
 }
 </script>
 
 <template>
-  <aside aria-label="Resolution" class="panel rail">
-    <h2>Resolution</h2>
+  <aside aria-label="What this profile installs" class="panel rail">
+    <h2>What this profile installs</h2>
     <p v-if="error !== null" class="small severity-warning" role="status">{{ error }}</p>
     <p v-if="preview?.resolution" class="small muted">
-      {{ items.length }} items · {{ items.length - unpinned.length }} pinned · {{ unpinned.length }} unpinned
+      {{ items.length }} {{ items.length === 1 ? "item" : "items" }}: {{ items.length - following.length }} locked to a
+      version, {{ following.length }} following the latest.
       <br />
-      <span class="mono" :title="preview.resolution.revision">{{ preview.resolution.revision.slice(0, 19) }}…</span>
+      <span :title="preview.resolution.revision">Profile version <span class="mono">{{ shortRevision(preview.resolution.revision) }}</span></span>
     </p>
     <section class="stack" data-testid="conflicts">
-      <h3>Conflicts</h3>
+      <h3>Problems</h3>
       <p v-if="(preview?.conflicts.length ?? 0) === 0" class="small muted">None.</p>
       <template v-for="group in SEVERITIES" :key="group.severity">
         <div v-if="bySeverity.has(group.severity)" class="stack">
@@ -73,36 +89,35 @@ function coordinate(id: string): string {
               :key="`${conflict.code} ${conflict.path} ${conflict.message}`"
               class="small"
             >
-              <span class="mono" :class="`severity-${conflict.severity}`">{{ conflict.code }}</span>
-              <div class="mono muted">{{ conflict.path }}</div>
               <div>{{ conflict.message }}</div>
+              <div class="mono muted" :title="conflict.code">{{ conflict.path }}</div>
             </li>
           </ul>
         </div>
       </template>
     </section>
     <section class="stack">
-      <h3>Resolved</h3>
+      <h3>Items</h3>
       <ul class="list" data-testid="resolved">
         <li v-for="item in items" :key="item.id" class="small resolved">
           <div class="row">
-            <span class="badge">{{ item.kind }}</span>
-            <span class="mono">{{ item.id }}</span>
-            <span v-if="item.pinned" class="badge info">pinned</span>
+            <span class="badge">{{ KINDS[item.kind].label }}</span>
+            <span>{{ titleOf(item.id) }}</span>
+            <span class="mono muted">{{ item.id }}</span>
+            <span
+              v-if="item.pinned"
+              class="badge info"
+              :title="`Locked to version ${shortRevision(item.revision)}`"
+            >locked</span>
           </div>
-          <div class="muted">via {{ why(item.origin) }}</div>
+          <div class="muted">{{ why(item.origin) }}</div>
           <div
-            v-if='coordinate(item.id) !== ""'
+            v-if='installsAs(item.id) !== ""'
             class="mono muted ellipsis"
-            :title="coordinate(item.id)"
-          >→ {{ coordinate(item.id) }}</div>
+            :title="installsAs(item.id)"
+          >→ {{ installsAs(item.id) }}</div>
         </li>
       </ul>
-    </section>
-    <section v-if="unpinned.length > 0" class="stack">
-      <h3>Unpinned</h3>
-      <p class="small muted">Named by id alone: they compile at the shelf's current revision.</p>
-      <p class="small mono">{{ unpinned.map((item) => item.id).join(", ") }}</p>
     </section>
   </aside>
 </template>

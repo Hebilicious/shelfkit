@@ -10,6 +10,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
@@ -30,7 +31,20 @@ pub struct HttpRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpResponse {
     pub status: u16,
+    /// Its headers, as sent; [`HttpResponse::header`] reads one by name.
+    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+}
+
+impl HttpResponse {
+    /// The value of the header `name`, whatever its case, if the answer has one.
+    #[must_use]
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(sent, _)| sent.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
 }
 
 /// The keychain service every key is stored under; the account is the
@@ -49,9 +63,15 @@ pub trait System {
     fn find(&self, program: &str) -> Option<PathBuf>;
     /// Run a program to completion and capture its standard output.
     fn capture(&self, program: &Path, args: &[&str]) -> io::Result<(i32, String)>;
-    /// Run a program in `dir` with this process's standard streams, and
-    /// return its exit code.
-    fn run(&self, program: &Path, args: &[String], dir: &Path) -> io::Result<i32>;
+    /// Run a program in `dir` with this process's standard streams and
+    /// environment, plus `env`, and return its exit code.
+    fn run(
+        &self,
+        program: &Path,
+        args: &[String],
+        dir: &Path,
+        env: &[(String, String)],
+    ) -> io::Result<i32>;
     fn platform(&self) -> Platform;
 
     /// Send one HTTP request and read the whole answer. A status that is not
@@ -90,6 +110,20 @@ pub trait System {
     fn read_secret(&self, _prompt: &str) -> io::Result<String> {
         Err(unavailable("reading a secret"))
     }
+
+    /// Whether standard input is a terminal, so a person is there to sign in
+    /// through the browser. `false` by default, as in CI.
+    fn stdin_is_terminal(&self) -> bool {
+        false
+    }
+
+    /// This computer's name, to show on the page that approves a login.
+    fn hostname(&self) -> Option<String> {
+        None
+    }
+
+    /// Wait between two polls of the hosted service.
+    fn sleep(&self, _duration: Duration) {}
 }
 
 /// The real machine.
@@ -127,10 +161,17 @@ impl System for HostSystem {
 
     // The seam itself: `clippy.toml` forbids `Command::new` everywhere else.
     #[allow(clippy::disallowed_methods)]
-    fn run(&self, program: &Path, args: &[String], dir: &Path) -> io::Result<i32> {
+    fn run(
+        &self,
+        program: &Path,
+        args: &[String],
+        dir: &Path,
+        env: &[(String, String)],
+    ) -> io::Result<i32> {
         let status = std::process::Command::new(program)
             .args(args)
             .current_dir(dir)
+            .envs(env.iter().map(|(name, value)| (name, value)))
             .status()?;
         Ok(status.code().unwrap_or(-1))
     }
@@ -171,6 +212,34 @@ impl System for HostSystem {
             .filter(|dir| !dir.is_empty())
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+    }
+
+    fn stdin_is_terminal(&self) -> bool {
+        use std::io::IsTerminal as _;
+        io::stdin().is_terminal()
+    }
+
+    fn hostname(&self) -> Option<String> {
+        let named = |text: String| {
+            let name = text.trim().to_owned();
+            (!name.is_empty()).then_some(name)
+        };
+        if cfg!(windows) {
+            return std::env::var("COMPUTERNAME").ok().and_then(named);
+        }
+        std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .ok()
+            .and_then(named)
+            .or_else(|| std::env::var("HOSTNAME").ok().and_then(named))
+            .or_else(|| {
+                let program = self.find("hostname")?;
+                let (code, output) = self.capture(&program, &[]).ok()?;
+                (code == 0).then_some(output).and_then(named)
+            })
+    }
+
+    fn sleep(&self, duration: Duration) {
+        std::thread::sleep(duration);
     }
 
     fn read_secret(&self, prompt: &str) -> io::Result<String> {

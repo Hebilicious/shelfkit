@@ -5,6 +5,7 @@ import path from "node:path";
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
+import { stripJsonc } from "./scripts/jsonc.ts";
 import {
   FAKE_ACCOUNTS,
   FAKE_CLIENT,
@@ -75,13 +76,36 @@ const github = {
   OWNER_GITHUB_ID: String(FAKE_ACCOUNTS.owner.id),
 };
 
+/** The workspace version in Cargo.toml: the CLI's, which the Worker's `SHELFKIT_VERSION` must equal. */
+const cargoVersion =
+  /^\[workspace\.package\]\nversion = "(?<version>[^"]+)"/mu.exec(
+    readFileSync(path.join(repository, "Cargo.toml"), "utf-8")
+  )?.groups?.version ?? "";
+
+/** `wrangler.jsonc` as JSON, for the tests that hold the Worker's code in step with its configuration. */
+const wranglerConfig = JSON.stringify(
+  JSON.parse(
+    stripJsonc(
+      readFileSync(path.join(import.meta.dirname, "wrangler.jsonc"), "utf-8")
+    )
+  )
+);
+
 const provide = {
   allKindsShelf: shelfFiles(
     path.join(repository, "crates/core/tests/fixtures/all-kinds")
   ),
+  cargoVersion,
   conformance: { archives, cases },
   ownShelf: shelfFiles(path.join(repository, "shelf")),
+  wranglerConfig,
 };
+
+/**
+ * The first request of each test file loads the Worker's modules into workerd, about 5 s on its own and more while the
+ * rest of the gate runs beside it; Vitest's default 5 s (10 s for a hook) leaves no room for that.
+ */
+const timeouts = { hookTimeout: 60_000, testTimeout: 60_000 };
 
 /** The tests that need GitHub sign-in enabled; every other test runs as a default deployment, without it. */
 const GITHUB_TESTS = ["test/github.test.ts"];
@@ -106,6 +130,7 @@ export default defineConfig({
           include: ["test/**/*.test.ts"],
           name: "default",
           provide,
+          ...timeouts,
         },
       },
       {
@@ -115,7 +140,7 @@ export default defineConfig({
             wrangler: { configPath: "./wrangler.jsonc" },
           }),
         ],
-        test: { include: GITHUB_TESTS, name: "github", provide },
+        test: { include: GITHUB_TESTS, name: "github", provide, ...timeouts },
       },
     ],
   },

@@ -43,6 +43,15 @@
       ],
       "revision": "sha256-2a9fd69242f1f87f7289076ddf3ea2f4848a243eeaf58b687a968296b063b8a2"
     },
+    "glossary": {
+      "kind": "doc",
+      "path": "items/docs/glossary",
+      "files": [
+        "doc.md",
+        "item.json"
+      ],
+      "revision": "sha256-c07bdba3f1c90500d78a9fdac0247cc6dd10546861d73cd46184e918a16f76ce"
+    },
     "linear": {
       "kind": "mcp",
       "path": "items/mcp/linear",

@@ -1,0 +1,14 @@
+{
+  "id": "valibot",
+  "kind": "library",
+  "title": "Valibot at the boundaries",
+  "description": "Where and how ShelfKit parses data it did not produce.",
+  "tags": ["typescript"],
+  "detect": { "dependencies": ["valibot"] },
+  "docs": "https://valibot.dev",
+  "notes": [
+    "Parse at the boundary, once: a GraphQL `JSON` value, `localStorage`, an SSE message, a request body. Code past the boundary takes the parsed type.",
+    "The shared schemas are in `packages/schema`; use them instead of writing a second one.",
+    "Mark the parsing function with a `BOUNDARY:` comment saying what arrives unparsed."
+  ]
+}

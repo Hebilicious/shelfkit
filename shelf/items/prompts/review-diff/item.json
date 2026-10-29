@@ -1,0 +1,11 @@
+{
+  "id": "review-diff",
+  "kind": "prompt",
+  "title": "Review the staged diff",
+  "description": "Find bugs in the staged changes before they are committed.",
+  "tags": ["review"],
+  "asCommand": true,
+  "variables": [
+    { "name": "focus", "default": "correctness", "description": "What to look hardest at" }
+  ]
+}

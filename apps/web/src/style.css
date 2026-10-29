@@ -94,6 +94,8 @@ textarea.mono,
 .mono {
   font-family: var(--font-family-mono);
   font-size: var(--typography_fluid-sans-text-s);
+  /* Code is read and retyped character by character: ">=" must not render as one glyph. */
+  font-variant-ligatures: none;
 }
 
 pre {

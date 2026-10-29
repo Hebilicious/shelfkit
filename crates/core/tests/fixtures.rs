@@ -477,6 +477,138 @@ fn a_cli_only_target_on_an_item_needs_the_opt_in_and_is_reported() {
 }
 
 #[test]
+fn a_skill_off_the_agentskills_spec_loads_and_is_reported() {
+    let mut source = memory("all-kinds");
+    let path = "items/skills/review-checklist/SKILL.md";
+    let description = "word ".repeat(210);
+    source.insert(
+        path,
+        format!(
+            "---\nname: review-checklist\ndescription: >-\n  {description}\n\
+             disable-model-invocation: true\n\
+             metadata:\n  credits:\n    skill: review\n    author: someone\n---\n\nBody.\n"
+        ),
+    );
+    let shelf = load(&source).unwrap_or_else(|errors| panic!("{errors}"));
+
+    // The file is kept exactly as written.
+    assert_eq!(
+        shelf.items["review-checklist"].files["SKILL.md"],
+        source.read(path).unwrap()
+    );
+
+    let reported = |notices: &[shelfkit_core::Notice]| -> Vec<String> {
+        notices
+            .iter()
+            .filter(|notice| {
+                notice.path == path && notice.code == shelfkit_core::NoticeCode::SkillFrontmatter
+            })
+            .map(|notice| notice.message.clone())
+            .collect()
+    };
+    // Notices are sorted, so they come in message order.
+    let checked = reported(&shelf.check());
+    assert_eq!(checked.len(), 3, "{checked:?}");
+    // Each says what the deviation costs, agent by agent.
+    assert!(
+        checked[0].starts_with("`description` is 1050 characters")
+            && checked[0].contains("Copilot CLI refuses to load the skill"),
+        "{checked:?}"
+    );
+    assert!(
+        checked[1].starts_with("`disable-model-invocation` is not an agentskills.io key")
+            && checked[1].contains("Codex ignores it"),
+        "{checked:?}"
+    );
+    assert!(
+        checked[2].starts_with("`metadata` must map strings to strings")
+            && checked[2].contains("flattening it to string values loses nothing"),
+        "{checked:?}"
+    );
+
+    // A profile that installs the skill carries the same notices into its plan,
+    // and one that does not carries none.
+    assert_eq!(reported(&shelf.resolve("full").unwrap().notices), checked);
+    assert!(reported(&shelf.resolve("minimal").unwrap().notices).is_empty());
+
+    // Codex reads `disable-model-invocation` from agents/openai.yaml, which the installed skill gets.
+    let settings = shelfkit_core::skill::codex_settings(&shelf.items["review-checklist"]).unwrap();
+    let settings: serde_yaml::Value = serde_yaml::from_slice(&settings).unwrap();
+    assert_eq!(
+        settings["policy"]["allow_implicit_invocation"],
+        serde_yaml::Value::Bool(false)
+    );
+}
+
+#[test]
+fn a_skills_own_codex_settings_are_kept_and_a_disagreement_reported() {
+    let mut source = memory("all-kinds");
+    source.insert(
+        "items/skills/review-checklist/SKILL.md",
+        "---\nname: review-checklist\ndescription: Review.\ndisable-model-invocation: true\n---\n\nBody.\n",
+    );
+    let settings = "items/skills/review-checklist/agents/openai.yaml";
+    source.insert(settings, "interface:\n  display_name: \"Review\"\n");
+    let shelf = load(&source).unwrap_or_else(|errors| panic!("{errors}"));
+    assert_eq!(
+        shelfkit_core::skill::codex_settings(&shelf.items["review-checklist"]),
+        None,
+        "the skill's own file is never replaced"
+    );
+    let reported: Vec<String> = shelf
+        .check()
+        .iter()
+        .filter(|notice| notice.path == settings)
+        .map(|notice| notice.message.clone())
+        .collect();
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert!(
+        reported[0].contains("Codex still uses the skill on its own"),
+        "{reported:?}"
+    );
+
+    source.insert(settings, "policy:\n  allow_implicit_invocation: false\n");
+    let agreeing = load(&source).unwrap_or_else(|errors| panic!("{errors}"));
+    assert!(
+        agreeing
+            .check()
+            .iter()
+            .all(|notice| notice.path != settings)
+    );
+}
+
+#[test]
+fn a_skill_an_agent_cannot_use_still_fails_the_load() {
+    let path = "items/skills/review-checklist/SKILL.md";
+    let fails = |text: &str| {
+        let mut source = memory("all-kinds");
+        source.insert(path, text);
+        errors_of(&source)
+    };
+    let invalid = |reason: &str| vec![format!("{path}: invalid SKILL.md frontmatter: {reason}")];
+    assert_eq!(
+        fails("No frontmatter.\n"),
+        invalid("must start with a `---` YAML block")
+    );
+    assert_eq!(fails("---\n- a\n---\n"), invalid("must be a YAML mapping"));
+    assert_eq!(
+        fails("---\ndescription: A thing.\n---\n"),
+        invalid("`name` is required and must be a string")
+    );
+    assert_eq!(
+        fails("---\nname: other\ndescription: A thing.\n---\n"),
+        invalid("`name` is `other` but must equal the item id `review-checklist`")
+    );
+    assert_eq!(
+        fails("---\nname: review-checklist\ndescription: \"\"\n---\n"),
+        invalid("`description` is required and must be non-empty")
+    );
+    let unparsable = fails("---\nname: review-checklist\ndescription: Use it: when asked\n---\n");
+    assert_eq!(unparsable.len(), 1, "{unparsable:?}");
+    assert!(unparsable[0].starts_with(&format!("{path}: invalid SKILL.md frontmatter: ")));
+}
+
+#[test]
 fn a_credential_in_any_text_file_fails_the_load() {
     let mut source = memory("all-kinds");
     // Assembled at run time so the source holds no token-shaped literal.

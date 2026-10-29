@@ -6,11 +6,22 @@
 //!
 //! | Kind | Written to |
 //! | --- | --- |
-//! | `skill` | `.apm/skills/<id>/`, every file of the item but `item.json` |
+//! | `skill` | `.apm/skills/<id>/`, every file of the item but `item.json`, plus `agents/openai.yaml` for Codex when `SKILL.md` sets `disable-model-invocation` |
 //! | `prompt` | `.apm/prompts/<id>.prompt.md` |
 //! | `agent` | `.apm/agents/<id>.agent.md` |
 //! | `hook` | `.apm/hooks/<id>.json` |
-//! | `instructions`, `library`, `stack` | `.apm/instructions/<id>.instructions.md` |
+//! | `instructions`, `library`, `stack` | `.github/instructions/<id>.instructions.md` |
+//!
+//! Instructions are the exception to `.apm/`, on purpose. APM 0.33's
+//! installer turns `.apm/instructions/` into a rule file per item per agent
+//! (`.claude/rules/`, `.cursor/rules/`, `.github/instructions/`), which Codex
+//! never reads and which Cursor and Copilot then also get from AGENTS.md.
+//! It does not deploy a package's `.github/instructions/`, while `apm
+//! compile` reads both directories. So a package that keeps its
+//! instructions there installs no rule files, and `apm compile` writes them
+//! into one section of the repository's AGENTS.md, which every agent reads
+//! (`docs/PRD.md` section 4.2). The compiler's APM test installs a compiled
+//! package to hold APM to this.
 //!
 //! A `plugin` is a package layout of its own, not a primitive under `.apm/`,
 //! so each one is vendored beside that package as its own directory, with
@@ -37,6 +48,12 @@ pub fn primitive_files(loaded: &LoadedItem) -> Result<BTreeMap<String, Vec<u8>>,
             require(loaded, "SKILL.md")?;
             for (name, bytes) in content_files(loaded) {
                 files.insert(format!(".apm/skills/{id}/{name}"), bytes);
+            }
+            if let Some(settings) = shelfkit_core::skill::codex_settings(loaded) {
+                files.insert(
+                    format!(".apm/skills/{id}/{}", shelfkit_core::skill::CODEX_SETTINGS),
+                    settings,
+                );
             }
         }
         Payload::Prompt(prompt) => {
@@ -104,7 +121,8 @@ pub fn primitive_files(loaded: &LoadedItem) -> Result<BTreeMap<String, Vec<u8>>,
                 render_instructions(loaded, &body).into_bytes(),
             );
         }
-        Payload::Plugin(_) | Payload::Mcp(_) | Payload::Lsp(_) => {
+        // A doc goes into the profile's docs skill, which `crate::docs` writes for all of them at once.
+        Payload::Plugin(_) | Payload::Mcp(_) | Payload::Lsp(_) | Payload::Doc(_) => {
             return Err(format!(
                 "a `{}` item does not compile into the `.apm/` package",
                 item.kind()
@@ -121,8 +139,18 @@ pub fn plugin_files(loaded: &LoadedItem) -> Result<BTreeMap<String, Vec<u8>>, St
 }
 
 /// Whether an item without an upstream can be vendored: it carries the
-/// content its kind compiles from.
+/// content its kind compiles from. Imported instructions with neither
+/// sections nor a copy of their text (a link-only AGENTS.md) have none.
 pub fn has_content(loaded: &LoadedItem) -> bool {
+    match &loaded.item.payload {
+        Payload::Instructions(instructions) if loaded.item.source.is_some() => {
+            !instructions.sections.is_empty() || loaded.files.contains_key("AGENTS.fragment.md")
+        }
+        _ => has_kind_content(loaded),
+    }
+}
+
+fn has_kind_content(loaded: &LoadedItem) -> bool {
     match loaded.kind() {
         ItemKind::Instructions | ItemKind::Library | ItemKind::Stack => true,
         kind => kind
@@ -131,8 +159,11 @@ pub fn has_content(loaded: &LoadedItem) -> bool {
     }
 }
 
+/// Where a package keeps its instructions: the directory `apm compile` reads and `apm install` leaves alone.
+pub const INSTRUCTIONS_DIR: &str = ".github/instructions/";
+
 fn instructions_path(id: &str) -> String {
-    format!(".apm/instructions/{id}.instructions.md")
+    format!("{INSTRUCTIONS_DIR}{id}.instructions.md")
 }
 
 /// Every file of the item except `item.json`, text normalized to LF.
@@ -232,16 +263,22 @@ fn render_prompt(description: &str, prompt: &Prompt, body: &str) -> String {
 }
 
 /// An `.instructions.md` file: APM requires a `description`, and the body
-/// starts with the item's title.
+/// starts with the item's title, unless it opens with a top-level heading of
+/// its own (an AGENTS.md brought in as an item), which then stands for it.
 fn render_instructions(loaded: &LoadedItem, body: &str) -> String {
     let mut out = format!(
-        "---\ndescription: {}\n---\n\n# {}\n",
-        crate::yaml::scalar(description(loaded)),
-        loaded.item.title.trim()
+        "---\ndescription: {}\n---\n\n",
+        crate::yaml::scalar(description(loaded))
     );
+    let titled = body.trim_start().starts_with("# ");
+    if !titled {
+        let _ = writeln!(out, "# {}", loaded.item.title.trim());
+    }
     if !body.is_empty() {
-        out.push('\n');
-        out.push_str(body);
+        if !titled {
+            out.push('\n');
+        }
+        out.push_str(body.trim_start_matches('\n'));
     }
     ensure_trailing_newline(out)
 }

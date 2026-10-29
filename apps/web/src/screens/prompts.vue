@@ -3,7 +3,7 @@ import { computed, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import { execute } from "../api/graphql.ts";
-import { PromptsQuery, SetFavouriteMutation } from "../api/operations.ts";
+import { SetFavouriteMutation } from "../api/operations.ts";
 import PromptDetail from "../components/prompt-detail.vue";
 import PromptNew from "../components/prompt-new.vue";
 import QueryState from "../components/query-state.vue";
@@ -11,74 +11,67 @@ import { useListNav } from "../composables/list-nav.ts";
 import { loadSession } from "../composables/session.ts";
 import { useShelfId } from "../composables/shelf-context.ts";
 import { notify, notifyError } from "../composables/toasts.ts";
-import { useQuery } from "../composables/use-query.ts";
-import { param } from "../router.ts";
+import { invalidate, shelfPrefix } from "../data/cache.ts";
+import { patchIndexItem, useShelfIndex } from "../data/shelf.ts";
+import { search } from "../lib/search.ts";
+import { param } from "../navigation.ts";
 
 const shelf = useShelfId();
 const route = useRoute();
 const router = useRouter();
 
 const typed = ref("");
-const search = ref("");
 const favouritesOnly = ref(false);
 const tag = ref<string | null>(null);
 const creating = ref(false);
 
-let debounce: ReturnType<typeof setTimeout> | undefined;
-watch(typed, (value) => {
-  clearTimeout(debounce);
-  debounce = setTimeout(() => {
-    search.value = value.trim();
-  }, 150);
-});
+// The prompts are the shelf index's, already in memory: filtering and search follow every keystroke.
+const shelfIndex = useShelfIndex(shelf);
+const prompts = computed(() =>
+  (shelfIndex.data.value?.items ?? []).filter((item) => item.kind === "prompt"),
+);
 
-const prompts = useQuery(async () => {
-  const data = await execute(PromptsQuery, {
-    favouritesOnly: favouritesOnly.value,
-    query: search.value === "" ? null : search.value,
-    shelf: shelf.value,
-    tags: tag.value === null ? null : [tag.value],
-  });
-  return data.shelf;
-}, [shelf, search, favouritesOnly, tag]);
-
-/** When the list was last used, by item id: the list opens on what is actually used. */
+/** When each prompt was last used, by item id: the list opens on what is actually used. */
 const usedAt = computed(() => {
   const map = new Map<string, { at: string; uses: number }>();
-  for (const recent of prompts.data.value?.recents ?? []) {
-    if (recent.item.kind === "prompt") {
-      map.set(recent.item.id, { at: recent.usedAt, uses: recent.uses });
-    }
+  for (const recent of shelfIndex.data.value?.recents ?? []) {
+    map.set(recent.item.id, { at: recent.usedAt, uses: recent.uses });
   }
   return map;
 });
 
 /**
- * Without a search: favourites first, then the most recently used, then the rest by title. With one, the service's
- * full-text ranking over bodies, titles, descriptions and tags is kept.
+ * Without a search: favourites first, then the most recently used, then the rest by title. With one, the best match
+ * first.
  */
 const rows = computed(() => {
-  const nodes = prompts.data.value?.prompts.nodes ?? [];
-  if (search.value !== "") {
-    return nodes;
+  const filtered = prompts.value.filter(
+    (item) =>
+      (!favouritesOnly.value || item.favourite) &&
+      (tag.value === null || item.tags.includes(tag.value)),
+  );
+  if (typed.value.trim() !== "") {
+    return search(filtered, typed.value);
   }
-  return nodes.toSorted((a, b) => {
-    if (a.item.favourite !== b.item.favourite) {
-      return a.item.favourite ? -1 : 1;
-    }
-    const usedA = usedAt.value.get(a.item.id)?.at ?? "";
-    const usedB = usedAt.value.get(b.item.id)?.at ?? "";
-    if (usedA !== usedB) {
-      return usedA > usedB ? -1 : 1;
-    }
-    return a.item.title.localeCompare(b.item.title);
-  });
+  return filtered
+    .toSorted((a, b) => {
+      if (a.favourite !== b.favourite) {
+        return a.favourite ? -1 : 1;
+      }
+      const usedA = usedAt.value.get(a.id)?.at ?? "";
+      const usedB = usedAt.value.get(b.id)?.at ?? "";
+      if (usedA !== usedB) {
+        return usedA > usedB ? -1 : 1;
+      }
+      return a.title.localeCompare(b.title);
+    })
+    .map((item) => ({ item, snippet: null }));
 });
 
 const tags = computed(() => {
   const all = new Set<string>();
-  for (const node of prompts.data.value?.prompts.nodes ?? []) {
-    for (const entry of node.item.tags) {
+  for (const item of prompts.value) {
+    for (const entry of item.tags) {
       all.add(entry);
     }
   }
@@ -92,21 +85,20 @@ function open(id: string): void {
   void router.push({ name: "prompts", params: { id, shelf: shelf.value }, query: route.query });
 }
 
-/** Bumped when the list changes a prompt the detail pane shows, so the pane reloads it. */
-const detailChanges = ref(0);
-
+/** Favourite at once, and put it back if the service does not record it. */
 async function toggleFavourite(id: string, favourite: boolean): Promise<void> {
+  const shelfId = shelf.value;
+  patchIndexItem(shelfId, id, (item) => ({ ...item, favourite }));
   try {
-    const data = await execute(SetFavouriteMutation, { favourite, item: id, shelf: shelf.value });
+    const data = await execute(SetFavouriteMutation, { favourite, item: id, shelf: shelfId });
     if (!data.setFavourite) {
+      patchIndexItem(shelfId, id, (item) => ({ ...item, favourite: !favourite }));
       // Favourites are kept per key; one that is not recorded means this browser holds no valid key now.
-      notify("Favourites are kept per key: sign in to keep them.", null, "error");
+      notify("Favourites are kept per account: sign in to keep them.", null, "error");
       await loadSession();
-      return;
     }
-    detailChanges.value += 1;
-    await prompts.refresh();
   } catch (error) {
+    patchIndexItem(shelfId, id, (item) => ({ ...item, favourite: !favourite }));
     notifyError(error);
   }
 }
@@ -148,7 +140,8 @@ watch(
 
 async function created(id: string): Promise<void> {
   creating.value = false;
-  await prompts.refresh();
+  invalidate(shelfPrefix(shelf.value));
+  await shelfIndex.refresh();
   open(id);
 }
 </script>
@@ -162,11 +155,15 @@ async function created(id: string): Promise<void> {
           <span class="spacer"></span>
           <button class="small" type="button" @click="creating = true">New prompt</button>
         </div>
+        <p class="small muted">
+          Text you give an agent to do one job. Fill in its variables and copy it, or install it as a slash command
+          with a profile.
+        </p>
         <input
           v-model="typed"
           aria-label="Search prompts"
           data-search
-          placeholder="Search prompt text…  ( / )"
+          placeholder="Search prompts…  ( / )"
           type="search"
         />
         <div class="row">
@@ -195,10 +192,10 @@ async function created(id: string): Promise<void> {
         </div>
       </div>
       <QueryState
-        :loading="prompts.loading.value"
-        :error="prompts.error.value"
+        :loading="shelfIndex.loading.value"
+        :error="shelfIndex.error.value"
         :empty="rows.length === 0"
-        :empty-text='search === "" ? "No prompts yet. Create one, or import some." : "No prompt matches."'
+        :empty-text='prompts.length === 0 ? "No prompts yet. Create one, or import some." : "No prompt matches."'
       />
       <ul class="list" data-testid="prompt-list">
         <li v-for="(row, at) in rows" :key="row.item.id">
@@ -227,9 +224,8 @@ async function created(id: string): Promise<void> {
       :id="selectedId"
       :key="`${shelf}/${selectedId}`"
       :shelf="shelf"
-      :changes="detailChanges"
       @favourite="toggleFavourite"
-      @deleted="prompts.refresh()"
+      @deleted="invalidate(shelfPrefix(shelf))"
     />
   </div>
 </template>

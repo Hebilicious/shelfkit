@@ -6,6 +6,7 @@ import { execute, messageOf } from "../api/graphql.ts";
 import type { ResultOf } from "../api/graphql.ts";
 import { InviteQuery, RedeemLinkMutation, SignInLinkQuery } from "../api/operations.ts";
 import { loadSession, viewer, viewerName } from "../composables/session.ts";
+import { localPath } from "../lib/local-path.ts";
 import { addPasskey, deviceLabel, passkeysAvailable } from "../lib/passkeys.ts";
 
 type Invite = NonNullable<ResultOf<typeof InviteQuery>["invite"]>;
@@ -21,6 +22,8 @@ const busy = ref(false);
 const passkeyAdded = ref(false);
 const label = ref(deviceLabel());
 const canUsePasskeys = passkeysAvailable();
+/** Where a sign-in link goes on to: its `?next=`, a path on this site (`shelfkit open <url>/<path>` adds it). */
+const next = ref("/");
 
 const isInvite = computed(() => token.value.startsWith("ssi_"));
 /**
@@ -48,6 +51,10 @@ async function redeem(switchAccount = false): Promise<void> {
 
 onMounted(async () => {
   token.value = decodeURIComponent(window.location.hash.slice(1));
+  next.value = localPath(
+    new URLSearchParams(window.location.search).get("next"),
+    window.location.origin,
+  );
   // The token leaves the address bar and the history at once.
   window.history.replaceState(window.history.state, "", "/link");
   if (token.value === "") {
@@ -98,7 +105,7 @@ async function makePasskey(): Promise<void> {
 async function goOn(): Promise<void> {
   const shelf = redeemed.value?.shelf;
   await router.push(
-    shelf === null || shelf === undefined ? { name: "home" } : { name: "shelf", params: { shelf } },
+    shelf === null || shelf === undefined ? next.value : { name: "shelf", params: { shelf } },
   );
 }
 </script>

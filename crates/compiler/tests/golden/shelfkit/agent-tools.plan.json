@@ -1,0 +1,78 @@
+{
+  "profile": "agent-tools",
+  "profileRevision": "sha256-7d2741ddaf84f6ab1680c0ac0a68db290ac4187070ba269b01f3741cdbf34006",
+  "apmYml": "name: shelfkit-agent-tools\nversion: \"0.0.0\"\ntargets:\n  - claude\n  - codex\n  - copilot\n  - cursor\ndependencies:\n  apm:\n    - ./vendor/agent-tools\n  mcp:\n    - name: io.github.upstash/context7\n      registry: false\n      transport: http\n      url: \"https://mcp.context7.com/mcp\"\n    - name: microsoft/playwright-mcp\n      registry: false\n      transport: stdio\n      command: npx\n      args:\n        - \"-y\"\n        - \"@playwright/mcp@latest\"\ncompilation:\n  strategy: single-file\n  agents_md:\n    mode: managed_section\n  resolve_links: false\n",
+  "apmYmlDigest": "sha256:e2e63738536d64ebe209b9cd6ac46acdfc1c9e7c29459074ba06530791434a44",
+  "files": [
+    {
+      "path": "vendor/agent-tools/.apm/agents/registry-reviewer.agent.md",
+      "contents": "---\ndescription: Reviews a change to the registry against the OpenAPM wire contract.\n---\n\nYou review changes to `crates/registry` and the hosts that serve it.\n\nFor each change, check:\n\n- The rule lives in the library, and both hosts only do I/O.\n- `conformance/cases.json` has a case that fails without the change.\n- Status codes keep the contract: `401` for a missing or unknown credential, `403` only for a missing scope, `409` for a repeated version.\n- Archives are read strictly: anything Python's `tarfile` could read differently is refused.\n\nReport each problem with the file and line, and say what the contract requires instead.\n"
+    },
+    {
+      "path": "vendor/agent-tools/.apm/hooks/format-after-edit.json",
+      "contents": "{\n  \"hooks\": {\n    \"PostToolUse\": [\n      {\n        \"matcher\": \"Edit|Write\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"moon run root:format\"\n          }\n        ]\n      }\n    ]\n  }\n}\n"
+    },
+    {
+      "path": "vendor/agent-tools/.apm/prompts/commit-style.prompt.md",
+      "contents": "---\ndescription: Write a conventional commit message for the staged changes.\nargument-hint: \"[scope]\"\n---\n\nRead the staged diff and write one conventional commit message.\n\nRules:\n- Subject line in the imperative mood, no trailing period, at most 72 characters.\n- Type is one of feat, fix, chore, docs, refactor, test, perf, build, ci.\n- Include a body only when the change needs a reason that the subject cannot carry.\n- Do not mention that the change was generated, and do not list files.\n"
+    },
+    {
+      "path": "vendor/agent-tools/.apm/prompts/pr-description.prompt.md",
+      "contents": "---\ndescription: \"Write the description of a pull request from the branch's diff.\"\ninput:\n  - issue: \"The issue it closes, if any\"\n---\n\nWrite the description of a pull request for the current branch, from `git diff main...HEAD`.\n\n- Open with one or two sentences on why the change exists.\n- Then what changed, as a short list a reviewer can check against the diff.\n- Then how it was verified: the commands run and what they showed.\n- Close issue ${input:issue} when one is given.\n\nNo marketing, no restating the diff line by line, and no mention of how the change was written.\n"
+    },
+    {
+      "path": "vendor/agent-tools/.apm/prompts/review-diff.prompt.md",
+      "contents": "---\ndescription: Find bugs in the staged changes before they are committed.\ninput:\n  - focus: What to look hardest at\n---\n\nReview `git diff --staged`, looking hardest at ${input:focus}.\n\nFor each problem: the file and line, what goes wrong and with which input, and the smallest fix. Skip style the formatter owns. Say plainly when you find nothing.\n"
+    },
+    {
+      "path": "vendor/agent-tools/.apm/skills/registry-rule/SKILL.md",
+      "contents": "---\nname: registry-rule\ndescription: Change what ShelfKit's OpenAPM registry accepts or answers. Use when a registry route, status code, auth decision, or archive check changes.\n---\n\n1. Put the rule in `crates/registry`, never in `shelfkit serve` or the Worker: a host does I/O and nothing else.\n2. Add a case to `crates/registry/conformance/cases.json` that fails without the rule.\n3. Regenerate the case archives with `SHELFKIT_UPDATE_CONFORMANCE=1 cargo test --package shelfkit-registry` and read the diff.\n4. Run `moon run registry:test worker:test`: the suite runs against the library, the `shelfkit serve` binary, and the WASM engine.\n\nKeep the wire contract: `tar.gz` as `application/gzip` only, a repeated `PUT` of a version is `409`, a missing or unknown credential is `401`, and `403` is only for a missing scope.\n"
+    },
+    {
+      "path": "vendor/agent-tools/.apm/skills/update-goldens/SKILL.md",
+      "contents": "---\nname: update-goldens\ndescription: Regenerate the compiler's golden files after a deliberate change to what `shelfkit compile` writes. Use when a compiler golden test fails because the output changed on purpose.\n---\n\n1. Confirm the change is deliberate: a golden test that fails without a compiler change usually means APM's shape moved.\n2. Run `SHELFKIT_UPDATE_GOLDEN=1 cargo test --package shelfkit-compiler`.\n3. Read every changed golden file. Each difference must follow from your change; anything else is a bug.\n4. Run `moon run engine:test`: the WASM engine must print `shelfkit compile --dry-run --json` byte for byte.\n"
+    },
+    {
+      "path": "vendor/agent-tools/.github/instructions/drizzle-durable-sqlite.instructions.md",
+      "contents": "---\ndescription: \"How the shelf's Durable Object uses drizzle-orm/durable-sqlite.\"\n---\n\n# Drizzle on Durable Object SQLite\n\nDocumentation: https://orm.drizzle.team/docs/connect-cloudflare-do\n\n- The schema is `apps/worker/src/db/schema.ts`. Generate the next migration with `moon run worker:db-generate` and commit it; never hand-write one.\n- Migrations run inside the object behind `blockConcurrencyWhile`; there is no CLI path to its SQLite, and `PRAGMA user_version` is unsupported.\n- A statement binds at most 100 values: split an `inArray` over a list that can grow into chunks.\n- Store metadata only. File contents go to R2, keyed by sha256.\n"
+    },
+    {
+      "path": "vendor/agent-tools/.github/instructions/shelfkit-rules.instructions.md",
+      "contents": "---\ndescription: The boundaries every change to ShelfKit keeps.\n---\n\n# ShelfKit's rules\n\n## The crates are the product\n\ncrates/ compiles native for the CLI and to WASM for the Worker and the browser, so they cannot disagree. Keep it free of Cloudflare, network, and async-runtime dependencies.\n\n## APM owns install\n\n`shelfkit compile` writes apm.yml and stops. It never writes a lockfile, never materializes skills into harness directories, and never runs APM unless `install` was asked for. Never parse human-oriented apm output.\n\n## The registry is one library\n\ncrates/registry decides every rule; a host does I/O and nothing else. A new rule goes into the library with a case in conformance/cases.json, which both hosts run.\n\n## Storage\n\nOne Durable Object per shelf, with its own SQLite. No D1 and no cross-shelf query. Content lives in R2 keyed by sha256; databases hold metadata only.\n\n## Keys\n\nOne auth module turns a Bearer key, HTTP Basic, or the browser's cookie into a session. Nothing caches a key's resolution, and a key is never printed or logged.\n\n## Before you finish\n\nRun `moon run :check :lint :test`. Fix what fails; never skip a hook with `--no-verify`.\n"
+    },
+    {
+      "path": "vendor/agent-tools/.github/instructions/shelfkit-stack.instructions.md",
+      "contents": "---\ndescription: How ShelfKit itself is built.\n---\n\n# TypeScript on Cloudflare Workers with Rust core\n\n## Repository\n\nmoon orchestrates tasks and proto pins every toolchain from .prototools. Do not add a task moon does not know about.\n\n## Core logic\n\nThe shelf format, validation, revision hashing, and profile resolution live in Rust under crates/. They compile native for the CLI and to WASM for the Worker, so the browser preview and the CLI cannot disagree.\n\n## Storage\n\nOne Durable Object per shelf with its own SQLite database, accessed through drizzle-orm/durable-sqlite. There is no D1 database and no cross-shelf query. Content lives in R2 keyed by sha256.\n\n## APM\n\nAPM owns install, resolution, and the lockfile. ShelfKit writes apm.yml and stops. Never parse human-oriented apm output: only audit, deps why, pack, policy status, targets, and lock export emit structured data.\n\n## Targets\n\nUse APM's target slugs verbatim. Emit only the OpenAPM v0.1 canonical producer set by default; anything outside it is an explicit opt-in that check must report.\n"
+    },
+    {
+      "path": "vendor/agent-tools/.github/instructions/typescript-strict.instructions.md",
+      "contents": "---\ndescription: The compiler settings this repository relies on.\n---\n\n# TypeScript strictness\n\n- strict, noUncheckedIndexedAccess, noImplicitOverride, and verbatimModuleSyntax are on. Do not relax them to make code compile.\n- Type-only imports must be marked with `import type`.\n- No enums and no parameter properties: erasableSyntaxOnly is enabled.\n"
+    },
+    {
+      "path": "vendor/agent-tools/.github/instructions/valibot.instructions.md",
+      "contents": "---\ndescription: Where and how ShelfKit parses data it did not produce.\n---\n\n# Valibot at the boundaries\n\nDocumentation: https://valibot.dev\n\n- Parse at the boundary, once: a GraphQL `JSON` value, `localStorage`, an SSE message, a request body. Code past the boundary takes the parsed type.\n- The shared schemas are in `packages/schema`; use them instead of writing a second one.\n- Mark the parsing function with a `BOUNDARY:` comment saying what arrives unparsed.\n"
+    },
+    {
+      "path": "vendor/agent-tools/apm.yml",
+      "contents": "name: agent-tools\nversion: \"0.0.0\"\ndescription: \"Shelf items of profile agent-tools, vendored by ShelfKit. Generated: edit the shelf, not this package.\"\nx-shelfkit-vendored-for: agent-tools\n"
+    }
+  ],
+  "installCommand": "apm install",
+  "notes": [
+    {
+      "path": "items/hooks/format-after-edit/item.json",
+      "code": "hook-approval",
+      "message": "`format-after-edit` is a hook: it runs commands on harness lifecycle events. It compiles into the vendored package, and APM holds hooks from a dependency until `apm approve` allows them when its executable gate is on. Read it before installing."
+    },
+    {
+      "path": "items/mcp/context7/item.json",
+      "code": "mcp-schema-mismatch",
+      "message": "`context7` compiles to a `dependencies.mcp` object, the form APM documents, which the published OpenAPM v0.1 JSON Schema rejects for every MCP object; the spec's prose is authoritative, so the entry is validated against APM 0.33.0's own MCP entry rules (schemas/apm-mcp-entry.schema.json) instead"
+    },
+    {
+      "path": "items/mcp/playwright/item.json",
+      "code": "mcp-schema-mismatch",
+      "message": "`playwright` compiles to a `dependencies.mcp` object, the form APM documents, which the published OpenAPM v0.1 JSON Schema rejects for every MCP object; the spec's prose is authoritative, so the entry is validated against APM 0.33.0's own MCP entry rules (schemas/apm-mcp-entry.schema.json) instead"
+    }
+  ]
+}

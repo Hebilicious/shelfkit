@@ -11,6 +11,12 @@ import {
   sessionCookie,
   signSession,
 } from "../auth/browser.ts";
+import {
+  approveCliLogin,
+  cliLoginStub,
+  displayUserCode,
+  normalizeUserCode,
+} from "../auth/cli.ts";
 import { githubSignInEnabled } from "../auth/github.ts";
 import {
   existingShelf,
@@ -18,6 +24,7 @@ import {
   OWNER_PRINCIPAL,
 } from "../auth/index.ts";
 import type { Person } from "../auth/index.ts";
+import { overLimit } from "../auth/limits.ts";
 import {
   createSignInLink,
   linkHash,
@@ -30,7 +37,7 @@ import {
   newPersonPrincipal,
   PEOPLE_MARKERS,
 } from "../auth/principals.ts";
-import type { PasskeyRecord } from "../auth/principals.ts";
+import type { CliKeyRecord, PasskeyRecord } from "../auth/principals.ts";
 import type { InvitePreview, InviteRecord } from "../shelf-index.ts";
 import type { GraphQLContext } from "./context.ts";
 
@@ -376,4 +383,136 @@ export async function createInvite(
     invite: created.invite,
     url: linkUrl(origin(context), created.token),
   };
+}
+
+// --- Signing the CLI in through the browser ------------------------------------------------------------------------
+
+/**
+ * Who may approve a `shelfkit login`: a person signed in in this browser, by its cookie. Never a key, so a program
+ * cannot approve a login for itself, and an agent holding a key cannot sign another CLI in.
+ */
+function approver(context: GraphQLContext): Person {
+  const { session } = context;
+  if (context.source === "cookie") {
+    if (session.kind === "owner" && session.person !== undefined) {
+      return { id: OWNER_PRINCIPAL, name: session.person.name };
+    }
+    if (session.kind === "person") {
+      return session.person;
+    }
+  }
+  throw forbidden("sign in in this browser to approve a CLI login");
+}
+
+/**
+ * The approver, once this lookup of a code is counted against their account's limit (`auth/limits.ts`): looking a
+ * login up, approving it, and denying it each count, so a signed-in session cannot try codes quickly.
+ */
+async function countedApprover(context: GraphQLContext): Promise<Person> {
+  const person = approver(context);
+  const wait = await overLimit(context.env, "CLI_APPROVAL_LIMIT", person.id);
+  if (wait !== null) {
+    throw new GraphQLError(
+      `too many CLI login codes looked up from this account: try again in ${wait} seconds`,
+      { extensions: { code: "RATE_LIMITED", retryAfter: wait } }
+    );
+  }
+  return person;
+}
+
+function userCode(code: string): string {
+  const normalized = normalizeUserCode(code);
+  if (normalized === null) {
+    throw new GraphQLError(
+      "a code is 8 letters and digits, as ABCD-EFGH: copy it from your terminal",
+      { extensions: { code: "BAD_USER_INPUT" } }
+    );
+  }
+  return normalized;
+}
+
+function notWaiting(): GraphQLError {
+  return new GraphQLError(
+    "this code is not waiting for approval: it was used, denied, or has expired. Run `shelfkit login` again",
+    { extensions: { code: "CLI_LOGIN_REFUSED" } }
+  );
+}
+
+export interface CliLoginPreview {
+  readonly code: string;
+  readonly device: string;
+  readonly expiresAt: string;
+}
+
+/** A login waiting for approval, for its page; `null` once it is approved, denied, or expired, or for none. */
+export async function previewCliLogin(
+  context: GraphQLContext,
+  code: string
+): Promise<CliLoginPreview | null> {
+  await countedApprover(context);
+  const normalized = userCode(code);
+  const pending = await cliLoginStub(context.env, normalized).pending();
+  return pending === null
+    ? null
+    : {
+        code: displayUserCode(normalized),
+        device: pending.device,
+        expiresAt: new Date(pending.expiresAt * 1000).toISOString(),
+      };
+}
+
+/** Approve a login: its CLI gets a key that acts as whoever is signed in here. */
+export async function approveCli(
+  context: GraphQLContext,
+  code: string
+): Promise<{ readonly device: string; readonly name: string }> {
+  const person = await countedApprover(context);
+  const approved = await approveCliLogin(context.env, userCode(code), person);
+  if (!approved.ok) {
+    throw approved.reason === "not-waiting"
+      ? notWaiting()
+      : forbidden("this account cannot sign a CLI in");
+  }
+  return { device: approved.device, name: approved.name };
+}
+
+/** Deny a login: its CLI stops waiting, holding nothing. */
+export async function denyCli(
+  context: GraphQLContext,
+  code: string
+): Promise<boolean> {
+  await countedApprover(context);
+  if (!(await cliLoginStub(context.env, userCode(code)).deny())) {
+    throw notWaiting();
+  }
+  return true;
+}
+
+/** Whose CLI keys a session sees and revokes: the owner's for the owner, else the person's own; `null` for a key. */
+function cliAccount(context: GraphQLContext): string | null {
+  const { session } = context;
+  if (session.kind === "owner") {
+    return OWNER_PRINCIPAL;
+  }
+  return session.kind === "person" ? session.person.id : null;
+}
+
+export async function cliKeys(
+  context: GraphQLContext
+): Promise<CliKeyRecord[]> {
+  const principal = cliAccount(context);
+  return principal === null
+    ? []
+    : await accountStub(context.env, principal).cliKeys();
+}
+
+export async function revokeCliKey(
+  context: GraphQLContext,
+  id: string
+): Promise<boolean> {
+  const principal = cliAccount(context);
+  if (principal === null) {
+    throw forbidden("sign in, or use the owner key, to revoke a CLI's key");
+  }
+  return await accountStub(context.env, principal).revokeCliKey(id);
 }

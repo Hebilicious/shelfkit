@@ -27,10 +27,11 @@ pub enum ItemKind {
     Lsp,
     Library,
     Stack,
+    Doc,
 }
 
 impl ItemKind {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Skill,
         Self::Prompt,
         Self::Instructions,
@@ -41,6 +42,7 @@ impl ItemKind {
         Self::Lsp,
         Self::Library,
         Self::Stack,
+        Self::Doc,
     ];
 
     /// The directory under `items/` that holds this kind.
@@ -56,6 +58,7 @@ impl ItemKind {
             Self::Lsp => "lsp",
             Self::Library => "libraries",
             Self::Stack => "stacks",
+            Self::Doc => "docs",
         }
     }
 
@@ -78,6 +81,7 @@ impl ItemKind {
             Self::Lsp => "lsp",
             Self::Library => "library",
             Self::Stack => "stack",
+            Self::Doc => "doc",
         }
     }
 
@@ -101,6 +105,7 @@ impl ItemKind {
             Self::Agent => Some("agent.md"),
             Self::Hook => Some("hook.json"),
             Self::Plugin => Some("plugin.json"),
+            Self::Doc => Some("doc.md"),
             Self::Instructions | Self::Mcp | Self::Lsp | Self::Library | Self::Stack => None,
         }
     }
@@ -139,6 +144,27 @@ pub fn validate_id(id: &str) -> Result<(), ErrorKind> {
     }
     if id.starts_with('-') || id.ends_with('-') || id.contains("--") {
         return invalid("must not start or end with a hyphen or repeat one");
+    }
+    Ok(())
+}
+
+/// A doc's `path`: relative to a repository's root, with `/` separators, no `.` or `..` segment, no empty segment,
+/// and nothing a link could not name plainly (whitespace, `#`, `?`, `\\`, or a `:` that reads as a scheme).
+pub fn validate_doc_path(path: &str) -> Result<(), &'static str> {
+    if path.is_empty() || path.starts_with('/') {
+        return Err("must be a path relative to the repository's root");
+    }
+    if path
+        .chars()
+        .any(|c| c.is_whitespace() || matches!(c, '#' | '?' | '\\' | ':'))
+    {
+        return Err("must not contain whitespace, `#`, `?`, `\\`, or `:`");
+    }
+    if path
+        .split('/')
+        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        return Err("must not have an empty, `.`, or `..` segment");
     }
     Ok(())
 }
@@ -373,6 +399,8 @@ pub enum Payload {
     Lsp(Lsp),
     Library(Library),
     Stack(Stack),
+    /// `doc.md`: a reference document instructions link to by `path`.
+    Doc(Doc),
 }
 
 impl Payload {
@@ -388,6 +416,7 @@ impl Payload {
             Self::Lsp(_) => ItemKind::Lsp,
             Self::Library(_) => ItemKind::Library,
             Self::Stack(_) => ItemKind::Stack,
+            Self::Doc(_) => ItemKind::Doc,
         }
     }
 
@@ -414,6 +443,7 @@ impl Payload {
             ItemKind::Lsp => Self::Lsp(parse(kind, map)?),
             ItemKind::Library => Self::Library(parse(kind, map)?),
             ItemKind::Stack => Self::Stack(parse(kind, map)?),
+            ItemKind::Doc => Self::Doc(parse(kind, map)?),
         })
     }
 }
@@ -621,6 +651,16 @@ pub struct Library {
     pub docs: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+}
+
+/// A reference document: longer than an instruction, and read only when an instruction or a task points to it
+/// (`docs/PRD.md` section 5.2). `path` is where it lives in the repository it was written for, which is how
+/// instructions link to it (`docs/agents/domain.md`, `GLOSSARY.md`); a profile's docs keep those paths inside the
+/// skill folder they install as, and the compiler points the instructions' links there.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Doc {
+    pub path: String,
 }
 
 /// A tech stack: markers for detection plus the conventions that follow.

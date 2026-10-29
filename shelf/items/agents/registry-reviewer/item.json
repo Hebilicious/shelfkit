@@ -1,0 +1,8 @@
+{
+  "id": "registry-reviewer",
+  "kind": "agent",
+  "title": "Registry reviewer",
+  "description": "Reviews a change to the registry against the OpenAPM wire contract.",
+  "tags": ["registry", "review"],
+  "requires": ["registry-rule"]
+}

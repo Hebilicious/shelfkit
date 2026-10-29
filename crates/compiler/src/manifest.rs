@@ -18,17 +18,19 @@
 //!   does not define, and says so in a note.
 
 use crate::coordinate::{self, Upstream};
+use crate::docs;
 use crate::vendor;
 use crate::yaml::{self, Node};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use shelfkit_core::item::{Lsp, LspTransport, Mcp, RemoteTransport};
+use shelfkit_core::revision::normalize_line_endings;
 use shelfkit_core::secret::SecretValue;
 use shelfkit_core::{
     Error, ErrorKind, Errors, ItemKind, LoadedItem, NoticeCode, Payload, ResolvedProfile, Revision,
     Shelf,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The version written into a compiled manifest. A profile revision is a
 /// hash, not a semver (`docs/PRD.md` section 13, question 1); a repository
@@ -152,16 +154,22 @@ pub enum NoteCode {
     /// A `dependencies.mcp` entry uses the object form APM documents, which
     /// the published v0.1 JSON Schema rejects (see [`crate::schema`]).
     McpSchemaMismatch,
+    /// A skill's `SKILL.md` frontmatter deviates from agentskills.io.
+    SkillFrontmatter,
+    /// An instruction or a skill links to a markdown file the profile does not ship (`docs.rs`).
+    DocLink,
 }
 
 impl NoteCode {
     /// Every code, for the test that keeps the schema package's list in step.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::ProducerNonconformantTarget,
         Self::UnratifiedLsp,
         Self::HookApproval,
         Self::HostedMcp,
         Self::McpSchemaMismatch,
+        Self::SkillFrontmatter,
+        Self::DocLink,
     ];
 }
 
@@ -170,6 +178,7 @@ impl From<NoticeCode> for NoteCode {
         match code {
             NoticeCode::ProducerNonconformantTarget => Self::ProducerNonconformantTarget,
             NoticeCode::UnratifiedLsp => Self::UnratifiedLsp,
+            NoticeCode::SkillFrontmatter => Self::SkillFrontmatter,
         }
     }
 }
@@ -243,6 +252,7 @@ pub(crate) fn render(
         packages: BTreeMap::new(),
         mcp: Vec::new(),
         lsp: Vec::new(),
+        docs: BTreeMap::new(),
         notes: resolved
             .notices
             .iter()
@@ -284,6 +294,8 @@ struct Compiler<'a> {
     mcp: Vec<Node>,
     lsp: Vec<Node>,
     notes: Vec<Note>,
+    /// The profile's docs, by their `path`.
+    docs: BTreeMap<String, docs::Doc>,
 }
 
 impl Compiler<'_> {
@@ -314,6 +326,7 @@ impl Compiler<'_> {
                 self.vendor(loaded);
             }
             Payload::Library(_) | Payload::Stack(_) => self.vendor(loaded),
+            Payload::Doc(doc) => self.doc(loaded, &doc.path),
             _ => {
                 let source = item.source.as_ref();
                 let found = source.map(|source| {
@@ -328,6 +341,20 @@ impl Compiler<'_> {
                     Some(Err(message)) => self.fail(loaded, message),
                     Some(Ok(Some(upstream))) => self.reference(loaded, &upstream),
                     Some(Ok(None)) | None if vendor::has_content(loaded) => self.vendor(loaded),
+                    Some(Ok(None))
+                        if loaded.kind() == ItemKind::Instructions
+                            && source.is_some_and(|source| source.repo.is_some()) =>
+                    {
+                        self.fail(
+                        loaded,
+                        format!(
+                            "`{}` was imported as a link, without its text, from a file APM cannot \
+                             install instructions from (only an `.instructions.md` file is one), so there \
+                             is nothing to compile; it needs a licence that permits a copy",
+                            item.id
+                        ),
+                    )
+                    }
                     Some(Ok(None)) | None => self.fail(
                         loaded,
                         format!(
@@ -338,6 +365,176 @@ impl Compiler<'_> {
                     ),
                 }
             }
+        }
+    }
+
+    /// A doc goes into the profile's docs skill (`docs.rs`), by its path; two docs may not share one.
+    fn doc(&mut self, loaded: &LoadedItem, path: &str) {
+        let Some(bytes) = loaded.files.get("doc.md") else {
+            let message = if loaded.item.source.is_some() {
+                format!(
+                    "`{}` was imported as a link, without its text, so it has no doc.md to compile: APM installs no \
+                     document from upstream, so a profile can hold a doc only as a copy (its licence must permit one)",
+                    loaded.item.id
+                )
+            } else {
+                format!("`{}` has no doc.md to compile", loaded.item.id)
+            };
+            self.fail(loaded, message);
+            return;
+        };
+        if let Some(other) = self.docs.get(path) {
+            let message = format!(
+                "`{}` and `{}` are both the doc at `{path}`; a profile holds one doc per path",
+                other.id, loaded.item.id
+            );
+            self.fail(loaded, message);
+            return;
+        }
+        self.docs.insert(
+            path.to_owned(),
+            docs::Doc {
+                bytes: normalize_line_endings(bytes),
+                description: loaded.item.description.clone(),
+                id: loaded.item.id.clone(),
+                title: loaded.item.title.clone(),
+            },
+        );
+    }
+
+    /// Put the docs skill into the profile's own package, point the instructions' links to a doc at its copy there,
+    /// and give each skill that links to a doc a copy of its own (`docs::localize`).
+    fn place_docs(&mut self) {
+        self.note_doc_links();
+        if self.docs.is_empty() {
+            return;
+        }
+        let namespace = self
+            .shelf
+            .manifest
+            .registry
+            .as_ref()
+            .map(|registry| registry.namespace.as_str());
+        let skill = docs::skill_name(namespace, &self.resolved.id);
+        let paths: Vec<String> = self.docs.keys().cloned().collect();
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        for package in self.packages.values_mut() {
+            for (path, bytes) in &mut package.files {
+                if path.starts_with(vendor::INSTRUCTIONS_DIR)
+                    && let Ok(text) = std::str::from_utf8(bytes)
+                {
+                    *bytes = docs::rewrite_links(text, &paths, &skill).into_bytes();
+                }
+            }
+            for name in skill_directories(&package.files) {
+                let prefix = format!(".apm/skills/{name}/");
+                let mut own: BTreeMap<String, Vec<u8>> = package
+                    .files
+                    .iter()
+                    .filter_map(|(path, bytes)| {
+                        path.strip_prefix(&prefix)
+                            .map(|inside| (inside.to_owned(), bytes.clone()))
+                    })
+                    .collect();
+                docs::localize(&mut own, &self.docs);
+                for (inside, bytes) in own {
+                    package.files.insert(format!("{prefix}{inside}"), bytes);
+                }
+            }
+        }
+        let own = self.packages.entry(self.resolved.id.clone()).or_default();
+        own.files.extend(docs::skill_files(&skill, &self.docs));
+        own.items
+            .extend(self.docs.values().map(|doc| doc.id.clone()));
+    }
+
+    /// A note for each link in a vendored instruction or skill to a markdown file the profile does not ship: one to a
+    /// doc of the shelf the profile leaves out, or one to a file no doc provides. Installed in another repository,
+    /// either leads nowhere.
+    fn note_doc_links(&mut self) {
+        let shelf_docs: BTreeMap<&str, &str> = self
+            .shelf
+            .items
+            .values()
+            .filter_map(|loaded| match &loaded.item.payload {
+                Payload::Doc(doc) => Some((doc.path.as_str(), loaded.item.id.as_str())),
+                _ => None,
+            })
+            .collect();
+        let shelf_paths: Vec<&str> = shelf_docs.keys().copied().collect();
+        let profile_paths: Vec<&str> = self.docs.keys().map(String::as_str).collect();
+        // Every file of every skill the profile vendors, as `<skill>/<path>`: what a link into `.agents/skills/` or
+        // to a sibling skill reaches once installed.
+        let skill_files: BTreeSet<String> = self
+            .packages
+            .values()
+            .flat_map(|package| package.files.keys())
+            .filter_map(|path| path.strip_prefix(".apm/skills/").map(str::to_owned))
+            .collect();
+        let mut found: BTreeSet<(String, String, Option<String>)> = BTreeSet::new();
+        for package in self.packages.values() {
+            for (path, bytes) in &package.files {
+                let Some((id, own)) = linking_item(path, &package.files) else {
+                    continue;
+                };
+                let Ok(text) = std::str::from_utf8(bytes) else {
+                    continue;
+                };
+                for target in docs::markdown_targets(text) {
+                    let bare = target.split('#').next().unwrap_or_default();
+                    if !bare.ends_with(".md")
+                        || docs::resolve("", bare).is_none() && !bare.starts_with("../")
+                        || docs::doc_link(&target, &profile_paths).is_some()
+                        || own
+                            .iter()
+                            .any(|file| Some(file.as_str()) == docs::resolve(path, bare).as_deref())
+                    {
+                        continue;
+                    }
+                    let shelf_doc = docs::doc_link(&target, &shelf_paths)
+                        .and_then(|(doc_path, _)| shelf_docs.get(doc_path))
+                        .map(|doc| (*doc).to_owned());
+                    let mut shown = bare.strip_prefix("./").unwrap_or(bare);
+                    while let Some(rest) = shown.strip_prefix("../") {
+                        shown = rest;
+                    }
+                    let in_skills = [".agents/skills/", ".claude/skills/", ""]
+                        .iter()
+                        .any(|root| {
+                            shown
+                                .strip_prefix(root)
+                                .is_some_and(|rest| skill_files.contains(rest))
+                        });
+                    // The repository's own AGENTS.md and CLAUDE.md, which an install writes, and files of the
+                    // profile's skills are there once installed.
+                    if in_skills || matches!(shown, "AGENTS.md" | "CLAUDE.md") {
+                        continue;
+                    }
+                    found.insert((id.to_owned(), shown.to_owned(), shelf_doc));
+                }
+            }
+        }
+        for (id, path, doc) in found {
+            let Some(loaded) = self.shelf.items.get(&id) else {
+                continue;
+            };
+            let message = match doc {
+                Some(doc) => format!(
+                    "`{id}` links to `{path}`, which is the doc `{doc}`, and this profile does not include it, so \
+                     the link leads nowhere once installed. Add `{doc}` to the profile, or list it in `{id}`'s \
+                     `requires`"
+                ),
+                None => format!(
+                    "`{id}` links to `{path}`, which no doc in the shelf provides, so in a repository other than \
+                     the one it was written for the link leads nowhere. Import the file as a doc (`shelfkit add \
+                     <file>.md`) to ship it with the profile"
+                ),
+            };
+            self.notes.push(Note {
+                code: NoteCode::DocLink,
+                message,
+                path: loaded.item_json(),
+            });
         }
     }
 
@@ -457,6 +654,7 @@ impl Compiler<'_> {
     }
 
     fn finish(mut self, shape: &Shape) -> Result<Rendered, Errors> {
+        self.place_docs();
         let profile_path = self.resolved.path.clone();
         let settings = &self.resolved.compile;
 
@@ -573,9 +771,18 @@ impl Compiler<'_> {
                 ("description".to_owned(), Node::string(description)),
             ],
         };
-        // A package does not choose its consumer's targets.
+        // A package does not choose its consumer's targets. Docs are linked at their copy in `.agents/skills/`, so
+        // some target must install skills there (`docs.rs`).
         if matches!(shape, Shape::Repository) && !settings.targets.is_empty() {
-            root.push(("targets".to_owned(), Node::strings(&settings.targets)));
+            let mut targets = settings.targets.clone();
+            if !self.docs.is_empty()
+                && !targets
+                    .iter()
+                    .any(|target| docs::DEPLOYING_TARGETS.contains(&target.as_str()))
+            {
+                targets.push("agent-skills".to_owned());
+            }
+            root.push(("targets".to_owned(), Node::strings(&targets)));
         }
         // APM 0.33.0 refuses any key in a registry entry but `url`.
         if let Some((name, url)) = self.registries.iter().next() {
@@ -596,6 +803,16 @@ impl Compiler<'_> {
         }
         if !dependencies.is_empty() {
             root.push(("dependencies".to_owned(), Node::Map(dependencies)));
+        }
+        // Vendored instructions reach the agents through AGENTS.md, which `apm compile` writes (`vendor.rs`).
+        let instructions = self.packages.values().any(|package| {
+            package
+                .files
+                .keys()
+                .any(|path| path.starts_with(vendor::INSTRUCTIONS_DIR))
+        });
+        if matches!(shape, Shape::Repository) && instructions {
+            root.push(("compilation".to_owned(), compilation()));
         }
         let manifest = Node::Map(root);
 
@@ -623,6 +840,63 @@ impl Compiler<'_> {
             uses_registry: !self.registries.is_empty(),
         })
     }
+}
+
+/// The names of the skill folders in a package's files, `.apm/skills/<name>/...`.
+fn skill_directories(files: &BTreeMap<String, Vec<u8>>) -> BTreeSet<String> {
+    files
+        .keys()
+        .filter_map(|path| {
+            path.strip_prefix(".apm/skills/")?
+                .split_once('/')
+                .map(|(name, _)| name.to_owned())
+        })
+        .collect()
+}
+
+/// For a vendored instructions file or a markdown file of a skill, the item it belongs to and, for a skill, the
+/// paths of its own files (which its links may name); `None` for any other file.
+fn linking_item<'f>(
+    path: &'f str,
+    files: &BTreeMap<String, Vec<u8>>,
+) -> Option<(&'f str, Vec<String>)> {
+    if let Some(id) = path
+        .strip_prefix(vendor::INSTRUCTIONS_DIR)
+        .and_then(|name| name.strip_suffix(".instructions.md"))
+    {
+        return Some((id, Vec::new()));
+    }
+    let inside = path.strip_prefix(".apm/skills/")?;
+    let (name, _) = inside.split_once('/')?;
+    if !path.ends_with(".md") {
+        return None;
+    }
+    let prefix = format!(".apm/skills/{name}/");
+    let own = files
+        .keys()
+        .filter(|file| file.starts_with(&prefix))
+        .cloned()
+        .collect();
+    Some((name, own))
+}
+
+/// The lines of AGENTS.md between which `apm compile` writes the instructions, leaving the rest of the file as it is.
+pub const AGENTS_MD_MARKERS: (&str, &str) = ("<!-- apm:start -->", "<!-- apm:end -->");
+
+/// The `compilation` settings of a repository whose instructions go into AGENTS.md: every instruction in the one
+/// root file (a scoped one as a section naming its files, not a file of its own in a source directory), written
+/// between [`AGENTS_MD_MARKERS`] so a hand-written AGENTS.md keeps everything outside them, with their links left
+/// as links.
+pub fn compilation() -> Node {
+    Node::Map(vec![
+        ("strategy".to_owned(), Node::string("single-file")),
+        (
+            "agents_md".to_owned(),
+            Node::Map(vec![("mode".to_owned(), Node::string("managed_section"))]),
+        ),
+        // On, `apm compile` pastes every linked document it finds into AGENTS.md; the links are for the agent.
+        ("resolve_links".to_owned(), Node::Bool(false)),
+    ])
 }
 
 /// `sha256:<lowercase hex>`, the digest form the registry and `shelf.report` use.

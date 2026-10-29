@@ -63,11 +63,11 @@ test("the preview of an unsaved profile is what shelfkit compile --dry-run print
   await expect(page.locator('input[name="id"]')).toHaveValue("web-stack");
   await page.getByTestId("add-review-checklist").click();
   await page
-    .getByRole("group", { exact: true, name: "Targets" })
+    .getByRole("group", { exact: true, name: "Agents to set up" })
     .getByRole("button", { name: "claude" })
     .click();
   await page
-    .getByRole("group", { exact: true, name: "Targets" })
+    .getByRole("group", { exact: true, name: "Agents to set up" })
     .getByRole("button", { name: "cursor" })
     .click();
 
@@ -119,7 +119,7 @@ test("an existing profile with extends and bundles previews byte for byte as the
   await expect(page.getByTestId("plan-json")).toHaveText(full.planJson);
 });
 
-test("the stack-marker tester reports which stacks a package.json matches", async ({
+test("the tech stack check reports which stacks a package.json matches", async ({
   page,
 }) => {
   await page.goto(`/shelves/${SHELF}/compose/full`);
@@ -131,7 +131,7 @@ test("the stack-marker tester reports which stacks a package.json matches", asyn
   await page
     .getByLabel("Other files at the root")
     .fill("wrangler.jsonc, vite.config.ts");
-  await page.getByRole("button", { name: "Test markers" }).click();
+  await page.getByRole("button", { name: "Find matching stacks" }).click();
   await expect(page.getByTestId("stack-match")).toContainText("vue-cloudflare");
 });
 
@@ -150,7 +150,7 @@ test("an edit marks the preview as updating until the draft is compiled again", 
   await page.getByRole("tab", { name: "Plan JSON" }).click();
   const after = await settledPreview(page);
   expect(after.planJson).toContain(
-    '"vendor/minimal/.apm/instructions/drizzle.instructions.md"'
+    '"vendor/minimal/.github/instructions/drizzle.instructions.md"'
   );
 });
 

@@ -1012,6 +1012,67 @@
             "allowNonconformantTargets": {
               "type": "boolean"
             },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "doc"
+            },
+            "path": {
+              "pattern": "^(?!(?:.*\\/)?\\.\\.?(?:\\/|$))(?:[^/\\s#?\\\\:]+\\/)*[^/\\s#?\\\\:]+$",
+              "type": "string"
+            },
+            "requires": {
+              "items": {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "source": {
+              "$ref": "#/$defs/Source"
+            },
+            "tags": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "targets": {
+              "items": {
+                "pattern": "^[a-z][a-z0-9-]*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "kind",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "$schema": {
+              "type": "string"
+            },
+            "allowNonconformantTargets": {
+              "type": "boolean"
+            },
             "conventions": {
               "items": {
                 "additionalProperties": false,
@@ -1114,7 +1175,8 @@
             "mcp",
             "lsp",
             "library",
-            "stack"
+            "stack",
+            "doc"
           ],
           "type": "string"
         },
@@ -1170,7 +1232,8 @@
         "code": {
           "enum": [
             "producer-nonconformant-target",
-            "unratified-lsp"
+            "unratified-lsp",
+            "skill-frontmatter"
           ],
           "type": "string"
         },
@@ -1296,7 +1359,8 @@
             "mcp",
             "lsp",
             "library",
-            "stack"
+            "stack",
+            "doc"
           ],
           "type": "string"
         },
@@ -1548,7 +1612,9 @@
                     "unratified-lsp",
                     "hook-approval",
                     "hosted-mcp",
-                    "mcp-schema-mismatch"
+                    "mcp-schema-mismatch",
+                    "skill-frontmatter",
+                    "doc-link"
                   ],
                   "type": "string"
                 },
@@ -2188,7 +2254,8 @@
                 "mcp",
                 "lsp",
                 "library",
-                "stack"
+                "stack",
+                "doc"
               ],
               "type": "string"
             },

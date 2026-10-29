@@ -1,0 +1,11 @@
+{
+  "id": "context7",
+  "kind": "mcp",
+  "title": "Context7",
+  "description": "Current documentation for the libraries this repository uses, so the agent does not guess at an API.",
+  "tags": ["docs"],
+  "flavour": "remote",
+  "name": "io.github.upstash/context7",
+  "url": "https://mcp.context7.com/mcp",
+  "transport": "http"
+}

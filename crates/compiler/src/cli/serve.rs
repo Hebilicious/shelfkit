@@ -232,9 +232,14 @@ fn read_request(
         };
         headers.push((name.trim().to_owned(), value.trim().to_owned()));
     }
+    // A hosted deployment serves its registry under `/apm`; so does this, beside the root, so that `shelfkit install
+    // <shelf>/<profile> --url http://127.0.0.1:<port>` installs from it as from a deployment.
+    let path = path
+        .strip_prefix("/apm/")
+        .map_or_else(|| path.to_owned(), |rest| format!("/{rest}"));
     let mut request = Request {
         method: method.to_owned(),
-        path: path.to_owned(),
+        path,
         headers,
         body: Vec::new(),
     };

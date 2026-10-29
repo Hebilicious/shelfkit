@@ -95,7 +95,7 @@ test("edits a prompt in place, as a new revision with a diff, and restores the o
   const body = page.locator('textarea[name="body"]');
   await body.fill(`${await body.inputValue()}Keep it under 200 words.\n`);
   await page.locator('input[name="message"]').fill("Shorter descriptions");
-  await page.getByRole("button", { name: "Save revision" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
 
   await page.getByRole("tab", { name: /History \(2\)/u }).click();
   await expect(page.getByTestId("diff").first()).toContainText(
@@ -103,11 +103,11 @@ test("edits a prompt in place, as a new revision with a diff, and restores the o
   );
 
   await page
-    .getByRole("list", { name: "Revisions" })
+    .getByRole("list", { name: "Versions" })
     .getByRole("button")
     .last()
     .click();
-  await page.getByRole("button", { name: "Restore this revision" }).click();
+  await page.getByRole("button", { name: "Restore this version" }).click();
   await expect(page.getByRole("tab", { name: /History \(3\)/u })).toBeVisible();
 });
 

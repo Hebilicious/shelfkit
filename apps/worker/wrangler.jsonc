@@ -22,22 +22,27 @@
       "/apm/*",
       "/raw/*",
       "/auth/*",
+      "/install.sh",
+      "/install.ps1",
     ],
   },
   // The shelf object's migrations are generated SQL files, bundled as text (`drizzle/migrations.js` imports them).
   "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }],
   // One Durable Object per shelf, with its own SQLite database, and one per person who signs in to the browser
-  // (`AccountIndex`: their passkeys and sign-in links). The migration entries below are generated from the classes
+  // (`AccountIndex`: their passkeys, sign-in links, and CLI keys), and one per `shelfkit login` waiting for approval in
+  // the browser (`CliLoginIndex`, named by its user code). The migration entries below are generated from the classes
   // `src/index.ts` exports (`moon run worker:do-migrations`), and the gate fails when they disagree.
   "durable_objects": {
     "bindings": [
       { "name": "SHELF", "class_name": "ShelfIndex" },
       { "name": "ACCOUNT", "class_name": "AccountIndex" },
+      { "name": "CLI_LOGIN", "class_name": "CliLoginIndex" },
     ],
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ShelfIndex"] },
     { "tag": "v2", "new_sqlite_classes": ["AccountIndex"] },
+    { "tag": "v3", "new_sqlite_classes": ["CliLoginIndex"] },
   ],
   // Content by sha256 under `objects/`; published archives under `archives/`, which a bucket lock keeps immutable;
   // `shelves/` lists the shelves held.
@@ -56,8 +61,69 @@
   "triggers": {
     "crons": ["0 * * * *"],
   },
+  // Signing the CLI in through the browser (`src/auth/limits.ts`, `docs/PRD.md` section 10.3): starting a login and
+  // polling it, per client address, and looking a code up to approve or deny it, per account. A namespace id is unique in the
+  // account; a Preview's limiters are namespaces of their own, so testing one never spends production's budget.
+  "ratelimits": [
+    {
+      "name": "CLI_START_LIMIT",
+      "namespace_id": "1001",
+      "simple": { "limit": 10, "period": 60 },
+    },
+    {
+      "name": "CLI_POLL_LIMIT",
+      "namespace_id": "1002",
+      "simple": { "limit": 20, "period": 10 },
+    },
+    {
+      "name": "CLI_APPROVAL_LIMIT",
+      "namespace_id": "1003",
+      "simple": { "limit": 20, "period": 60 },
+    },
+  ],
+  // A branch's Worker Preview (`moon run worker:preview`). Previews inherit nothing from the settings above, so each
+  // binding is named again here. Every Preview gets Durable Object namespaces of its own; R2 and the queue are shared
+  // between Previews but never with production. Queue consumers and crons do not run in a Preview, so an import
+  // started there waits. Its secrets are the Preview base config's (`wrangler preview base-config secret put`).
+  "previews": {
+    "durable_objects": {
+      "bindings": [
+        { "name": "SHELF", "class_name": "ShelfIndex" },
+        { "name": "ACCOUNT", "class_name": "AccountIndex" },
+        { "name": "CLI_LOGIN", "class_name": "CliLoginIndex" },
+      ],
+    },
+    "r2_buckets": [
+      { "binding": "BLOBS", "bucket_name": "shelfkit-blobs-preview" },
+    ],
+    "ratelimits": [
+      {
+        "name": "CLI_START_LIMIT",
+        "namespace_id": "1101",
+        "simple": { "limit": 10, "period": 60 },
+      },
+      {
+        "name": "CLI_POLL_LIMIT",
+        "namespace_id": "1102",
+        "simple": { "limit": 20, "period": 10 },
+      },
+      {
+        "name": "CLI_APPROVAL_LIMIT",
+        "namespace_id": "1103",
+        "simple": { "limit": 20, "period": 60 },
+      },
+    ],
+    "queues": {
+      "producers": [{ "binding": "JOBS", "queue": "shelfkit-jobs-preview" }],
+    },
+    "vars": {
+      "SHELFKIT_VERSION": "0.1.0-rc.7",
+      "GITHUB_URL": "https://github.com",
+      "GITHUB_API_URL": "https://api.github.com",
+    },
+  },
   "vars": {
-    "SHELFKIT_VERSION": "0.0.0",
+    "SHELFKIT_VERSION": "0.1.0-rc.7",
     // Where signing in with GitHub goes: the authorize and token endpoints, and the REST API. Only tests point these
     // at a stand-in GitHub; a deployment keeps github.com.
     "GITHUB_URL": "https://github.com",
