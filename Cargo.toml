@@ -14,6 +14,7 @@ rust-version = "1.98"
 shelfkit-core = { path = "crates/core", version = "=0.1.0-rc.7" }
 shelfkit-compiler = { path = "crates/compiler", version = "=0.1.0-rc.7", default-features = false }
 shelfkit-registry = { path = "crates/registry", version = "=0.1.0-rc.7" }
+shelfkit-git = { path = "crates/git", version = "=0.1.0-rc.7" }
 
 # Shared
 serde = { version = "1", features = ["derive"] }
@@ -50,6 +51,9 @@ rpassword = "7"
 flate2 = { version = "1", default-features = false, features = [
   "rust_backend",
 ] }
+# Git's object ids (`crates/git`): SHA-1, the object format Artifacts serves.
+# Pure Rust and the same line as `sha2`, so it builds for WASM.
+sha1 = { version = "0.10", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

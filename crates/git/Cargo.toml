@@ -1,0 +1,18 @@
+[package]
+name = "shelfkit-git"
+description = "Git objects, packfiles, and the receive-pack exchange as a pure library: no I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+flate2.workspace = true
+sha1.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+flate2.workspace = true

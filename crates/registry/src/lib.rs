@@ -20,6 +20,7 @@
 //! - [`protocol`]: statuses, headers, snake_case bodies, RFC 7807 problems,
 //!   immutability, and publish validation.
 //! - [`archive`]: deterministic `tar.gz` packing and defensive reading.
+//! - [`git`]: a published version as a Git commit, tagged `v{version}`.
 //! - [`host`]: the protocol over a synchronous store and key set.
 //! - [`conformance`]: the suite in `conformance/cases.json`, and its runner.
 
@@ -27,6 +28,7 @@ pub mod archive;
 pub mod auth;
 pub mod base64;
 pub mod conformance;
+pub mod git;
 pub mod host;
 pub mod identity;
 pub mod protocol;
