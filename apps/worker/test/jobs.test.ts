@@ -191,7 +191,7 @@ function dependencies(): JobDependencies {
   return {
     adapters: [adapter],
     fetch,
-    forge: new GitHubForge(recorded().fetch),
+    forge: () => new GitHubForge(recorded().fetch),
     now: () => "2026-10-19T12:00:00Z",
     scanners: [scanner],
   };

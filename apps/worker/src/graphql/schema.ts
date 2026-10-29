@@ -2593,7 +2593,8 @@ export function buildSchema(): GraphQLSchema {
         args: {
           ref: t.arg.string(),
           repository: t.arg.string({
-            description: "owner/repo on GitHub.",
+            description:
+              "owner/repo on GitHub, or the HTTPS URL of a public Git repository anywhere else (read through Artifacts; `ref` is then a branch).",
             required: true,
           }),
           root: t.arg.string({
@@ -2603,7 +2604,7 @@ export function buildSchema(): GraphQLSchema {
           shelf: t.arg.id({ required: true }),
         },
         description:
-          "Queue indexing a shelf from a GitHub repository through the REST API; the result arrives as a `snapshot` event.",
+          "Queue indexing a shelf from a Git repository: GitHub's REST API for owner/repo, Artifacts for any other public HTTPS URL. The result arrives as a `snapshot` event.",
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
           const target = await held(context, shelf);

@@ -53,7 +53,7 @@ function dependencies(fetcher: typeof fetch): JobDependencies {
   return {
     adapters,
     fetch: fetcher,
-    forge: new GitHubForge(fetcher),
+    forge: () => new GitHubForge(fetcher),
     now: () => "2026-10-19T12:00:00Z",
     scanners: [],
   };
