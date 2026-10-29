@@ -1,0 +1,45 @@
+diff --git a/wrangler-dist/cli.js b/wrangler-dist/cli.js
+index 930026cd681051cdfc90c6335e9e86f19c935fc2..5a493ec0cce4d8df4a1faf9492c0c9e1748df7a6 100644
+--- a/wrangler-dist/cli.js
++++ b/wrangler-dist/cli.js
+@@ -32341,7 +32341,7 @@ var init_binding_local_support = __esm({
+       ai_search: "DO-NOT-USE-this-resource-will-never-have-a-local-simulator",
+       ai_search_namespace: "DO-NOT-USE-this-resource-will-never-have-a-local-simulator",
+       media: "DO-NOT-USE-this-resource-will-never-have-a-local-simulator",
+-      artifacts: "DO-NOT-USE-this-resource-will-never-have-a-local-simulator",
++      artifacts: "remote-default-with-local-opt-in",
+       vpc_service: "DO-NOT-USE-this-resource-will-never-have-a-local-simulator",
+       vpc_network: "DO-NOT-USE-this-resource-will-never-have-a-local-simulator",
+       agent_memory: "DO-NOT-USE-this-resource-will-never-have-a-local-simulator",
+@@ -34316,12 +34316,12 @@ function printBindings(bindings2, options) {
+   }
+   if (artifacts.length > 0) {
+     output2.push(
+-      ...artifacts.map(({ binding, namespace }) => {
++      ...artifacts.map(({ binding, namespace, remote }) => {
+         return {
+           name: binding,
+           type: getBindingTypeFriendlyName("artifacts"),
+           value: namespace,
+-          mode: getMode({ isSimulatedLocally: false })
++          mode: getMode({ isSimulatedLocally: remote === false || context2.remoteBindingsDisabled })
+         };
+       })
+     );
+@@ -185183,7 +185183,7 @@ function buildMiniflareBindingOptions(config2, remoteProxyConnectionString) {
+         binding.binding,
+         {
+           namespace: binding.namespace,
+-          remoteProxyConnectionString
++          remoteProxyConnectionString: binding.remote === false ? void 0 : remoteProxyConnectionString
+         }
+       ])
+     ),
+@@ -186867,6 +186867,7 @@ function getInternalLogger(logger$1) {
+ function pickRemoteBindings(bindings2) {
+   return Object.fromEntries(Object.entries(bindings2 ?? {}).filter(([, binding]) => {
+     if (getBindingLocalSupport(binding.type) === "DO-NOT-USE-this-resource-will-never-have-a-local-simulator") return true;
++    if (getBindingLocalSupport(binding.type) === "remote-default-with-local-opt-in") return binding.remote !== false;
+     return "remote" in binding && binding.remote;
+   }));
+ }

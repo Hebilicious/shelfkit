@@ -1,0 +1,16 @@
+diff --git a/dist/src/index.js b/dist/src/index.js
+index 114ef3470325e17a23a4f8323209533e69341cde..72e009a7c40509d1470f98591ace30f6023929fe 100644
+--- a/dist/src/index.js
++++ b/dist/src/index.js
+@@ -137293,9 +137293,8 @@ function addProductBindings(env3, exports3, config3, worker, isRemote) {
+     env3[name] = {
+       type: "artifacts",
+       namespace: binding.namespace,
+-      // At this stage, only explicit V5 dev.remote: false selects local.
+-      // Do not reinterpret an omitted legacy setting as that opt-in.
+-      ...binding.remoteProxyConnectionString === void 0 ? {} : { dev: { remote: isRemote(binding.remoteProxyConnectionString) } }
++      // Without a remote proxy connection the deployed resource is unreachable, so use the simulator.
++      dev: { remote: isRemote(binding.remoteProxyConnectionString) }
+     };
+   }
+   for (const name of Object.keys(worker.workerLoaders ?? {})) {
