@@ -7,8 +7,7 @@
  *   login` signs the CLI in through the browser, so nobody copies a key; CI, which has no browser, pipes it a key.
  * - With APM alone: the repository's apm.yml names the shelf's registry and the profile's newest version, and `apm
  *   install` does the rest. Verified against APM 0.33: a named registry, and a dependency that routes to it pinned to
- *   an exact version. A range cannot follow a profile, since APM ranks every generated `0.0.0+…` version the same and
- *   picks the oldest among them (`crates/compiler/src/package.rs`).
+ *   an exact version.
  *
  * Either way the profile comes from the shelf's registry, which `shelfkit publish` publishes it to, and a profile's
  * instructions, tech stacks, and library notes go into one section of AGENTS.md, which `apm compile` writes between

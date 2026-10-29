@@ -3,6 +3,7 @@
   "id": "agent-tools",
   "title": "ShelfKit agent tools",
   "description": "Everything in ShelfKit development, plus the tools an agent runs: docs lookup, a browser, and formatting after each edit.",
+  "version": "0.1.0",
   "items": [
     "context7",
     "playwright",

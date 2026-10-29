@@ -1,6 +1,7 @@
 {
   "id": "cli",
   "title": "CLI",
+  "version": "0.1.0",
   "items": [
     "ghost-item",
     "no-body",

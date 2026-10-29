@@ -33,6 +33,7 @@ profiles/cli.json: target `openclaw`: is rejected by APM's manifest validator, w
 profiles/mismatch.json: `id` is `other` but the file is `mismatch.json`
 profiles/notes.txt: unexpected file: profiles/ holds only <id>.json files
 profiles/self.json: `extends` cycle: self -> self
+profiles/unversioned.json: a profile needs a `version`, a semantic version such as `0.1.0`: it is the version the profile publishes as
 profiles/uses-stray.json: `items` lists `no-body` and bundle `stray` lists `no-body@sha256-2222222222222222222222222222222222222222222222222222222222222222`; pick one pin
 shelf.json: `defaultProfile` references unknown profile `missing`
 shelf.json: source `dup` is declared twice

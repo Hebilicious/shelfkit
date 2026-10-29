@@ -131,12 +131,11 @@ enum Command {
     Install(InstallArgs),
     /// Serve the shelf as an OpenAPM registry on http://127.0.0.1, in memory, until stopped.
     ///
-    /// Every profile is packaged and published as `{registry.namespace}/{profile}` at its `version`, or at
-    /// `0.0.0+sha256.<revision>.format<N>` when it has none. The three Registry HTTP API endpoints are served at the root:
-    /// `GET /v1/packages/{owner}/{repo}/versions`, `GET .../versions/{version}/download`, and `PUT
-    /// .../versions/{version}` (tar.gz as application/gzip only; a version is immutable, so a repeat PUT is 409).
-    /// They are served under `/apm` too, as a hosted deployment serves them, so `shelfkit install <namespace>/<profile>
-    /// --url http://127.0.0.1:<port>` installs from this server.
+    /// Every profile is packaged and published as `{registry.namespace}/{profile}` at its `version`. The three
+    /// Registry HTTP API endpoints are served at the root: `GET /v1/packages/{owner}/{repo}/versions`, `GET
+    /// .../versions/{version}/download`, and `PUT .../versions/{version}` (tar.gz as application/gzip only; a version
+    /// is immutable, so a repeat PUT is 409). They are served under `/apm` too, as a hosted deployment serves them, so
+    /// `shelfkit install <namespace>/<profile> --url http://127.0.0.1:<port>` installs from this server.
     /// Reads are anonymous when the shelf is public (`registry.public`, or --public / --private). Keys are given as
     /// `SCOPES=KEY`, scopes comma-separated from `read`, `read:{owner}/{repo}`, `publish:{owner}/{repo}`, and
     /// `publish:{owner}/*`, with --key or in SHELFKIT_SERVE_KEYS (whitespace-separated; prefer it, since arguments are
@@ -170,7 +169,7 @@ enum Command {
     /// Publish every profile to a hosted deployment's registry.
     ///
     /// Each profile is packaged exactly as `serve` packages it and published as `{registry.namespace}/{profile}` at
-    /// its `version`, or `0.0.0+sha256.<revision>.format<N>` without one, with the registry's `PUT`. A version is immutable: one already published with the same bytes is
+    /// its `version`, with the registry's `PUT`. A version is immutable: one already published with the same bytes is
     /// reported and left, and one published with other bytes fails the command until the profile is given a new
     /// `version`. The shelf's files are not uploaded: a hosted shelf is the Git repository
     /// `<deployment>/git/<shelf>.git`, pushed to with git.
@@ -531,6 +530,7 @@ fn init(ctx: &mut Context<'_>, args: InitArgs) -> Outcome {
         "$schema": "https://shelfkit.dev/schemas/profile.json",
         "id": "default",
         "title": "Default",
+        "version": "0.1.0",
         "items": [],
     });
     let files = [

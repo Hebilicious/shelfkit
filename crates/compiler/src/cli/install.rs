@@ -2,8 +2,7 @@
 //!
 //! With a profile (`<shelf>/<profile>`), the repository's apm.yml gains the shelf's registry and a dependency on the
 //! profile's newest published version, pinned exactly, beside whatever the file already declares; running it again
-//! moves the pin to the newest. (A range cannot follow a profile: APM ranks every generated `0.0.0+…` version the
-//! same, `crate::package`.) Without a profile, APM installs what apm.yml already declares. Then, in order:
+//! moves the pin to the newest. Without a profile, APM installs what apm.yml already declares. Then, in order:
 //!
 //! 1. APM's experimental registry support is turned on (`apm experimental enable registries`), and each private
 //!    ShelfKit registry apm.yml names is put in APM's user config, the only place APM 0.33 sends a registry key to.
@@ -511,8 +510,7 @@ fn apm_step(
 }
 
 /// Configure APM for the registries apm.yml names, install, and compile the instructions into AGENTS.md.
-/// `moved` names a dependency whose pin changed: APM 0.33 keeps a locked build that still satisfies the pin by
-/// semver, which ignores build metadata, so moving from one generated `0.0.0+…` version to another takes `apm update`.
+/// `moved` names a dependency whose pin changed, which `apm update` then moves the lockfile to.
 fn run_apm(
     ctx: &mut Context<'_>,
     repo: &Path,
@@ -581,10 +579,7 @@ fn run_apm(
     if let Some(coordinate) = moved
         && repo.join("apm.lock.yaml").is_file()
     {
-        let _ = writeln!(
-            ctx.stderr,
-            "APM keeps the build its lockfile holds while it matches the pin by semver, so it moves to the new one with:"
-        );
+        let _ = writeln!(ctx.stderr, "The pin moved, so the lockfile moves with it:");
         apm_step(ctx, &runner, &["update", "--yes", coordinate], repo, &env)?;
     }
     if repo.join("apm.lock.yaml").is_file() {

@@ -22,6 +22,9 @@ const SHELF_JSON: &str = "shelf.json";
 pub(crate) const NONCONFORMANT: &str = "is outside the OpenAPM v0.1 producer set; \
     set `allowNonconformantTargets` to opt in";
 
+const PROFILE_VERSION_MISSING: &str = "a profile needs a `version`, a semantic version such as \
+    `0.1.0`: it is the version the profile publishes as";
+
 /// Files desktop operating systems drop into directories by themselves. They
 /// are ignored wherever they appear. Other dotfiles are content: a plugin's
 /// `.claude-plugin/` directory is part of the plugin.
@@ -744,9 +747,10 @@ impl Loader<'_> {
                     }
                 }
             }
-            if let Some(version) = &profile.version
-                && !crate::profile::is_semver(version)
-            {
+            let version = &profile.version;
+            if version.trim().is_empty() {
+                self.invalid(path.clone(), PROFILE_VERSION_MISSING);
+            } else if !crate::profile::is_semver(version) {
                 self.invalid(
                     path.clone(),
                     format!(

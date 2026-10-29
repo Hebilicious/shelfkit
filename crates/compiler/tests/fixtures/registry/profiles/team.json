@@ -1,6 +1,7 @@
 {
   "id": "team",
   "title": "Team",
+  "version": "0.1.0",
   "items": ["team-conventions", "deploy", "review", "logo-kit", "lint-on-stop"],
   "compile": { "targets": ["claude", "copilot"] }
 }

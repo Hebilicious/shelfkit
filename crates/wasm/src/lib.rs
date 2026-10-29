@@ -801,7 +801,7 @@ mod tests {
                 ("shelf.json", r#"{ "name": "t" }"#),
                 (
                     "profiles/p.json",
-                    r#"{ "id": "p", "title": "P", "items": [] }"#,
+                    r#"{ "id": "p", "title": "P", "version": "0.1.0", "items": [] }"#,
                 ),
             ],
             Some("p"),
@@ -841,7 +841,7 @@ mod tests {
                 ("shelf.json", r#"{ "name": "t" }"#),
                 (
                     "profiles/p.json",
-                    r#"{ "id": "p", "title": "P", "items": [] }"#,
+                    r#"{ "id": "p", "title": "P", "version": "0.1.0", "items": [] }"#,
                 ),
             ],
             Some("p"),
@@ -868,7 +868,7 @@ mod tests {
         let body = serde_json::json!({
             "files": [
                 { "path": "shelf.json", "contents": "{ \"name\": \"t\" }" },
-                { "path": "profiles/p.json", "contents": "{ \"id\": \"p\", \"title\": \"P\", \"items\": [] }" },
+                { "path": "profiles/p.json", "contents": "{ \"id\": \"p\", \"title\": \"P\", \"version\": \"0.1.0\", \"items\": [] }" },
                 { "path": "items/prompts/x/link.md", "symlink": true }
             ],
             "profile": "p"
@@ -900,7 +900,7 @@ mod tests {
                 { "path": "shelf.json", "contents": "{ \"name\": \"t\", \"registry\": { \"namespace\": \"acme\", \"public\": true } }" },
                 { "path": "items/prompts/hi/item.json", "contents": "{ \"id\": \"hi\", \"kind\": \"prompt\", \"title\": \"Hi\" }" },
                 { "path": "items/prompts/hi/prompt.md", "contents": "Say hi.\n" },
-                { "path": "profiles/p.json", "contents": "{ \"id\": \"p\", \"title\": \"P\", \"items\": [\"hi\"] }" }
+                { "path": "profiles/p.json", "contents": "{ \"id\": \"p\", \"title\": \"P\", \"version\": \"0.1.0\", \"items\": [\"hi\"] }" }
             ],
             "profile": "p"
         })
@@ -951,7 +951,7 @@ mod tests {
         object.remove("profile");
         object.insert(
             "overrideProfile".to_owned(),
-            serde_json::json!({ "id": "draft", "title": "Draft", "items": ["hi"] }),
+            serde_json::json!({ "id": "draft", "title": "Draft", "version": "0.1.0", "items": ["hi"] }),
         );
         let (status, output) = resolve(&serde_json::to_vec(&body).unwrap());
         assert_eq!(status, Status::Planned);

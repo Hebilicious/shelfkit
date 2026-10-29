@@ -26,8 +26,8 @@ pub struct Shelf {
 /// `files` are the bytes the source returned, keyed by path relative to the
 /// item directory, and `revision` is [`Revision::of_files`] over exactly
 /// those bytes. Both are computed once, at load, and everything downstream
-/// (the compiler, `push`, the Worker) uses them rather than re-reading the
-/// directory, so `compile` and `push` cannot disagree about a revision.
+/// (the compiler, `publish`, the Worker) uses them rather than re-reading the
+/// directory, so `compile` and `publish` cannot disagree about a revision.
 /// Content is stored as found; a consumer that emits it uses
 /// [`crate::revision::normalize_line_endings`] for platform-independent bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]

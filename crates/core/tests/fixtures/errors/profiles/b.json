@@ -1,6 +1,7 @@
 {
   "id": "b",
   "title": "B",
+  "version": "0.1.0",
   "extends": [
     "a"
   ]

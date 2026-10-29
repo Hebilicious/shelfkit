@@ -1,6 +1,7 @@
 {
   "id": "uses-stray",
   "title": "Uses stray",
+  "version": "0.1.0",
   "items": [
     "no-body"
   ],

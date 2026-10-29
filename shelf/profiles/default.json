@@ -3,6 +3,7 @@
   "id": "default",
   "title": "ShelfKit development",
   "description": "The conventions this repository is built to.",
+  "version": "0.1.0",
   "items": [
     "shelfkit-stack",
     "shelfkit-rules",

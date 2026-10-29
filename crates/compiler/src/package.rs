@@ -9,30 +9,15 @@
 //!
 //! # Version
 //!
-//! A profile's identity is its revision, a hash; a version exists only for
-//! publishing (`docs/PRD.md` section 13, question 1). A profile with a
-//! `version` publishes as exactly that semver. A profile without one
-//! publishes as `0.0.0+sha256.<revision hex>.format<N>`: semver build
-//! metadata that names the revision and the package [`FORMAT`]. APM's
-//! client ranks every build of `0.0.0` the same, and among equals a range
-//! picks the one the registry lists last, which is the oldest (the list is
-//! newest first). So a consumer pins the exact version, which APM matches
-//! by its text before it tries a range: `shelfkit install` writes the newest
-//! published one, and running it again moves the pin.
-//!
-//! The format is part of the version because versions are immutable: when
-//! the layout of a package changes (format 2 moved instructions to
-//! `.github/instructions/`, `docs/PRD.md` section 4.2), an unchanged profile
-//! publishes its new archive as a new version instead of colliding with the
-//! old one.
+//! A profile publishes as its `version`, which every profile has: the shelf
+//! does not load without it (`docs/PRD.md` section 13, question 1).
 //!
 //! Versions are immutable, so publishing a version twice fails with `409`
-//! even when the bytes are the same: an unchanged profile without a
-//! `version` has nothing new to publish, and a changed profile with an
-//! unchanged `version` must bump it. The generated version follows the
-//! profile revision, which covers the items and the compile settings but
-//! not `shelf.json`; a changed source URL with an unchanged profile keeps
-//! the version, and republishing it is refused rather than overwritten.
+//! even when the bytes are the same: an unchanged profile has nothing new to
+//! publish, and a changed profile must bump its `version` before it
+//! publishes again. That covers a change outside the profile too, such as a
+//! source URL in `shelf.json`: republishing the same version with other
+//! bytes is refused rather than overwritten.
 //!
 //! # Archive layout
 //!
@@ -79,22 +64,6 @@ pub struct PackagedProfile {
     pub archive: Vec<u8>,
 }
 
-/// The version a profile without one publishes as.
-pub fn generated_version(revision: &Revision) -> String {
-    let hex = revision
-        .as_str()
-        .strip_prefix("sha256-")
-        .unwrap_or(revision.as_str());
-    format!("0.0.0+sha256.{hex}.format{FORMAT}")
-}
-
-/// The package layout this compiler writes. Bump it when the files of a package change for the same profile.
-///
-/// 2: instructions moved to `.github/instructions/`. 3: an instructions body that opens with its own top-level
-/// heading is not given the item's title above it. 4: a skill whose `SKILL.md` sets `disable-model-invocation` gets
-/// `agents/openai.yaml` for Codex. 5: a skill that links to a doc of the profile carries a copy of it.
-pub const FORMAT: u32 = 5;
-
 /// Package one resolved profile of `shelf`.
 pub fn package(shelf: &Shelf, resolved: &ResolvedProfile) -> Result<PackagedProfile, Errors> {
     let Some(registry) = &shelf.manifest.registry else {
@@ -109,8 +78,13 @@ pub fn package(shelf: &Shelf, resolved: &ResolvedProfile) -> Result<PackagedProf
     let version = shelf
         .profiles
         .get(&resolved.id)
-        .and_then(|profile| profile.version.clone())
-        .unwrap_or_else(|| generated_version(&resolved.revision));
+        .map(|profile| profile.version.clone())
+        .ok_or_else(|| {
+            Error::invalid(
+                resolved.path.clone(),
+                format!("no profile `{}`", resolved.id),
+            )
+        })?;
     let shape = Shape::Package {
         name: repo.clone(),
         version: version.clone(),

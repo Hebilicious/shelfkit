@@ -61,6 +61,8 @@ test("the preview of an unsaved profile is what shelfkit compile --dry-run print
 
   await page.locator('input[name="title"]').fill("Web stack");
   await expect(page.locator('input[name="id"]')).toHaveValue("web-stack");
+  // Every profile has a version, and a new one starts at 0.1.0.
+  await expect(page.locator('input[name="version"]')).toHaveValue("0.1.0");
   await page.getByTestId("add-review-checklist").click();
   await page
     .getByRole("group", { exact: true, name: "Agents to set up" })
@@ -88,7 +90,12 @@ test("the preview of an unsaved profile is what shelfkit compile --dry-run print
     url.pathname.endsWith(`/compose/web-stack`)
   );
   await expect(page.getByTestId("dirty")).toHaveCount(0);
-  const cli = dryRun(fetchShelf(SHELF), "web-stack");
+  const saved = fetchShelf(SHELF);
+  const cli = dryRun(saved, "web-stack");
+  const document: unknown = JSON.parse(
+    readFileSync(path.join(saved, "profiles/web-stack.json"), "utf-8")
+  );
+  expect(document).toMatchObject({ id: "web-stack", version: "0.1.0" });
 
   expect(unsaved.planJson).toBe(cli);
   const parsed: unknown = JSON.parse(cli);

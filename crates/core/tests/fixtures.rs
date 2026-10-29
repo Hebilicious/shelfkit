@@ -316,7 +316,7 @@ fn requires_pulls_items_in() {
     let mut source = memory("all-kinds");
     source.insert(
         "profiles/review.json",
-        r#"{ "id": "review", "title": "Review", "items": ["review-checklist"] }"#,
+        r#"{ "id": "review", "title": "Review", "version": "0.1.0", "items": ["review-checklist"] }"#,
     );
     let shelf = load(&source).unwrap();
     let review = shelf.resolve("review").unwrap();
@@ -373,6 +373,31 @@ fn errors_of(source: &MemorySource) -> Vec<String> {
 }
 
 #[test]
+fn a_profile_without_a_version_fails_the_load_at_its_file() {
+    let mut source = memory("all-kinds");
+    let path = "profiles/minimal.json";
+    let mut minimal: serde_json::Value =
+        serde_json::from_slice(&source.read(path).unwrap()).unwrap();
+    minimal.as_object_mut().unwrap().remove("version");
+    source.insert(path, serde_json::to_vec_pretty(&minimal).unwrap());
+    // An empty version is no version, and the profile's other errors are still reported.
+    source.insert(
+        "profiles/blank.json",
+        r#"{ "id": "blank", "title": "Blank", "version": "", "items": ["ghost"] }"#,
+    );
+    let missing = "a profile needs a `version`, a semantic version such as `0.1.0`: \
+                   it is the version the profile publishes as";
+    assert_eq!(
+        errors_of(&source),
+        [
+            "profiles/blank.json: `items` references unknown item `ghost`".to_owned(),
+            format!("profiles/blank.json: {missing}"),
+            format!("profiles/minimal.json: {missing}"),
+        ]
+    );
+}
+
+#[test]
 fn editing_a_pinned_item_fails_the_load_at_the_pinning_profile() {
     let mut source = memory("all-kinds");
     let path = "items/libraries/drizzle/item.json";
@@ -421,11 +446,11 @@ fn a_cli_only_target_is_checked_against_the_resolved_opt_in() {
     let mut a = memory("all-kinds");
     a.insert(
         "profiles/parent.json",
-        r#"{ "id": "parent", "title": "P", "compile": { "targets": ["kiro"], "allowNonconformantTargets": true } }"#,
+        r#"{ "id": "parent", "title": "P", "version": "0.1.0", "compile": { "targets": ["kiro"], "allowNonconformantTargets": true } }"#,
     );
     a.insert(
         "profiles/child.json",
-        r#"{ "id": "child", "title": "C", "extends": ["parent"], "compile": { "allowNonconformantTargets": false } }"#,
+        r#"{ "id": "child", "title": "C", "version": "0.1.0", "extends": ["parent"], "compile": { "allowNonconformantTargets": false } }"#,
     );
     assert_eq!(
         errors_of(&a),
@@ -439,11 +464,11 @@ fn a_cli_only_target_is_checked_against_the_resolved_opt_in() {
     let mut b = memory("all-kinds");
     b.insert(
         "profiles/parent.json",
-        r#"{ "id": "parent", "title": "P", "compile": { "allowNonconformantTargets": true } }"#,
+        r#"{ "id": "parent", "title": "P", "version": "0.1.0", "compile": { "allowNonconformantTargets": true } }"#,
     );
     b.insert(
         "profiles/child.json",
-        r#"{ "id": "child", "title": "C", "extends": ["parent"], "compile": { "targets": ["kiro"] } }"#,
+        r#"{ "id": "child", "title": "C", "version": "0.1.0", "extends": ["parent"], "compile": { "targets": ["kiro"] } }"#,
     );
     let shelf = load(&b).unwrap_or_else(|errors| panic!("{errors}"));
     assert!(
@@ -677,7 +702,7 @@ fn cycle_detection_is_linear_in_the_profiles() {
         source.insert(
             format!("profiles/p{index}.json"),
             format!(
-                r#"{{ "id": "p{index}", "title": "P", "extends": [{}] }}"#,
+                r#"{{ "id": "p{index}", "title": "P", "version": "0.1.0", "extends": [{}] }}"#,
                 parents.join(", ")
             ),
         );

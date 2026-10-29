@@ -32,7 +32,7 @@ fn shelf(targets: &str) -> MemorySource {
         ),
         (
             "profiles/p.json",
-            format!(r#"{{ "id": "p", "title": "P", "items": ["rules"], "compile": {{ "targets": {targets} }} }}"#),
+            format!(r#"{{ "id": "p", "title": "P", "version": "0.1.0", "items": ["rules"], "compile": {{ "targets": {targets} }} }}"#),
         ),
     ]
     .into_iter()
@@ -121,7 +121,7 @@ fn two_docs_at_one_path_are_refused() {
     source.insert("items/docs/other/doc.md", "# Other\n");
     source.insert(
         "profiles/p.json",
-        r#"{ "id": "p", "title": "P", "items": ["rules", "other"], "compile": { "targets": ["claude"] } }"#,
+        r#"{ "id": "p", "title": "P", "version": "0.1.0", "items": ["rules", "other"], "compile": { "targets": ["claude"] } }"#,
     );
     let errors = plan(&source, &Request::default()).unwrap_err().to_string();
     assert!(
@@ -152,7 +152,7 @@ fn with_skill(source: &mut MemorySource, items: &str) {
     source.insert("items/docs/glossary/doc.md", "# Glossary\n");
     source.insert(
         "profiles/p.json",
-        format!(r#"{{ "id": "p", "title": "P", "items": {items}, "compile": {{ "targets": ["claude", "codex"] }} }}"#)
+        format!(r#"{{ "id": "p", "title": "P", "version": "0.1.0", "items": {items}, "compile": {{ "targets": ["claude", "codex"] }} }}"#)
             .as_str(),
     );
 }
@@ -209,7 +209,7 @@ fn a_link_to_a_file_the_profile_does_not_ship_is_noted() {
     );
     source.insert(
         "profiles/p.json",
-        r#"{ "id": "p", "title": "P", "items": ["rules", "triage"], "compile": { "targets": ["claude", "codex"] } }"#,
+        r#"{ "id": "p", "title": "P", "version": "0.1.0", "items": ["rules", "triage"], "compile": { "targets": ["claude", "codex"] } }"#,
     );
     let compiled = plan(&source, &Request::default()).unwrap();
     let notes: Vec<String> = compiled
@@ -255,7 +255,7 @@ fn imported(copied: bool) -> MemorySource {
         ),
         (
             "profiles/p.json",
-            r#"{ "id": "p", "title": "P", "items": ["app"], "compile": { "targets": ["codex"] } }"#
+            r#"{ "id": "p", "title": "P", "version": "0.1.0", "items": ["app"], "compile": { "targets": ["codex"] } }"#
                 .to_owned(),
         ),
     ];

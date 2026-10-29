@@ -379,7 +379,7 @@ mod tests {
     fn two_items_with_one_mcp_name_conflict_in_a_profile() {
         let source = shelf_with(&[(
             "profiles/p.json",
-            r#"{ "id": "p", "title": "P", "items": ["one", "two"] }"#,
+            r#"{ "id": "p", "title": "P", "version": "0.1.0", "items": ["one", "two"] }"#,
         )]);
         let errors = load(&source).unwrap_err();
         let error = errors.iter().next().unwrap();
@@ -397,11 +397,11 @@ mod tests {
         let source = shelf_with(&[
             (
                 "profiles/p.json",
-                r#"{ "id": "p", "title": "P", "items": ["a"] }"#,
+                r#"{ "id": "p", "title": "P", "version": "0.1.0", "items": ["a"] }"#,
             ),
             (
                 "profiles/q.json",
-                r#"{ "id": "q", "title": "Q", "items": ["b"], "extends": ["p"] }"#,
+                r#"{ "id": "q", "title": "Q", "version": "0.1.0", "items": ["b"], "extends": ["p"] }"#,
             ),
         ]);
         let errors = load(&source).unwrap_err();
@@ -419,11 +419,11 @@ mod tests {
         let source = shelf_with(&[
             (
                 "profiles/p.json",
-                r#"{ "id": "p", "title": "P", "items": ["one", "a"] }"#,
+                r#"{ "id": "p", "title": "P", "version": "0.1.0", "items": ["one", "a"] }"#,
             ),
             (
                 "profiles/q.json",
-                r#"{ "id": "q", "title": "Q", "items": ["two", "b"] }"#,
+                r#"{ "id": "q", "title": "Q", "version": "0.1.0", "items": ["two", "b"] }"#,
             ),
         ]);
         assert!(load(&source).is_ok());

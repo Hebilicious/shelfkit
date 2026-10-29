@@ -19,5 +19,6 @@
     "hebilicious-default",
     "rust"
   ],
-  "title": "Curated imports"
+  "title": "Curated imports",
+  "version": "0.1.0"
 }

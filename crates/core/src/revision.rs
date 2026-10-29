@@ -42,7 +42,8 @@ impl Revision {
 
     /// The revision of one item directory, from its files keyed by path
     /// relative to the item root. This is the only way the loader computes a
-    /// revision, so `compile` and `push` hash exactly the same bytes.
+    /// revision, so `compile`, `publish`, and the Worker hash exactly the same
+    /// bytes.
     pub fn of_files(files: &BTreeMap<String, Vec<u8>>) -> Self {
         Self::compute(
             files

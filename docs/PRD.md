@@ -344,6 +344,7 @@ A profile's docs install together as one skill, `<namespace>-<profile>-docs`, ea
 {
   "id": "vue-cloudflare",
   "title": "Vue on Cloudflare",
+  "version": "0.1.0",
   "items": [
     "vue-cloudflare",
     "vue-sfc-patterns@sha256-3f1c…",
@@ -362,6 +363,7 @@ A profile's docs install together as one skill, `<namespace>-<profile>-docs`, ea
 }
 ```
 
+- `version` is required: the semantic version the profile publishes as on the registry (§7.1). A shelf with a profile that has none does not load. It is the profile's own and is not inherited through `extends`. A published version is immutable, so a changed profile is given a new `version` before it publishes again; the profile's identity is still its revision.
 - `items` takes `id` (latest) or `id@revision` (pinned). `pin: revision` compiles pinned refs; it is the default. `pin: latest` compiles unpinned refs and is what a personal shelf uses.
 - `bundles` names reusable groups of items. A bundle is a named item list with no compile settings, exists so several profiles can share a cluster without repeating it, and is not itself installable. Bundles expand before `extends`.
 - `extends` composes profiles breadth-first, children win, cycles are a load error.
@@ -409,7 +411,7 @@ Every imported item records the source, the resolved commit or version, the dige
 
 ### 7.1 Serving an OpenAPM registry
 
-`GET /apm/v1/packages/{owner}/{repo}/versions`, `GET .../versions/{version}/download`, and `PUT .../versions/{version}` implement the [OpenAPM Registry HTTP API](https://microsoft.github.io/apm/reference/registry-http-api/). A shelf publishes each profile as a package.
+`GET /apm/v1/packages/{owner}/{repo}/versions`, `GET .../versions/{version}/download`, and `PUT .../versions/{version}` implement the [OpenAPM Registry HTTP API](https://microsoft.github.io/apm/reference/registry-http-api/). A shelf publishes each profile as a package, at the profile's `version`.
 
 Conformance points that matter:
 
@@ -772,7 +774,7 @@ Kept deliberately small. This is not a governance product; it is a record so a r
 
 | # | Question | Lean |
 | --- | --- | --- |
-| 1 | Do profiles need a version beyond a revision hash? | No. A profile revision is a hash; semver is generated only when publishing to the registry, from a `version` field if one is set. |
+| 1 | Do profiles need a version beyond a revision hash? | **Decided: yes.** Every profile has a `version`, a semantic version, and a shelf with a profile that has none does not load. A profile's identity is still its revision, a hash; the `version` is what the profile publishes as on the registry, chosen by a person rather than generated from the revision. |
 | 2 | Local authoring versus importing. | Curation is the primary flow, but authoring stays because a stack or a library is inherently personal and cannot be imported from anywhere. Prompts are the most-authored kind. |
 | 3 | Running Git in a Durable Object versus the forge REST API. | **Decided: Cloudflare Artifacts** (open beta since 2026-10-01). Each shelf is an Artifacts repository (§10.1), so a hosted shelf clones directly. Indexing from a forge keeps GitHub's REST API for `owner/repo`, which also reads private repositories with a token, and reads any other public HTTPS remote by importing it into a temporary Artifacts repository, one commit deep, then deleting it. Artifacts imports public remotes only. |
 | 4 | OpenAPI surface alongside GraphQL for third parties. | Generate one from the same operations if integrators ask. Not in v1. |

@@ -32,9 +32,10 @@ use shelfkit_core::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The version written into a compiled manifest. A profile revision is a
-/// hash, not a semver (`docs/PRD.md` section 13, question 1); a repository
-/// that already has an `apm.yml` keeps its own version when compile merges.
+/// The version written into a compiled manifest. That manifest is the target
+/// repository's, so it does not take the profile's `version`, which is the
+/// version of the profile's registry package; a repository that already has
+/// an `apm.yml` keeps its own version when compile merges.
 pub const MANIFEST_VERSION: &str = "0.0.0";
 
 /// The directory every vendored package is written under.

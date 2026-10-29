@@ -1,6 +1,7 @@
 {
   "id": "minimal",
   "title": "Minimal",
+  "version": "0.1.0",
   "items": [
     "pr-description"
   ],

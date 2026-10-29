@@ -36,6 +36,9 @@ export function refRevision(ref: string): string | null {
   return at === -1 ? null : ref.slice(at + 1);
 }
 
+/** The version a new profile starts at: every profile has one, and it is what the profile publishes as. */
+export const FIRST_PROFILE_VERSION = "0.1.0";
+
 /** A new, empty profile with the compiler's defaults left implicit. */
 export function emptyProfile(id: string, title: string): Profile {
   return {
@@ -45,6 +48,7 @@ export function emptyProfile(id: string, title: string): Profile {
     id,
     items: [],
     title,
+    version: FIRST_PROFILE_VERSION,
   };
 }
 
@@ -145,7 +149,8 @@ export function toggle(list: readonly string[], value: string): string[] {
 
 /**
  * The document as the shelf would store it: optional fields that are empty are left out, so a profile saved from the
- * composer compiles exactly as the same file written by hand.
+ * composer compiles exactly as the same file written by hand. `version` is required and always kept, even empty, so
+ * the shelf reports it.
  */
 export function normalizeProfile(profile: Profile): Profile {
   const compile = Object.fromEntries(
@@ -160,15 +165,13 @@ export function normalizeProfile(profile: Profile): Profile {
     id: profile.id,
     items: profile.items,
     title: profile.title,
+    version: profile.version,
   };
   if (profile.$schema !== undefined) {
     normalized.$schema = profile.$schema;
   }
   if (profile.description !== undefined && profile.description.trim() !== "") {
     normalized.description = profile.description;
-  }
-  if (profile.version !== undefined && profile.version.trim() !== "") {
-    normalized.version = profile.version;
   }
   return normalized;
 }
