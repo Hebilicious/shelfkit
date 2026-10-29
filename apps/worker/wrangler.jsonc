@@ -104,6 +104,15 @@
     "r2_buckets": [
       { "binding": "BLOBS", "bucket_name": "shelfkit-blobs-preview" },
     ],
+    // Previews inherit no binding, and their repositories must not mix with the deployment's: their own namespace,
+    // created once (`cf artifacts namespaces create --namespace shelfkit-preview --jurisdiction eu`).
+    "artifacts": [
+      {
+        "binding": "ARTIFACTS",
+        "namespace": "shelfkit-preview",
+        "remote": true,
+      },
+    ],
     "ratelimits": [
       {
         "name": "CLI_START_LIMIT",
