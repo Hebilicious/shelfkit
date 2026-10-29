@@ -53,7 +53,7 @@ export default {
       return await rawRoute(request, env);
     }
     if (pathname.startsWith("/git/")) {
-      return await gitRoute(request, env, context);
+      return await gitRoute(request, env);
     }
     if (pathname.startsWith("/auth/github/")) {
       return await githubRoute(request, env);

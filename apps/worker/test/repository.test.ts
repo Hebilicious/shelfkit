@@ -41,7 +41,7 @@ async function sync(shelf: string) {
 }
 
 /**
- * Index the repository's head. The Git route queues the same sync after a push, and the queue may get there first, so
+ * Index the repository's head. The Git route has already indexed a push through it, and an edit may have too, so
  * either answer means the head is indexed.
  */
 async function indexed(shelf: string): Promise<boolean> {
@@ -319,6 +319,23 @@ describe("pushes through the Git route", () => {
     await expect(indexed("kit")).resolves.toBeTruthy();
     const shelf = await repositoryOf("kit");
     expect(shelf.snapshot).toStrictEqual({
+      commit: pushed.commit,
+      origin: "git",
+    });
+  });
+
+  it("indexes a push before answering it, with no queue consumer, as in a Worker Preview", async () => {
+    await push("kit", shelfOf("kit", false, PROMPT));
+    const before = await headOf("kit");
+    const pushed = await gitPush(
+      "kit",
+      shelfOf("kit", false, withPrompt("From git, unqueued.\n")),
+      before.hash
+    );
+    expect(pushed.status).toBe(200);
+    // Nothing here syncs and the tests run no queue consumer: only the route can have indexed the push.
+    const shelf = await repositoryOf("kit");
+    expect(shelf?.snapshot).toStrictEqual({
       commit: pushed.commit,
       origin: "git",
     });

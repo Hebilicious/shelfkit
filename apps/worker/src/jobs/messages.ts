@@ -9,7 +9,7 @@
  * - `scan.item`: run every scanner on one item revision and record each verdict against that revision.
  * - `index.forge`: read a shelf from a Git forge, snapshot it into R2, and commit it (`src/forge/`).
  * - `repository.sync`: index the head of the shelf's repository (`ShelfIndex.syncRepository`), queued by the Git route
- *   once a push through it is done.
+ *   once a push through it is done, which then indexes it at once too; the job retries an index that failed.
  */
 import { ItemIdSchema, RevisionSchema, ShelfIdSchema } from "@shelfkit/schema";
 import * as v from "valibot";

@@ -142,8 +142,8 @@ async function refusedBy(response: Response): Promise<Pushed> {
 
 /**
  * Push a shelf as `git push` does: one commit of exactly `files`, on top of whatever `main` is at, through
- * `/git/{shelf}.git` with `key`. The test deployment runs no queue consumer, so this then indexes the push itself, as
- * the `repository.sync` job would, and answers with the snapshot it made or the errors that refused it.
+ * `/git/{shelf}.git` with `key`. The route indexes the push before it answers; this then syncs once more, as the
+ * `repository.sync` job would, to answer with the snapshot the push made or the errors that refused it.
  */
 export async function push(
   shelf: string,

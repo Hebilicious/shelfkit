@@ -1485,8 +1485,8 @@ export class ShelfIndex extends DurableObject<Env> {
   /**
    * Bring the index up to the head of the shelf's repository: read the commit a Git client pushed, store the bytes of
    * every blob the index does not have yet in R2, and index the files as a snapshot. A head the engine refuses is
-   * recorded, with its errors, and the index stays where it was. Run by the queue after a push through the Git route,
-   * and by a write that found the repository moved on.
+   * recorded, with its errors, and the index stays where it was. Run by the Git route after a push through it, and
+   * again by the queue it sends the same sync to, and by a write that found the repository moved on.
    */
   async syncRepository(session: Session, shelf: string): Promise<Synced> {
     if (session.kind !== "system" || !v.is(ShelfIdSchema, shelf)) {

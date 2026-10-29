@@ -17,7 +17,7 @@
 import { ShelfIdSchema } from "@shelfkit/schema";
 import * as v from "valibot";
 
-import { authenticateHeader, existingShelf } from "./auth/index.ts";
+import { authenticateHeader, existingShelf, shelfStub } from "./auth/index.ts";
 import type { Session } from "./auth/index.ts";
 import { problem } from "./http.ts";
 import type { JobMessage } from "./jobs/messages.ts";
@@ -123,11 +123,7 @@ function exchangeOf(request: Request, wanted: GitRequest): GitExchange {
   };
 }
 
-export async function gitRoute(
-  request: Request,
-  env: Env,
-  context: ExecutionContext
-): Promise<Response> {
+export async function gitRoute(request: Request, env: Env): Promise<Response> {
   const wanted = gitRequest(request);
   if (wanted instanceof Response) {
     return wanted;
@@ -152,17 +148,19 @@ export async function gitRoute(
     return problem(404, "Not Found", "the shelf has no repository yet");
   }
   const pushed = !wanted.advertise && wanted.service === "git-receive-pack";
-  return relayed(upstream, env, context, wanted.shelf, pushed);
+  return await relayed(upstream, env, wanted.shelf, pushed);
 }
 
-/** The repository's answer, as the client receives it; after a push, the shelf's object indexes the new head. */
-function relayed(
+/**
+ * The repository's answer, as the client receives it. A push is indexed before the client hears that it landed, so a
+ * `git push` that returns is on the shelf.
+ */
+async function relayed(
   upstream: Response,
   env: Env,
-  context: ExecutionContext,
   shelf: string,
   pushed: boolean
-): Response {
+): Promise<Response> {
   const headers = new Headers({ "cache-control": "no-cache" });
   const type = upstream.headers.get("content-type");
   if (type !== null) {
@@ -171,14 +169,22 @@ function relayed(
   if (!pushed || !upstream.ok || upstream.body === null) {
     return new Response(upstream.body, { headers, status: upstream.status });
   }
-  // The push is done when the repository has sent its whole report; only then is the new head there to index.
-  const [toClient, watched] = upstream.body.tee();
+  // The push is done when the repository has sent its whole report; only then is the new head there to index. The
+  // sync is queued first, so an index that fails is retried, and then run here, because a Worker Preview runs no queue
+  // consumer. Elsewhere the job then finds the shelf current.
+  const report = await upstream.arrayBuffer();
   const sync: JobMessage = { shelf, type: "repository.sync" };
-  context.waitUntil(
-    (async () => {
-      await new Response(watched).arrayBuffer();
-      await env.JOBS.send(sync);
-    })()
-  );
-  return new Response(toClient, { headers, status: upstream.status });
+  await env.JOBS.send(sync);
+  try {
+    await shelfStub(env, shelf).syncRepository(
+      { job: sync.type, kind: "system" },
+      shelf
+    );
+  } catch (error) {
+    console.error(
+      `indexing ${shelf}'s new head failed; the queued sync retries it`,
+      error
+    );
+  }
+  return new Response(report, { headers, status: upstream.status });
 }
