@@ -4,9 +4,13 @@
  * delete with undo; and markdown that cannot run script or load a remote image.
  */
 
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
 import {
   FIXTURES,
   clipboard,
+  fetchShelf,
   seedShelf,
   signIn,
   expect,
@@ -14,9 +18,24 @@ import {
 } from "./support.ts";
 
 const SHELF = "prompts-e2e";
+const WRITTEN = "written-e2e";
+
+/** The PR prompt's item.json as a person might write it: no tags, no asCommand, its own order and spacing. */
+const HAND_WRITTEN = `{
+  "kind": "prompt",
+  "id": "pr-description",
+  "title": "PR description",
+  "description": "Write a PR description from the staged diff",
+  "variables": [{ "name": "ticket", "required": false }, { "name": "audience", "default": "reviewers" }]
+}
+`;
+const ITEM_JSON = "items/prompts/pr-description/item.json";
 
 test.beforeAll(async () => {
   await seedShelf(FIXTURES.allKinds, SHELF);
+  await seedShelf(FIXTURES.allKinds, WRITTEN, (root) => {
+    writeFileSync(path.join(root, ITEM_JSON), HAND_WRITTEN);
+  });
 });
 
 test.beforeEach(async ({ page }) => {
@@ -115,6 +134,38 @@ test("edits a prompt in place, as a new revision with a diff, and restores the o
   await expect(page.getByRole("tab", { name: /History \(2\)/u })).toBeVisible();
   await page.getByRole("tab", { name: "Edit" }).click();
   await expect(body).not.toHaveValue(/Keep it under 200 words/u);
+});
+
+test("an edit changes only what it edits, and a restore brings back every field, marking that version current", async ({
+  page,
+}) => {
+  await page.goto(`/shelves/${WRITTEN}/prompts/pr-description`);
+  await page.getByRole("tab", { name: "Edit" }).click();
+  const body = page.locator('textarea[name="body"]');
+  await body.fill(`${await body.inputValue()}One paragraph.\n`);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("tab", { name: /History \(2\)/u })).toBeVisible();
+  // A body edit leaves item.json as it was written: no tags or asCommand added.
+  expect(readFileSync(path.join(fetchShelf(WRITTEN), ITEM_JSON), "utf-8")).toBe(
+    HAND_WRITTEN
+  );
+
+  await page.getByRole("tab", { name: "Edit" }).click();
+  await page.locator('input[name="title"]').fill("Pull request description");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("tab", { name: /History \(3\)/u }).click();
+  const versions = page.getByRole("list", { name: "Versions" });
+  await versions.getByRole("button").nth(1).click();
+  await page.getByRole("button", { name: "Restore this version" }).click();
+  await expect(
+    page.getByText("The prompt is that version again.")
+  ).toBeVisible();
+  // The title comes back with the body, and the restored version is the current one, not the newest row.
+  await expect(page.getByTestId("prompt-title")).toHaveText("PR description");
+  await expect(versions.getByRole("listitem").nth(1)).toContainText("current");
+  await expect(versions.getByRole("listitem").first()).not.toContainText(
+    "current"
+  );
 });
 
 test("renders markdown with HTML shown as text, never run, and remote images never loaded", async ({

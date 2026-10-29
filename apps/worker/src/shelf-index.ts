@@ -2584,6 +2584,81 @@ export class ShelfIndex extends DurableObject<Env> {
     return edited ?? whole;
   }
 
+  /**
+   * Make an item one of its revisions again: its files exactly as that revision had them, item.json included, and none
+   * it did not have. The same files are the same revision, so the item is that revision again rather than a new one
+   * that looks like it.
+   */
+  async restoreItem(
+    session: Session,
+    shelf: string,
+    input: {
+      readonly id: string;
+      readonly revision: string;
+      readonly message: string | null;
+    }
+  ): Promise<Committed> {
+    const granted = this.granted(session);
+    if (granted?.write !== true || this.shelfId() !== shelf) {
+      return forbidden();
+    }
+    const restored = this.db
+      .select()
+      .from(table.revision)
+      .where(
+        and(
+          eq(table.revision.itemId, input.id),
+          eq(table.revision.revision, input.revision)
+        )
+      )
+      .get();
+    if (restored === undefined) {
+      return {
+        errors: [
+          {
+            message: `\`${input.id}\` has no revision ${input.revision}`,
+            path: "<revision>",
+          },
+        ],
+        ok: false,
+        reason: "invalid",
+      };
+    }
+    const bytes = await readObjects(
+      this.env.BLOBS,
+      restored.files.map((file) => file.sha256)
+    );
+    // Read when the edit is made, and again if it is made a second time on top of a repository that had moved on.
+    const changesFor = () => {
+      const existing = this.db
+        .select()
+        .from(table.item)
+        .where(eq(table.item.id, input.id))
+        .get();
+      const directory =
+        existing?.path ??
+        `items/${KIND_DIRECTORIES[restored.document.kind]}/${input.id}`;
+      const changes = new Map<string, Uint8Array | null>();
+      for (const file of existing?.files ?? []) {
+        changes.set(`${directory}/${file}`, null);
+      }
+      for (const file of restored.files) {
+        changes.set(
+          `${directory}/${file.path}`,
+          bytes.get(file.sha256) ?? null
+        );
+      }
+      return changes;
+    };
+    return await this.edit(
+      session,
+      shelf,
+      changesFor,
+      input.message ?? `restore ${input.id}`,
+      "edit"
+    );
+  }
+
   /** Remove an item. The engine refuses it while a profile, a bundle, or another item still names it. */
   async deleteItem(
     session: Session,
@@ -3175,7 +3250,20 @@ export class ShelfIndex extends DurableObject<Env> {
       return forbidden();
     }
     const next = v.parse(ShelfManifestSchema, change(manifest));
-    const bytes = encoder.encode(`${JSON.stringify(next, null, 2)}\n`);
+    const whole = `${JSON.stringify(next, null, 2)}\n`;
+    const contents = await this.contents();
+    const bytesNow = contents.get("shelf.json");
+    const current = bytesNow === undefined ? null : utf8(bytesNow);
+    // Only the members that changed are rewritten, so the commit shows the change and the rest keeps its order.
+    const edited =
+      current === null
+        ? null
+        : editJsonObject(
+            current,
+            v.parse(JsonObjectSchema, manifest),
+            v.parse(JsonObjectSchema, next)
+          );
+    const bytes = encoder.encode(edited ?? whole);
     this.broadcast({ at: now(), id: shelf, kind: "settings" });
     return await this.edit(
       session,

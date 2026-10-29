@@ -432,6 +432,33 @@ export const UpdatePromptMutation = graphql(`
   }
 `);
 
+export const RestoreItemMutation = graphql(`
+  mutation RestoreItem(
+    $shelf: ID!
+    $id: ID!
+    $revision: String!
+    $message: String
+  ) {
+    restoreItem(
+      shelf: $shelf
+      id: $id
+      revision: $revision
+      message: $message
+    ) {
+      ok
+      reason
+      missing
+      changedItems
+      changedProfiles
+      removedItems
+      errors {
+        path
+        message
+      }
+    }
+  }
+`);
+
 export const WriteItemMutation = graphql(`
   mutation WriteItem(
     $shelf: ID!

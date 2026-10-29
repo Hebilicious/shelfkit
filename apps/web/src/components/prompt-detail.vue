@@ -7,6 +7,7 @@ import {
   DeleteItemMutation,
   PromptQuery,
   RecordUseMutation,
+  RestoreItemMutation,
   UpdatePromptMutation,
   WriteItemMutation,
 } from "../api/operations.ts";
@@ -142,6 +143,15 @@ function draftFields(): string {
 /** The draft's fields when it was last reset from the prompt: anything else in it was typed since. */
 const resetTo = ref<string | null>(null);
 
+/** The draft as it was last reset from the prompt, field by field: a save sends only the fields that differ from it. */
+const baseline = ref<Omit<Draft, "message"> | null>(null);
+
+/** Whether the draft's `field` differs from the prompt it was reset from. */
+function edited(field: keyof Omit<Draft, "message">): boolean {
+  const before = baseline.value;
+  return before === null || JSON.stringify(draft[field]) !== JSON.stringify(before[field]);
+}
+
 function resetDraft(): void {
   const current = item.value;
   if (current === null) {
@@ -160,6 +170,14 @@ function resetDraft(): void {
     required: variable.required === true,
   }));
   resetTo.value = draftFields();
+  baseline.value = {
+    asCommand: draft.asCommand,
+    body: draft.body,
+    description: draft.description,
+    tags: draft.tags,
+    title: draft.title,
+    variables: draft.variables.map((variable) => ({ ...variable })),
+  };
 }
 
 // The editor follows the prompt (a save, a restore, a change made elsewhere) until something is typed in it; then it
@@ -224,19 +242,22 @@ async function save(): Promise<void> {
   saving.value = true;
   saveError.value = null;
   try {
+    // Only what was edited is sent, so the save rewrites nothing else in the prompt's files.
     const resultData = await execute(UpdatePromptMutation, {
-      asCommand: draft.asCommand,
-      body: draft.body,
-      description: draft.description,
+      asCommand: edited("asCommand") ? draft.asCommand : null,
+      body: edited("body") ? draft.body : null,
+      description: edited("description") ? draft.description : null,
       id,
       message: draft.message.trim() === "" ? null : draft.message.trim(),
       shelf,
-      tags: draft.tags
-        .split(",")
-        .map((entry) => entry.trim())
-        .filter((entry) => entry !== ""),
-      title: draft.title,
-      variables: draftVariables(),
+      tags: edited("tags")
+        ? draft.tags
+            .split(",")
+            .map((entry) => entry.trim())
+            .filter((entry) => entry !== "")
+        : null,
+      title: edited("title") ? draft.title : null,
+      variables: edited("variables") ? draftVariables() : null,
     });
     const result = resultData.updatePrompt;
     if (!result.ok) {
@@ -316,15 +337,14 @@ async function restore(at: number): Promise<void> {
   if (revision === undefined) {
     return;
   }
-  const body = fileAt(at, "prompt.md");
   try {
-    const resultData = await execute(UpdatePromptMutation, {
-      body,
+    const resultData = await execute(RestoreItemMutation, {
       id,
       message: `Restore ${revision.revision.slice(0, 19)}`,
+      revision: revision.revision,
       shelf,
     });
-    const result = resultData.updatePrompt;
+    const result = resultData.restoreItem;
     if (!result.ok) {
       notify(problemText(result), null, "error");
       return;
@@ -545,7 +565,7 @@ function when(timestamp: string): string {
               <span class="small ellipsis">{{ revision.message ?? (at === revisions.length - 1 ? "created" : "edited") }}</span>
               <span class="spacer"></span>
               <span class="small muted">{{ when(revision.createdAt) }}</span>
-              <span v-if="at === 0" class="badge">current</span>
+              <span v-if="revision.revision === item?.revision" class="badge">current</span>
             </button>
           </li>
         </ol>

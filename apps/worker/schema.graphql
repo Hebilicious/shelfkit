@@ -485,6 +485,18 @@ type Mutation {
   ): JSON!
 
   """
+  Make an item one of its revisions again: its files exactly as that revision had them, so it is that revision again, not a copy of it.
+  """
+  restoreItem(
+    id: ID!
+    message: String
+
+    """The revision to make the item again, from its history."""
+    revision: String!
+    shelf: ID!
+  ): CommitResult!
+
+  """
   Remove someone's grant on the shelf. A browser signed in as them loses the access from its next request. The owner only.
   """
   revokeAccess(

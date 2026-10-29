@@ -2831,6 +2831,32 @@ export function buildSchema(): GraphQLSchema {
         },
         type: "JSON",
       }),
+      restoreItem: t.field({
+        args: {
+          id: t.arg.id({ required: true }),
+          message: t.arg.string(),
+          revision: t.arg.string({
+            description:
+              "The revision to make the item again, from its history.",
+            required: true,
+          }),
+          shelf: t.arg.id({ required: true }),
+        },
+        description:
+          "Make an item one of its revisions again: its files exactly as that revision had them, so it is that revision again, not a copy of it.",
+        resolve: async (_root, args, context) => {
+          const shelf = shelfArg(args.shelf);
+          const target = await held(context, shelf);
+          return committed(
+            await target.restoreItem(context.session, shelf, {
+              id: args.id,
+              message: args.message ?? null,
+              revision: args.revision,
+            })
+          );
+        },
+        type: Commit,
+      }),
       revokeAccess: t.boolean({
         args: {
           principal: t.arg.id({
