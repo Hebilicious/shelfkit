@@ -1,5 +1,5 @@
 //! A profile as a registry package: the archive `shelfkit serve` publishes,
-//! and that `shelfkit push` and the Worker will publish, byte for byte.
+//! and that `shelfkit publish` and the Worker publish, byte for byte.
 //!
 //! # Identity
 //!

@@ -82,9 +82,10 @@ enum Command {
     /// Anything else (a GitHub repository as a URL or `owner/repo`, a ClawHub listing, an MCP registry, another
     /// ShelfKit instance) is imported by the hosted service's import job, which pins each item, records its licence
     /// and attribution, and imports an unlicensed one as a link without content. A repository's AGENTS.md and its
-    /// docs are found the same way there, and `--path` naming one markdown file imports it as a doc. Without `--pick` or `--all` the
-    /// candidates are listed; with them they are imported into the hosted shelf, and `shelfkit fetch` brings them
-    /// here. Needs `shelfkit login`.
+    /// docs are found the same way there, and `--path` naming one markdown file imports it as a doc. Without `--pick`
+    /// or `--all` the candidates are listed; with them they are imported into the hosted shelf, as commits on its
+    /// repository (`<deployment>/git/<shelf>.git`), and `git pull` in the shelf's repository brings them here. Needs
+    /// `shelfkit login`.
     Add(AddArgs),
     /// Remove an item. Refused while a profile, a bundle, or another item references it.
     Rm(RmArgs),
@@ -166,18 +167,14 @@ enum Command {
     /// works, rerun with `--print`. The link is a credential until used, so let nobody else see it. The key is never
     /// printed.
     Open(OpenArgs),
-    /// Upload the shelf to a hosted deployment and publish its profiles to its registry.
+    /// Publish every profile to a hosted deployment's registry.
     ///
-    /// Every file is uploaded once by its sha256, the set becomes the hosted shelf's snapshot (the deployment's
-    /// engine validates it first), and each profile is packaged exactly as `serve` packages it and published at its
-    /// `version`, or `0.0.0+sha256.<revision>.format<N>`. A hosted shelf that was changed there (in the web UI, by an import) is
-    /// not overwritten without `--force`.
-    Push(PushArgs),
-    /// Write a hosted shelf's snapshot into a directory, removing the shelf files it no longer has.
-    ///
-    /// A local file it would replace or remove whose content the service has never had is work that was never pushed:
-    /// the fetch is refused, naming each one, unless `--force`.
-    Fetch(FetchArgs),
+    /// Each profile is packaged exactly as `serve` packages it and published as `{registry.namespace}/{profile}` at
+    /// its `version`, or `0.0.0+sha256.<revision>.format<N>` without one, with the registry's `PUT`. A version is immutable: one already published with the same bytes is
+    /// reported and left, and one published with other bytes fails the command until the profile is given a new
+    /// `version`. The shelf's files are not uploaded: a hosted shelf is the Git repository
+    /// `<deployment>/git/<shelf>.git`, pushed to with git.
+    Publish(PublishArgs),
 }
 
 #[derive(Args)]
@@ -205,36 +202,10 @@ struct OpenArgs {
 }
 
 #[derive(Args)]
-struct PushArgs {
+struct PublishArgs {
     /// The deployment. Defaults to SHELFKIT_URL, then the one `login` remembered.
     #[arg(long)]
     url: Option<String>,
-    /// A message for the snapshot.
-    #[arg(long, short)]
-    message: Option<String>,
-    /// Upload and commit, but publish no profile.
-    #[arg(long)]
-    no_publish: bool,
-    /// Replace a hosted shelf that has changes made there.
-    #[arg(long)]
-    force: bool,
-}
-
-#[derive(Args)]
-struct FetchArgs {
-    /// The deployment. Defaults to SHELFKIT_URL, then the one `login` remembered.
-    #[arg(long)]
-    url: Option<String>,
-    /// The shelf. Defaults to the local shelf.json's `registry.namespace`, then the key's own shelf.
-    #[arg(long, value_name = "SHELF")]
-    id: Option<String>,
-    /// The directory to write into. Defaults to the shelf (`--shelf`, or the nearest shelf.json), else the current
-    /// directory.
-    #[arg(long, value_name = "DIR")]
-    out: Option<PathBuf>,
-    /// Replace or remove local files the service has never had (work that was never pushed).
-    #[arg(long)]
-    force: bool,
 }
 
 #[derive(Args)]
@@ -478,17 +449,7 @@ where
         Command::Login(args) => hosted::login(ctx, args.url.as_deref(), args.key),
         Command::Logout(args) => hosted::logout(ctx, args.url.as_deref()),
         Command::Open(args) => hosted::open(ctx, args.url.as_deref(), args.print),
-        Command::Push(args) => push_command(ctx, shelf, &args),
-        Command::Fetch(args) => hosted::fetch(
-            ctx,
-            shelf,
-            &hosted::FetchOptions {
-                force: args.force,
-                id: args.id.as_deref(),
-                out: args.out.as_deref(),
-                url: args.url.as_deref(),
-            },
-        ),
+        Command::Publish(args) => publish_command(ctx, shelf, &args),
     };
     match outcome {
         Ok(()) => 0,
@@ -505,18 +466,9 @@ where
     }
 }
 
-fn push_command(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &PushArgs) -> Outcome {
+fn publish_command(ctx: &mut Context<'_>, shelf: Option<PathBuf>, args: &PublishArgs) -> Outcome {
     let root = shelf_root(ctx, shelf)?;
-    hosted::push(
-        ctx,
-        &root,
-        &hosted::PushOptions {
-            force: args.force,
-            message: args.message.as_deref(),
-            publish: !args.no_publish,
-            url: args.url.as_deref(),
-        },
-    )
+    hosted::publish(ctx, &root, args.url.as_deref())
 }
 
 fn absolute(ctx: &Context<'_>, path: Option<&Path>) -> PathBuf {

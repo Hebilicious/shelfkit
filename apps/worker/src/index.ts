@@ -5,7 +5,8 @@
  *   /apm/v1/*  the OpenAPM registry wire contract, a plain fetch handler (`registry.ts`)
  *   /mcp       stateless MCP tools (`mcp/`, issue #6)
  *   /graphql   everything the UI and CLI do, including key management (`graphql/`)
- *   /raw/*     a shelf's content-addressed files, for `shelfkit push` and `fetch` (`raw.ts`)
+ *   /raw/*     a shelf's content-addressed files, for the browser's engine (`raw.ts`)
+ *   /git/*     each shelf's Git repository, for `git clone`, `push`, and APM (`git.ts`)
  *   /auth/passkey/*  signing the browser in with a passkey, and adding one (`auth/passkeys.ts`)
  *   /auth/github/*   signing the browser in with GitHub, when enabled (`auth/github.ts`)
  *   /auth/cli/*      signing the CLI in through the browser: `shelfkit login` (`auth/cli.ts`)
@@ -22,6 +23,7 @@ import { cliLoginRoute } from "./auth/cli.ts";
 import { githubRoute } from "./auth/github.ts";
 import { authenticateHeader } from "./auth/index.ts";
 import { passkeyRoute } from "./auth/passkeys.ts";
+import { gitRoute } from "./git.ts";
 import { graphqlRoute } from "./graphql/route.ts";
 import { unauthorized } from "./http.ts";
 import { installScriptRoute } from "./install-script.ts";
@@ -49,6 +51,9 @@ export default {
     }
     if (pathname.startsWith("/raw/")) {
       return await rawRoute(request, env);
+    }
+    if (pathname.startsWith("/git/")) {
+      return await gitRoute(request, env);
     }
     if (pathname.startsWith("/auth/github/")) {
       return await githubRoute(request, env);

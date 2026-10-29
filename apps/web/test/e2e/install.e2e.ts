@@ -23,8 +23,8 @@ import {
 
 const SHELF = "install-e2e";
 
-test.beforeAll(() => {
-  seedShelf(FIXTURES.allKinds, SHELF);
+test.beforeAll(async () => {
+  await seedShelf(FIXTURES.allKinds, SHELF);
 });
 
 test("the prompt for an agent installs the CLI, then the profile from this deployment", async ({

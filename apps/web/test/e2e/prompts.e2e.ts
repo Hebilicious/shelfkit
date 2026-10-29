@@ -15,8 +15,8 @@ import {
 
 const SHELF = "prompts-e2e";
 
-test.beforeAll(() => {
-  seedShelf(FIXTURES.allKinds, SHELF);
+test.beforeAll(async () => {
+  await seedShelf(FIXTURES.allKinds, SHELF);
 });
 
 test.beforeEach(async ({ page }) => {

@@ -8,7 +8,8 @@
 //! with `--pick` or `--all`, picks them (`pickImport`) and waits for the job
 //! to commit them. One implementation of licence enforcement, link-only
 //! imports, and pinning serves the UI and the CLI alike. The items land in
-//! the hosted shelf; `shelfkit fetch` writes them into the local one.
+//! the hosted shelf as commits on its repository; `git pull` brings them into
+//! the local one.
 
 use super::hosted::Remote;
 use serde_json::{Value, json};
@@ -161,7 +162,8 @@ pub fn namespace(root: &Path) -> Result<String, String> {
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or_else(|| {
-            "shelf.json has no `registry.namespace`, the hosted shelf to import into; set it and `shelfkit push` first"
+            "shelf.json has no `registry.namespace`, the hosted shelf to import into; set it, and push the shelf to \
+             its hosted repository, `<deployment>/git/<namespace>.git`, with git first"
                 .to_owned()
         })
 }
@@ -272,7 +274,9 @@ pub fn run(
     }
     let _ = writeln!(
         text,
-        "The items are in the hosted shelf `{shelf}`. Run `shelfkit fetch` to write them into this one."
+        "The items are commits on the hosted shelf `{shelf}` ({}/git/{shelf}.git). Run `git pull` in the shelf's \
+         repository to bring them into this one.",
+        remote.url()
     );
     Ok(Outcome {
         text,

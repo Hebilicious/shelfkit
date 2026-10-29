@@ -4,8 +4,8 @@ import { FIXTURES, seedShelf, signIn, expect, test } from "./support.ts";
 
 const SHELF = "keys-e2e";
 
-test.beforeAll(() => {
-  seedShelf(FIXTURES.allKinds, SHELF);
+test.beforeAll(async () => {
+  await seedShelf(FIXTURES.allKinds, SHELF);
 });
 
 test("moves through the shelf and its lists from the keyboard", async ({

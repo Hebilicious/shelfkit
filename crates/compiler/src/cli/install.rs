@@ -222,7 +222,7 @@ fn newest_version(
                 .map(str::to_owned)
                 .ok_or_else(|| {
                     format!(
-                        "{coordinate} is on {url} but not published: its owner publishes it with `shelfkit push`"
+                        "{coordinate} is on {url} but not published: its owner publishes it with `shelfkit publish`"
                     )
                 })
         }
@@ -242,7 +242,7 @@ fn newest_version(
         )),
         (404, _) => Err(format!(
             "{url} has no profile {coordinate}: check the name on the shelf's Install page, or publish it with \
-             `shelfkit push`"
+             `shelfkit publish`"
         )),
         (status, _) => Err(format!("{versions} answered {status}")),
     }

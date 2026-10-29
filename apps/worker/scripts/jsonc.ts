@@ -1,4 +1,4 @@
-/** Reading `wrangler.jsonc` from the Worker's scripts and its test configuration. */
+/** Reading `wrangler.jsonc` in Node, from the Worker's scripts and its test configuration: JSONC, which `JSON.parse` does not read. */
 
 /** JSONC to JSON: comments and trailing commas removed, strings left alone. */
 export function stripJsonc(text: string): string {

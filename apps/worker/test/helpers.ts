@@ -1,7 +1,9 @@
-/** Talking to the Worker under test the way a client does: over HTTP, through its default export. */
-import { exports } from "cloudflare:workers";
+/** Talking to the Worker under test the way a client does: over HTTP, through its default export; Git included. */
+import { env, exports } from "cloudflare:workers";
 import * as v from "valibot";
 
+import { engine } from "../src/engine.ts";
+import { shelfRepository } from "../src/repository/index.ts";
 import { TEST_OWNER_KEY } from "./owner-key.ts";
 
 export const ORIGIN = "https://shelfkit.test";
@@ -83,59 +85,142 @@ export function decodeBase64(text: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(atob(text), (char) => char.codePointAt(0) ?? 0);
 }
 
-async function sha256(bytes: Uint8Array): Promise<string> {
-  const hash = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))
-  );
-  return [...hash].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+/** What a push answered once the shelf's object had indexed it: the snapshot it made, or why there is none. */
+export interface Pushed {
+  readonly ok: boolean;
+  readonly errors: readonly {
+    readonly message: string;
+    readonly path: string;
+  }[];
+  readonly snapshot: { readonly digest: string } | null;
+  /** The commit pushed; null when the push was refused before it reached the repository. */
+  readonly commit: string | null;
 }
 
-const CommitSchema = v.object({
-  commitSnapshot: v.object({
-    errors: v.array(v.object({ message: v.string(), path: v.string() })),
-    ok: v.boolean(),
-    snapshot: v.nullable(v.object({ digest: v.string() })),
-  }),
+const system = { job: "repository.sync", kind: "system" } as const;
+
+/** HTTP Basic, as a Git client's credential helper sends a key: any user name, the key as the password. */
+export function basic(key: string): string {
+  return `Basic ${btoa(`git:${key}`)}`;
+}
+
+/** The commit `main` is at in the shelf's repository, read from the push advertisement as `git push` reads it. */
+async function branchHead(
+  shelf: string,
+  key: string
+): Promise<{ readonly head: string | null } | { readonly refused: Response }> {
+  const response = await exports.default.fetch(
+    `${ORIGIN}/git/${shelf}.git/info/refs?service=git-receive-pack`,
+    { headers: { authorization: basic(key) } }
+  );
+  if (!response.ok) {
+    return { refused: response };
+  }
+  const advertised = new TextDecoder().decode(await response.arrayBuffer());
+  return {
+    head:
+      /(?<id>[0-9a-f]{40}) refs\/heads\/main/u.exec(advertised)?.groups?.id ??
+      null,
+  };
+}
+
+const SnapshotSchema = v.object({
+  shelf: v.nullable(
+    v.object({ snapshot: v.nullable(v.object({ digest: v.string() })) })
+  ),
 });
 
-/** Push a shelf as `shelfkit push` does: upload every file to `/raw`, then commit the snapshot. */
+/** A push the Git route refused before it reached the repository: no key, or not one that may write. */
+async function refusedBy(response: Response): Promise<Pushed> {
+  return {
+    commit: null,
+    errors: [{ message: await response.text(), path: "<shelf>" }],
+    ok: false,
+    snapshot: null,
+  };
+}
+
+/**
+ * Push a shelf as `git push` does: one commit of exactly `files`, on top of whatever `main` is at, through
+ * `/git/{shelf}.git` with `key`. The route indexes the push before it answers; this then syncs once more, as the
+ * `repository.sync` job would, to answer with the snapshot the push made or the errors that refused it.
+ */
 export async function push(
   shelf: string,
   files: Readonly<Record<string, string | Uint8Array<ArrayBuffer>>>,
   key: string = TEST_OWNER_KEY
-): Promise<v.InferOutput<typeof CommitSchema>["commitSnapshot"]> {
-  const entries = await Promise.all(
-    Object.entries(files).map(async ([path, contents]) => {
-      const bytes =
-        contents instanceof Uint8Array
-          ? contents
-          : new TextEncoder().encode(contents);
-      const hash = await sha256(bytes);
-      const uploaded = await exports.default.fetch(
-        `${ORIGIN}/raw/${shelf}/objects/${hash}`,
-        {
-          body: bytes,
-          headers: { authorization: `Bearer ${key}` },
-          method: "PUT",
-        }
-      );
-      if (uploaded.status !== 204) {
-        throw new Error(
-          `uploading ${path} answered ${uploaded.status}: ${await uploaded.text()}`
-        );
+): Promise<Pushed> {
+  const found = await branchHead(shelf, key);
+  if ("refused" in found) {
+    return await refusedBy(found.refused);
+  }
+  const shelfEngine = await engine();
+  const planned = shelfEngine.gitCommit({
+    author: {
+      email: "dev@example.com",
+      name: "Dev",
+      offset: 0,
+      time: 1_700_000_000,
+    },
+    base: [],
+    files: Object.entries(files).map(([path, contents]) => ({
+      contents,
+      path,
+    })),
+    message: "a push from a Git client",
+    parent: found.head ?? undefined,
+  });
+  if (!planned.ok) {
+    throw new Error(planned.errors.map((error) => error.message).join("; "));
+  }
+  const { commit, request, tree } = planned.value;
+  // `git commit` makes no commit of the tree its parent already has, so neither does this.
+  const head = await shelfRepository(env).head(shelf);
+  if (request !== null && tree !== head?.tree) {
+    const response = await exports.default.fetch(
+      `${ORIGIN}/git/${shelf}.git/git-receive-pack`,
+      {
+        body: Uint8Array.from(request),
+        headers: {
+          authorization: basic(key),
+          "content-type": "application/x-git-receive-pack-request",
+        },
+        method: "POST",
       }
-      return { path, sha256: hash, size: bytes.length };
-    })
+    );
+    if (!response.ok) {
+      return await refusedBy(response);
+    }
+    const report = shelfEngine.gitReport(
+      new Uint8Array(await response.arrayBuffer())
+    );
+    if (
+      !report.ok ||
+      !report.value.unpack.ok ||
+      report.value.refs.some((ref) => !ref.ok)
+    ) {
+      throw new Error(
+        `the repository refused the push: ${JSON.stringify(report)}`
+      );
+    }
+  }
+  const synced = await env.SHELF.get(
+    env.SHELF.idFromName(shelf)
+  ).syncRepository(system, shelf);
+  if (synced.status === "refused") {
+    return { commit, errors: synced.errors, ok: false, snapshot: null };
+  }
+  const indexed = await data(
+    SnapshotSchema,
+    "query Snapshot($shelf: ID!) { shelf(id: $shelf) { snapshot { digest } } }",
+    { shelf }
   );
-  const found = await data(
-    CommitSchema,
-    `mutation Push($shelf: ID!, $files: [SnapshotFileInput!]!) {
-      commitSnapshot(shelf: $shelf, files: $files) { ok errors { path message } snapshot { digest } }
-    }`,
-    { files: entries, shelf },
-    key
-  );
-  return found.commitSnapshot;
+  return {
+    commit: tree === head?.tree ? head.commit : commit,
+    errors: [],
+    ok: true,
+    snapshot: indexed.shelf?.snapshot ?? null,
+  };
 }
 
 /** A small shelf: `shelf.json` with the namespace, plus whatever files are given. */

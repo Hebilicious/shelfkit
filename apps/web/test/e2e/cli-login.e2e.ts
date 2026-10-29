@@ -4,16 +4,15 @@
  * the CLI built from this checkout. The CLI's own side (showing the code, opening the page, polling, keeping the key in
  * the OS keychain) is `crates/compiler/tests/hosted.rs`: this run must not write to the machine's keychain.
  */
-import { execFileSync } from "node:child_process";
 
 import type { APIRequestContext } from "@playwright/test";
 import * as v from "valibot";
 
 import {
   BASE_URL,
-  BINARY,
   FIXTURES,
   expect,
+  git,
   makePrivate,
   ownerSignInLink,
   seedShelf,
@@ -57,8 +56,8 @@ async function linkTo(request: APIRequestContext, next: string) {
   return `${base}?next=${encodeURIComponent(next)}#${token}`;
 }
 
-test.beforeAll(() => {
-  seedShelf(FIXTURES.allKinds, SHELF, makePrivate);
+test.beforeAll(async () => {
+  await seedShelf(FIXTURES.allKinds, SHELF, makePrivate);
 });
 
 test("a CLI login is approved in a browser that signs in first, and its key works for the CLI until revoked", async ({
@@ -101,15 +100,12 @@ test("a CLI login is approved in a browser that signs in first, and its key work
     status: "expired",
   });
 
-  // The CLI reads the private shelf with it.
-  const listed = execFileSync(
-    BINARY,
-    ["fetch", "--id", SHELF, "--out", temporary("cli-login")],
-    {
-      encoding: "utf-8",
-      env: { ...process.env, SHELFKIT_KEY: key, SHELFKIT_URL: BASE_URL },
-      stdio: ["ignore", "pipe", "pipe"],
-    }
+  // Git clones the private shelf with it.
+  const listed = git(
+    temporary("cli-login"),
+    ["clone", "--quiet", `${BASE_URL}/git/${SHELF}.git`, "shelf"],
+    BASE_URL,
+    key
   );
   expect(listed).not.toContain(key);
 

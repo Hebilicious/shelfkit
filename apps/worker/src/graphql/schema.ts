@@ -318,14 +318,6 @@ function signedIn(session: Session): boolean {
   );
 }
 
-function requireKey(context: GraphQLContext): void {
-  if (!signedIn(context.session)) {
-    throw new GraphQLError("this needs a key, or signing in", {
-      extensions: { code: "UNAUTHENTICATED" },
-    });
-  }
-}
-
 export function buildSchema(): GraphQLSchema {
   // Fields are non-null unless they say otherwise, so the SDL promises what the resolvers guarantee.
   const builder = new SchemaBuilder<{
@@ -436,6 +428,11 @@ export function buildSchema(): GraphQLSchema {
       description:
         "One state of the shelf's files. Its manifest is the R2 object named by `digest`.",
       fields: (t) => ({
+        commit: t.exposeString("commit", {
+          description:
+            "The commit in the shelf's repository that holds these files; null where the deployment has no Artifacts.",
+          nullable: true,
+        }),
         createdAt: t.field({
           resolve: (row) => row.createdAt,
           type: "DateTime",
@@ -447,6 +444,53 @@ export function buildSchema(): GraphQLSchema {
         origin: t.exposeString("origin"),
         parent: t.exposeString("parent", { nullable: true }),
         totalBytes: t.exposeFloat("totalBytes"),
+      }),
+    });
+
+  const RefusedHead = builder
+    .objectRef<{
+      readonly commit: string;
+      readonly errors: readonly {
+        readonly path: string;
+        readonly message: string;
+      }[];
+    }>("RefusedHead")
+    .implement({
+      description:
+        "A commit pushed to the shelf's repository that the engine could not load: the shelf stays at the commit before it until a push fixes it.",
+      fields: (t) => ({
+        commit: t.exposeString("commit"),
+        errors: t.field({ resolve: (head) => head.errors, type: [Problem] }),
+      }),
+    });
+
+  const Repository = builder
+    .objectRef<{
+      readonly url: string;
+      readonly commit: string | null;
+      readonly refused: {
+        readonly commit: string;
+        readonly errors: readonly {
+          readonly path: string;
+          readonly message: string;
+        }[];
+      } | null;
+    }>("Repository")
+    .implement({
+      description:
+        "The shelf's Git repository. Clone, fetch, and push it at `url` with a key: as the password of HTTP Basic, or as a Bearer header.",
+      fields: (t) => ({
+        commit: t.exposeString("commit", {
+          description:
+            "The commit the shelf is indexed at; null until its files are first committed.",
+          nullable: true,
+        }),
+        refused: t.field({
+          nullable: true,
+          resolve: (repository) => repository.refused,
+          type: RefusedHead,
+        }),
+        url: t.exposeString("url"),
       }),
     });
 
@@ -1769,7 +1813,7 @@ export function buildSchema(): GraphQLSchema {
       }),
       files: t.field({
         description:
-          "The current snapshot's files: what `shelfkit fetch` downloads.",
+          "The current snapshot's files: what the browser's engine downloads, from `/raw/{shelf}/objects/{sha256}`.",
         resolve: async (shelf, _args, context) => {
           const snapshot = await stub(context, shelf.id).files(
             context.session,
@@ -1893,28 +1937,6 @@ export function buildSchema(): GraphQLSchema {
           return found;
         },
         type: [ApiKey],
-      }),
-      knownObjects: t.stringList({
-        args: {
-          sha256: t.arg.stringList({
-            description: "Lowercase hex SHA-256 digests, at most 2000.",
-            required: true,
-          }),
-        },
-        description:
-          "Which of these digests a committed snapshot of the shelf has ever referenced: content the service has. `shelfkit fetch` replaces a local file only when its content is known here, so it never discards unpushed work.",
-        resolve: async (shelf, args, context) => {
-          if (args.sha256.length > 2000) {
-            throw badInput("ask about at most 2000 digests at once");
-          }
-          return (
-            (await stub(context, shelf.id).referencedObjects(
-              context.session,
-              shelf.id,
-              args.sha256
-            )) ?? []
-          );
-        },
       }),
       manifest: t.field({
         description: "shelf.json.",
@@ -2081,6 +2103,19 @@ export function buildSchema(): GraphQLSchema {
           "The base URL APM's `registries` entry names for this deployment.",
         resolve: (_shelf, _args, context) =>
           `${new URL(context.request.url).origin}/apm`,
+      }),
+      repository: t.field({
+        description:
+          "The shelf's Git repository, which holds its files; null where the deployment runs without Artifacts.",
+        nullable: true,
+        resolve: (shelf, _args, context) =>
+          shelf.summary.repository === null
+            ? null
+            : {
+                ...shelf.summary.repository,
+                url: `${new URL(context.request.url).origin}/git/${shelf.id}.git`,
+              },
+        type: Repository,
       }),
       secretNames: t.field({
         resolve: async (shelf, _args, context) =>
@@ -2371,14 +2406,6 @@ export function buildSchema(): GraphQLSchema {
     }),
   });
 
-  const SnapshotFileInput = builder.inputType("SnapshotFileInput", {
-    fields: (t) => ({
-      path: t.string({ required: true }),
-      sha256: t.string({ required: true }),
-      size: t.int({ required: true }),
-    }),
-  });
-
   builder.mutationType({
     fields: (t) => ({
       approveCliLogin: t.field({
@@ -2388,42 +2415,6 @@ export function buildSchema(): GraphQLSchema {
         resolve: async (_root, args, context) =>
           await people.approveCli(context, args.code),
         type: CliLoginApproval,
-      }),
-      commitSnapshot: t.field({
-        args: {
-          files: t.arg({ required: true, type: [SnapshotFileInput] }),
-          message: t.arg.string(),
-          parent: t.arg.string({
-            description:
-              "The snapshot this one replaces; refused if the shelf has moved since.",
-          }),
-          shelf: t.arg.id({ required: true }),
-        },
-        description:
-          "Make these files the shelf's snapshot, after uploading each to `/raw/{shelf}/objects/{sha256}`: `shelfkit push`. The first snapshot creates the shelf (owner only).",
-        resolve: async (_root, args, context) => {
-          requireKey(context);
-          const shelf = shelfArg(args.shelf);
-          // Only the owner creates a shelf; anyone else's commit to a shelf that does not exist finds none.
-          const target =
-            context.session.kind === "owner"
-              ? shelfStub(context.env, shelf)
-              : await held(context, shelf);
-          return committed(
-            await target.commitSnapshot(context.session, {
-              files: args.files.map((file) => ({
-                path: file.path,
-                sha256: file.sha256,
-                size: file.size,
-              })),
-              message: args.message ?? undefined,
-              origin: "push",
-              parent: args.parent ?? undefined,
-              shelf,
-            })
-          );
-        },
-        type: Commit,
       }),
       createInvite: t.field({
         args: {
@@ -2616,7 +2607,7 @@ export function buildSchema(): GraphQLSchema {
         resolve: async (_root, args, context) => {
           const shelf = shelfArg(args.shelf);
           const target = await held(context, shelf);
-          if (!(await target.mayUpload(context.session, shelf))) {
+          if (!(await target.mayCommit(context.session, shelf))) {
             throw forbidden("this key cannot write to this shelf");
           }
           await sendJob(context, {

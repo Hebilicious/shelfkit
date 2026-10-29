@@ -357,18 +357,6 @@ type Mutation {
   approveCliLogin(code: String!): CliLoginApproval!
 
   """
-  Make these files the shelf's snapshot, after uploading each to `/raw/{shelf}/objects/{sha256}`: `shelfkit push`. The first snapshot creates the shelf (owner only).
-  """
-  commitSnapshot(
-    files: [SnapshotFileInput!]!
-    message: String
-
-    """The snapshot this one replaces; refused if the shelf has moved since."""
-    parent: String
-    shelf: ID!
-  ): CommitResult!
-
-  """
   Make an invite: a link, used once within 7 days, that gives whoever opens it these scopes on the shelf. The owner only.
   """
   createInvite(
@@ -702,10 +690,30 @@ type RecommendedItem {
   recommendedBy: [String!]!
 }
 
+"""
+A commit pushed to the shelf's repository that the engine could not load: the shelf stays at the commit before it until a push fixes it.
+"""
+type RefusedHead {
+  commit: String!
+  errors: [ShelfProblem!]!
+}
+
 """A profile published to the shelf's OpenAPM registry."""
 type RegistryPackage {
   package: String!
   versions: JSON!
+}
+
+"""
+The shelf's Git repository. Clone, fetch, and push it at `url` with a key: as the password of HTTP Basic, or as a Bearer header.
+"""
+type Repository {
+  """
+  The commit the shelf is indexed at; null until its files are first committed.
+  """
+  commit: String
+  refused: RefusedHead
+  url: String!
 }
 
 """
@@ -832,7 +840,9 @@ type Shelf {
   description: String!
   favourites: [Item!]!
 
-  """The current snapshot's files: what `shelfkit fetch` downloads."""
+  """
+  The current snapshot's files: what the browser's engine downloads, from `/raw/{shelf}/objects/{sha256}`.
+  """
   files: [SnapshotFile!]!
 
   """The people granted access to the shelf in the browser. The owner only."""
@@ -863,14 +873,6 @@ type Shelf {
 
   """The shelf's scoped keys. The owner only."""
   keys: [ApiKey!]!
-
-  """
-  Which of these digests a committed snapshot of the shelf has ever referenced: content the service has. `shelfkit fetch` replaces a local file only when its content is known here, so it never discards unpushed work.
-  """
-  knownObjects(
-    """Lowercase hex SHA-256 digests, at most 2000."""
-    sha256: [String!]!
-  ): [String!]!
 
   """shelf.json."""
   manifest: JSON!
@@ -907,6 +909,11 @@ type Shelf {
 
   """The base URL APM's `registries` entry names for this deployment."""
   registryUrl: String!
+
+  """
+  The shelf's Git repository, which holds its files; null where the deployment runs without Artifacts.
+  """
+  repository: Repository
   secretNames: [SecretName!]!
   shareLinks: [ShareLink!]!
   snapshot: Snapshot
@@ -998,6 +1005,10 @@ type SignInMethods {
 One state of the shelf's files. Its manifest is the R2 object named by `digest`.
 """
 type Snapshot {
+  """
+  The commit in the shelf's repository that holds these files; null where the deployment has no Artifacts.
+  """
+  commit: String
   createdAt: DateTime!
   digest: String!
   fileCount: Int!
@@ -1012,12 +1023,6 @@ type Snapshot {
 A file of the current snapshot: download it from `/raw/{shelf}/objects/{sha256}`.
 """
 type SnapshotFile {
-  path: String!
-  sha256: String!
-  size: Int!
-}
-
-input SnapshotFileInput {
   path: String!
   sha256: String!
   size: Int!

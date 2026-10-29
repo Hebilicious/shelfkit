@@ -8,14 +8,15 @@
  * as `acme`; requests are rewritten to the scenario's shelf, and its name is written back to `acme` in answers, so the
  * suite's expectations hold unchanged. The shelves are left behind: their archives are under the bucket lock.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { runConformance } from "@shelfkit/engine/conformance";
 import type {
   ConformanceRequest,
   ConformanceResponse,
 } from "@shelfkit/engine/conformance";
-import { loadConformanceSuite } from "@shelfkit/engine/node";
+import { loadConformanceSuite, loadEngine } from "@shelfkit/engine/node";
 import * as v from "valibot";
 
 const url = (process.env.SHELFKIT_URL ?? "").replace(/\/+$/u, "");
@@ -57,37 +58,79 @@ async function graphql<const TSchema extends v.GenericSchema>(
   return v.parse(schema, answer.data);
 }
 
-/** Create the scenario's shelf: one shelf.json, public or not. */
-async function createShelf(shelf: string, isPublic: boolean): Promise<void> {
-  const bytes = new TextEncoder().encode(
-    `${JSON.stringify({ name: shelf, registry: { namespace: shelf, public: isPublic } }, null, 2)}\n`
-  );
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
-  const uploaded = await fetch(`${url}/raw/${shelf}/objects/${sha256}`, {
-    body: bytes,
-    headers: { authorization: `Bearer ${ownerKey}` },
-    method: "PUT",
-  });
-  if (uploaded.status !== 204) {
-    throw new Error(
-      `uploading ${shelf}'s shelf.json answered ${uploaded.status}`
-    );
-  }
-  const data = await graphql(
-    "mutation Create($shelf: ID!, $files: [SnapshotFileInput!]!) { commitSnapshot(shelf: $shelf, files: $files) { ok errors { path message } } }",
-    { files: [{ path: "shelf.json", sha256, size: bytes.length }], shelf },
+const IndexedSchema = v.object({
+  shelf: v.nullable(
     v.object({
-      commitSnapshot: v.object({
-        errors: v.array(v.unknown()),
-        ok: v.boolean(),
+      repository: v.object({
+        commit: v.nullable(v.string()),
+        refused: v.nullable(v.object({ commit: v.string() })),
       }),
     })
-  );
-  if (!data.commitSnapshot.ok) {
+  ),
+});
+
+/**
+ * Create the scenario's shelf, one shelf.json, public or not: a root commit pushed to its repository as `git push`
+ * would push it, then indexed by the deployment's queue.
+ */
+async function createShelf(shelf: string, isPublic: boolean): Promise<void> {
+  const engine = await loadEngine();
+  const planned = engine.gitCommit({
+    author: {
+      email: "conformance@shelfkit.invalid",
+      name: "ShelfKit conformance",
+      offset: 0,
+      time: Math.floor(Date.now() / 1000),
+    },
+    base: [],
+    files: [
+      {
+        contents: `${JSON.stringify({ name: shelf, registry: { namespace: shelf, public: isPublic } }, null, 2)}\n`,
+        path: "shelf.json",
+      },
+    ],
+    message: "A conformance scenario's shelf",
+  });
+  if (!planned.ok || planned.value.request === null) {
+    throw new Error(`planning ${shelf}'s first commit failed`);
+  }
+  const pushed = await fetch(`${url}/git/${shelf}.git/git-receive-pack`, {
+    body: Uint8Array.from(planned.value.request),
+    headers: {
+      authorization: `Bearer ${ownerKey}`,
+      "content-type": "application/x-git-receive-pack-request",
+    },
+    method: "POST",
+  });
+  const report = engine.gitReport(new Uint8Array(await pushed.arrayBuffer()));
+  if (
+    !report.ok ||
+    !report.value.unpack.ok ||
+    report.value.refs.some((ref) => !ref.ok)
+  ) {
     throw new Error(
-      `creating ${shelf}: ${JSON.stringify(data.commitSnapshot.errors)}`
+      `pushing ${shelf} answered ${pushed.status}: ${JSON.stringify(report)}`
     );
   }
+  const { commit } = planned.value;
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- polling: each read waits for the one before.
+    const found = await graphql(
+      "query Indexed($shelf: ID!) { shelf(id: $shelf) { repository { commit refused { commit } } } }",
+      { shelf },
+      IndexedSchema
+    );
+    if (found.shelf?.repository.commit === commit) {
+      return;
+    }
+    if (found.shelf?.repository.refused?.commit === commit) {
+      throw new Error(`${shelf} refused its first commit`);
+    }
+    // oxlint-disable-next-line eslint/no-await-in-loop -- as above.
+    await sleep(250);
+  }
+  throw new Error(`${shelf} was not indexed within a minute`);
 }
 
 async function createKey(

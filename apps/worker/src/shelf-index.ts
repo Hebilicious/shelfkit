@@ -10,7 +10,7 @@
  * are the shelf's API (`src/shelf/api.ts`): GraphQL and the MCP endpoint both call them, and each checks the caller's
  * session itself before it reads or writes.
  */
-import type { RegistryResponse } from "@shelfkit/engine";
+import type { GitNewFile, RegistryResponse } from "@shelfkit/engine";
 import {
   CandidateSchema,
   ImportedItemSchema,
@@ -74,6 +74,8 @@ import { isUnmigrated, migrateDatabase, openDatabase } from "./db/migrate.ts";
 import type { ShelfDatabase } from "./db/migrate.ts";
 import * as table from "./db/schema.ts";
 import { engine } from "./engine.ts";
+import { shelfRepository, REPOSITORY_BRANCH } from "./repository/index.ts";
+import type { ShelfRepository, RepositoryEntry } from "./repository/index.ts";
 import { resolveSecret, secretOrigin } from "./secrets.ts";
 import type { SecretBindingRecord } from "./secrets.ts";
 import type {
@@ -194,6 +196,25 @@ export interface ShelfSummary {
   /** Bytes of the database, which the platform caps at 10 GB per object. */
   readonly databaseBytes: number;
   readonly notices: Inventory["notices"];
+  /** The shelf's repository; null where the deployment has no Artifacts. */
+  readonly repository: RepositoryState | null;
+}
+
+/** Where the shelf's repository stands against its index. */
+export interface RepositoryState {
+  /** The commit the shelf is indexed at; null until its files are first committed to the repository. */
+  readonly commit: string | null;
+  /** The newest head of the repository that could not be indexed, and why; null when the index is at the head. */
+  readonly refused: {
+    readonly commit: string;
+    readonly errors: readonly ShelfProblem[];
+  } | null;
+}
+
+/** A commit already in the shelf's repository, being indexed: its id and every entry of its tree. */
+interface FromRepository {
+  readonly commit: string;
+  readonly entries: readonly RepositoryEntry[];
 }
 
 /** An item in full, for the Item screen. */
@@ -327,6 +348,28 @@ interface FileEntry {
   readonly size: number;
 }
 
+/** A new set of the shelf's files, to validate, commit, and index. */
+interface CommitInput {
+  readonly shelf: string;
+  readonly entries: ReadonlyMap<string, FileEntry>;
+  readonly contents: ReadonlyMap<string, Uint8Array>;
+  readonly message: string | null;
+  readonly origin: SnapshotRecord["origin"];
+  /** The snapshot the writer read, which must still be current; any snapshot when absent. */
+  readonly parent: string | undefined;
+  /** A commit already in the shelf's repository whose files these are: index it rather than commit them again. */
+  readonly from?: FromRepository;
+}
+
+/** What syncing the index with the repository's head did. */
+export type Synced =
+  | { readonly status: "none" | "current" | "indexed" }
+  | {
+      readonly status: "refused";
+      readonly commit: string;
+      readonly errors: readonly ShelfProblem[];
+    };
+
 /** What `index` changed: the item and profile ids it wrote, and the item ids it removed. */
 interface IndexChanges {
   readonly items: string[];
@@ -350,6 +393,8 @@ export class ShelfIndex extends DurableObject<Env> {
   /** Whether the database has the shelf's schema. An object that has never held a shelf does not, until it writes. */
   private migrated = false;
   private loaded: Loaded | undefined;
+  /** The last write to the shelf's files queued: each waits for the one before (`serially`). */
+  private writes: Promise<void> = Promise.resolve();
   private readonly plans = new Map<string, Plan | CompileFailed>();
   /**
    * Each open event stream, with the session that opened it, which is checked again before every event, and the
@@ -867,6 +912,7 @@ export class ShelfIndex extends DurableObject<Env> {
             : v.parse(v.array(NoticeSchema), JSON.parse(notices)),
         profileCount: count(table.profile),
         public: manifest.registry?.public ?? false,
+        repository: this.repositoryState(),
         snapshot: this.currentSnapshot(),
       },
     };
@@ -903,7 +949,7 @@ export class ShelfIndex extends DurableObject<Env> {
       .map(snapshotRecord);
   }
 
-  /** The current snapshot's files, by path and hash: what `shelfkit fetch` downloads. */
+  /** The current snapshot's files, by path and hash: what the browser's engine downloads. */
   files(
     session: Session,
     shelf: string
@@ -936,22 +982,6 @@ export class ShelfIndex extends DurableObject<Env> {
     return this.referenced([sha256]).length === 1;
   }
 
-  /**
-   * Which of `hashes` a committed snapshot of the shelf has ever referenced: content the service has, now or in its
-   * history. `shelfkit fetch` uses it to tell a local file it may replace from local work it must not.
-   */
-  referencedObjects(
-    session: Session,
-    shelf: string,
-    hashes: readonly string[]
-  ): string[] | null {
-    const granted = this.reader(session, shelf);
-    if ("ok" in granted) {
-      return null;
-    }
-    return this.referenced(hashes);
-  }
-
   private referenced(hashes: readonly string[]): string[] {
     const wanted = [...new Set(hashes)].filter((hash) => isSha256Hex(hash));
     if (wanted.length === 0) {
@@ -971,8 +1001,9 @@ export class ShelfIndex extends DurableObject<Env> {
   }
 
   /**
-   * Record objects `session` uploaded for this shelf, so a later snapshot may name them. The owner may upload to a
-   * shelf that does not exist yet: the first push creates it.
+   * Record objects stored in R2 for this shelf, so a later snapshot may name them: an index from a forge stores each
+   * file before it commits. The owner may record objects for a shelf that does not exist yet: its first commit
+   * creates it.
    */
   recordObjects(
     session: Session,
@@ -993,8 +1024,16 @@ export class ShelfIndex extends DurableObject<Env> {
     return true;
   }
 
-  /** Whether `session` may upload objects for this shelf: a writer, or the owner creating it. */
-  mayUpload(session: Session, shelf: string): boolean {
+  /** Whether `session` may clone and fetch the shelf's repository: anyone who may read the shelf. */
+  mayReadRepository(session: Session, shelf: string): boolean {
+    return !("ok" in this.reader(session, shelf));
+  }
+
+  /**
+   * Whether `session` may commit files to the shelf, by a push to its repository or an index from a forge: a writer,
+   * or the owner creating the shelf.
+   */
+  mayCommit(session: Session, shelf: string): boolean {
     return this.mayWriteFiles(session, shelf);
   }
 
@@ -1021,7 +1060,7 @@ export class ShelfIndex extends DurableObject<Env> {
       readonly shelf: string;
       readonly files: readonly SnapshotFile[];
       readonly message?: string;
-      readonly origin?: SnapshotRecord["origin"];
+      readonly origin: SnapshotRecord["origin"];
       readonly parent?: string;
     }
   ): Promise<Committed> {
@@ -1090,7 +1129,7 @@ export class ShelfIndex extends DurableObject<Env> {
       contents,
       entries,
       message: input.message ?? null,
-      origin: input.origin ?? "push",
+      origin: input.origin,
       parent: input.parent,
       shelf: input.shelf,
     });
@@ -1157,20 +1196,34 @@ export class ShelfIndex extends DurableObject<Env> {
     return contents;
   }
 
+  /** Run `work` after every write queued before it: one write to the shelf's files, and its repository, at a time. */
+  private async serially<T>(work: () => Promise<T>): Promise<T> {
+    const before = this.writes;
+    const run = (async () => {
+      await before;
+      return await work();
+    })();
+    this.writes = settled(run);
+    return await run;
+  }
+
   /**
-   * Validate and index a new set of files, then make it current. Everything after the engine has answered is
-   * synchronous, so no other request runs between the parent check and the last write.
+   * Validate and index a new set of files, then make it current. With a repository, the files are first committed
+   * to it, or, `from` a commit already there, indexed as they are. Writes run one at a time, and everything after the
+   * repository has answered is synchronous, so no other request runs between the parent check and the last write.
    */
   private async commit(
     session: Session,
-    input: {
-      readonly shelf: string;
-      readonly entries: ReadonlyMap<string, FileEntry>;
-      readonly contents: ReadonlyMap<string, Uint8Array>;
-      readonly message: string | null;
-      readonly origin: SnapshotRecord["origin"];
-      readonly parent: string | undefined;
-    }
+    input: CommitInput
+  ): Promise<Committed> {
+    return await this.serially(
+      async () => await this.commitNow(session, input)
+    );
+  }
+
+  private async commitNow(
+    session: Session,
+    input: CommitInput
   ): Promise<Committed> {
     const shelfEngine = await engine();
     const indexed = shelfEngine.inventory(engineFiles(input.contents));
@@ -1205,6 +1258,27 @@ export class ShelfIndex extends DurableObject<Env> {
       manifestBytes,
       "application/json"
     );
+    const stale = this.staleParent(input.parent);
+    if (stale !== null) {
+      return stale;
+    }
+    const repository = shelfRepository(this.env);
+    let committed: FromRepository | null = input.from ?? null;
+    if (committed === null) {
+      const pushed = await this.pushFiles(repository, session, input);
+      if (!pushed.ok) {
+        if (isRepositoryConflict(pushed.refused)) {
+          // Someone pushed around the Worker: index what they pushed now, so the next attempt starts from it.
+          await this.syncNow(
+            repository,
+            { job: "repository.sync", kind: "system" },
+            input.shelf
+          );
+        }
+        return pushed.refused;
+      }
+      ({ committed } = pushed);
+    }
     const firstSnapshot = this.shelfId() === null;
     if (firstSnapshot) {
       await this.env.BLOBS.put(
@@ -1223,17 +1297,9 @@ export class ShelfIndex extends DurableObject<Env> {
 
     // From here on, nothing awaits: the check and the writes are one step of the object.
     const current = this.metaValue("snapshot");
-    if (input.parent !== undefined && input.parent !== current) {
-      return {
-        errors: [
-          {
-            message: `the shelf is at ${current ?? "no snapshot"}, not ${input.parent}: fetch it and try again`,
-            path: "<snapshot>",
-          },
-        ],
-        ok: false,
-        reason: "conflict",
-      };
+    const moved = this.staleParent(input.parent);
+    if (moved !== null) {
+      return moved;
     }
     if (!firstSnapshot && this.shelfId() !== input.shelf) {
       return {
@@ -1246,6 +1312,7 @@ export class ShelfIndex extends DurableObject<Env> {
     }
     const digest = `sha256:${manifestHash}`;
     const snapshot: SnapshotRecord = {
+      commit: committed?.commit ?? null,
       createdAt: now(),
       digest,
       fileCount: files.length,
@@ -1255,16 +1322,19 @@ export class ShelfIndex extends DurableObject<Env> {
       parent: current,
       totalBytes: files.reduce((total, file) => total + file.size, 0),
     };
-    const changed = this.ctx.storage.transactionSync(() =>
-      this.index(
+    const changed = this.ctx.storage.transactionSync(() => {
+      if (committed !== null) {
+        this.recordRepository(committed);
+      }
+      return this.index(
         inventory,
         input.entries,
         input.contents,
         snapshot,
         manifestBytes.length,
         manifestHash
-      )
-    );
+      );
+    });
     this.loaded = { contents: input.contents, digest };
     this.plans.clear();
     this.broadcast({ at: snapshot.createdAt, id: digest, kind: "snapshot" });
@@ -1275,6 +1345,279 @@ export class ShelfIndex extends DurableObject<Env> {
       this.broadcast({ at: snapshot.createdAt, id, kind: "profile" });
     }
     return { changed, ok: true, snapshot };
+  }
+
+  /** A conflict when the current snapshot is not `parent`, the snapshot the writer read; null when it is. */
+  private staleParent(parent: string | undefined): Committed | null {
+    const current = this.metaValue("snapshot");
+    if (parent === undefined || parent === current) {
+      return null;
+    }
+    return {
+      errors: [
+        {
+          message: `the shelf is at ${current ?? "no snapshot"}, not ${parent}: fetch it and try again`,
+          path: "<snapshot>",
+        },
+      ],
+      ok: false,
+      reason: "conflict",
+    };
+  }
+
+  /**
+   * Commit `input`'s files to the shelf's repository, on top of the commit the shelf is indexed at. Files outside the
+   * shelf's paths stay as they are; a file whose bytes did not change keeps its object and its mode. Nothing is
+   * pushed when the tree is the same.
+   */
+  private async pushFiles(
+    repository: ShelfRepository,
+    session: Session,
+    input: CommitInput
+  ): Promise<
+    | { readonly ok: true; readonly committed: FromRepository }
+    | { readonly ok: false; readonly refused: Committed }
+  > {
+    const parent = this.metaValue("commit");
+    const base = this.db.select().from(table.repositoryEntry).all();
+    const previous = new Map(base.map((entry) => [entry.path, entry]));
+    const indexed = new Map(
+      this.db
+        .select({ path: table.file.path, sha256: table.file.sha256 })
+        .from(table.file)
+        .all()
+        .map((row) => [row.path, row.sha256])
+    );
+    const files: GitNewFile[] = base
+      .filter((entry) => !isShelfPath(entry.path))
+      .map((entry) => ({ id: entry.id, mode: entry.mode, path: entry.path }));
+    for (const [path, entry] of input.entries) {
+      const kept = previous.get(path);
+      if (kept !== undefined && indexed.get(path) === entry.sha256) {
+        files.push({ id: kept.id, mode: kept.mode, path });
+        continue;
+      }
+      const contents = input.contents.get(path);
+      if (contents === undefined) {
+        throw new Error(`no bytes for ${path}`);
+      }
+      // A changed file keeps its mode; a new one, or one that was a submodule, is a regular file.
+      const mode =
+        kept === undefined || kept.mode === "160000" ? "100644" : kept.mode;
+      files.push({ contents, mode, path });
+    }
+    const author = authorOf(session);
+    const shelfEngine = await engine();
+    const planned = shelfEngine.gitCommit({
+      author: { ...author, offset: 0, time: Math.floor(Date.now() / 1000) },
+      base,
+      files,
+      message: input.message ?? `${input.origin} ${input.shelf}`,
+      parent: parent ?? undefined,
+      ref: `refs/heads/${REPOSITORY_BRANCH}`,
+    });
+    if (!planned.ok) {
+      return {
+        ok: false,
+        refused: { errors: planned.errors, ok: false, reason: "invalid" },
+      };
+    }
+    const plan = planned.value;
+    if (plan.commit === null || plan.request === null) {
+      // The tree is the parent's: there is nothing to push.
+      if (parent === null) {
+        throw new Error("the engine found no change, but there is no commit");
+      }
+      return { committed: { commit: parent, entries: base }, ok: true };
+    }
+    const pushed = await repository.push(input.shelf, plan.request, parent);
+    if (!pushed.ok) {
+      return {
+        ok: false,
+        refused: {
+          errors: [{ message: pushed.message, path: "<repository>" }],
+          ok: false,
+          reason: pushed.reason === "conflict" ? "conflict" : "unavailable",
+        },
+      };
+    }
+    return {
+      committed: { commit: plan.commit, entries: plan.files },
+      ok: true,
+    };
+  }
+
+  /** Record the commit the shelf is now indexed at, and its tree. Runs inside the commit's transaction. */
+  private recordRepository(committed: FromRepository): void {
+    this.setMeta("commit", committed.commit);
+    this.db
+      .delete(table.meta)
+      .where(eq(table.meta.key, "repository_refused"))
+      .run();
+    this.db.delete(table.repositoryEntry).run();
+    for (const entry of committed.entries) {
+      this.db
+        .insert(table.repositoryEntry)
+        .values({ ...entry })
+        .run();
+    }
+  }
+
+  private repositoryState(): RepositoryState {
+    const refused = this.metaValue("repository_refused");
+    return {
+      commit: this.metaValue("commit"),
+      refused:
+        refused === null
+          ? null
+          : v.parse(
+              v.object({
+                commit: v.string(),
+                errors: v.array(
+                  v.object({ message: v.string(), path: v.string() })
+                ),
+              }),
+              JSON.parse(refused)
+            ),
+    };
+  }
+
+  /**
+   * Bring the index up to the head of the shelf's repository: read the commit a Git client pushed, store the bytes of
+   * every blob the index does not have yet in R2, and index the files as a snapshot. A head the engine refuses is
+   * recorded, with its errors, and the index stays where it was. Run by the Git route after a push through it, and
+   * again by the queue it sends the same sync to, and by a write that found the repository moved on.
+   */
+  async syncRepository(session: Session, shelf: string): Promise<Synced> {
+    if (session.kind !== "system" || !v.is(ShelfIdSchema, shelf)) {
+      return { status: "none" };
+    }
+    const repository = shelfRepository(this.env);
+    return await this.serially(
+      async () => await this.syncNow(repository, session, shelf)
+    );
+  }
+
+  /** `syncRepository`'s work, for a caller already holding the write lock. */
+  private async syncNow(
+    repository: ShelfRepository,
+    session: Session,
+    shelf: string
+  ): Promise<Synced> {
+    const existing = this.shelfId();
+    if (existing !== null && existing !== shelf) {
+      return { status: "none" };
+    }
+    const head = await repository.head(shelf);
+    if (head === null) {
+      return { status: "none" };
+    }
+    if (head.commit === this.metaValue("commit")) {
+      return { status: "current" };
+    }
+    const entries = await repository.entries(shelf, head.tree);
+    const read = await this.readRepository(repository, shelf, entries);
+    let errors: readonly ShelfProblem[];
+    if ("errors" in read) {
+      ({ errors } = read);
+    } else {
+      const committed = await this.commitNow(session, {
+        contents: read.contents,
+        entries: read.files,
+        from: { commit: head.commit, entries },
+        message: head.message,
+        origin: "git",
+        parent: undefined,
+        shelf,
+      });
+      if (committed.ok) {
+        return { status: "indexed" };
+      }
+      ({ errors } = committed);
+    }
+    this.setMeta(
+      "repository_refused",
+      JSON.stringify({ commit: head.commit, errors })
+    );
+    this.broadcast({ at: now(), id: head.commit, kind: "snapshot" });
+    return { commit: head.commit, errors, status: "refused" };
+  }
+
+  /**
+   * The shelf's files in a commit's tree, with their bytes: from what the index already holds when the Git object is
+   * one it has seen, else read from the repository and stored in R2. Files outside the shelf's paths are not read.
+   */
+  private async readRepository(
+    repository: ShelfRepository,
+    shelf: string,
+    entries: readonly RepositoryEntry[]
+  ): Promise<
+    | {
+        readonly files: Map<string, FileEntry>;
+        readonly contents: Map<string, Uint8Array>;
+      }
+    | { readonly errors: readonly ShelfProblem[] }
+  > {
+    const wanted = entries.filter((entry) => isShelfPath(entry.path));
+    const unreadable = wanted.filter(
+      (entry) => entry.mode !== "100644" && entry.mode !== "100755"
+    );
+    if (unreadable.length > 0) {
+      return {
+        errors: unreadable.map((entry) => ({
+          message:
+            entry.mode === "120000"
+              ? "a symbolic link is not allowed in a shelf"
+              : "a submodule is not allowed in a shelf",
+          path: entry.path,
+        })),
+      };
+    }
+    const known = new Map<string, FileEntry>();
+    const indexed = new Map(
+      this.db
+        .select()
+        .from(table.file)
+        .all()
+        .map((row) => [row.path, { sha256: row.sha256, size: row.size }])
+    );
+    for (const entry of this.db.select().from(table.repositoryEntry).all()) {
+      const file = indexed.get(entry.path);
+      if (file !== undefined) {
+        known.set(entry.id, file);
+      }
+    }
+    const fetched = new Map<string, Uint8Array>();
+    const missing = [
+      ...new Set(
+        wanted.map((entry) => entry.id).filter((id) => !known.has(id))
+      ),
+    ];
+    await Promise.all(
+      missing.map(async (id) => {
+        const bytes = await repository.blob(shelf, id);
+        const sha256 = await putObject(this.env.BLOBS, bytes);
+        fetched.set(sha256, bytes);
+        known.set(id, { sha256, size: bytes.length });
+      })
+    );
+    const createdAt = now();
+    for (const [sha256, bytes] of fetched) {
+      this.db
+        .insert(table.blob)
+        .values({ createdAt, sha256, size: bytes.length })
+        .onConflictDoNothing()
+        .run();
+    }
+    const files = new Map<string, FileEntry>();
+    for (const entry of wanted) {
+      const file = known.get(entry.id);
+      if (file !== undefined) {
+        files.set(entry.path, file);
+      }
+    }
+    const contents = await this.readContents(files);
+    return { contents, files };
   }
 
   /** Write an inventory into the database. Runs inside one transaction. */
@@ -1437,6 +1780,28 @@ export class ShelfIndex extends DurableObject<Env> {
 
   /** Replace some of the shelf's files (or remove them, with `null`) and commit the result as a new snapshot. */
   private async edit(
+    session: Session,
+    shelf: string,
+    changesFor: () =>
+      | ReadonlyMap<string, Uint8Array | null>
+      | Promise<ReadonlyMap<string, Uint8Array | null>>,
+    message: string | null,
+    origin: SnapshotRecord["origin"]
+  ): Promise<Committed> {
+    const first = await this.editOnce(
+      session,
+      shelf,
+      await changesFor(),
+      message,
+      origin
+    );
+    // The repository had moved on, and the shelf now shows its head: make the change once more, on top of it.
+    return isRepositoryConflict(first)
+      ? await this.editOnce(session, shelf, await changesFor(), message, origin)
+      : first;
+  }
+
+  private async editOnce(
     session: Session,
     shelf: string,
     changes: ReadonlyMap<string, Uint8Array | null>,
@@ -2148,35 +2513,40 @@ export class ShelfIndex extends DurableObject<Env> {
       };
     }
     const document = parsed.output;
-    const existing = this.db
-      .select()
-      .from(table.item)
-      .where(eq(table.item.id, document.id))
-      .get();
-    const directory =
-      existing?.path ??
-      `items/${KIND_DIRECTORIES[document.kind]}/${document.id}`;
-    const changes = new Map<string, Uint8Array | null>();
-    for (const file of existing?.files ?? []) {
-      changes.set(`${directory}/${file}`, null);
-    }
-    changes.set(
-      `${directory}/item.json`,
-      encoder.encode(`${JSON.stringify(document, null, 2)}\n`)
-    );
-    for (const file of input.files) {
-      if (file.path === "item.json") {
-        continue;
+    // Read when the edit is made, and again if it is made a second time on top of a repository that had moved on.
+    const changesFor = () => {
+      const existing = this.db
+        .select()
+        .from(table.item)
+        .where(eq(table.item.id, document.id))
+        .get();
+      const directory =
+        existing?.path ??
+        `items/${KIND_DIRECTORIES[document.kind]}/${document.id}`;
+      const changes = new Map<string, Uint8Array | null>();
+      for (const file of existing?.files ?? []) {
+        changes.set(`${directory}/${file}`, null);
       }
       changes.set(
-        `${directory}/${file.path}`,
-        decoded(file.contents, file.encoding)
+        `${directory}/item.json`,
+        encoder.encode(`${JSON.stringify(document, null, 2)}
+`)
       );
-    }
+      for (const file of input.files) {
+        if (file.path === "item.json") {
+          continue;
+        }
+        changes.set(
+          `${directory}/${file.path}`,
+          decoded(file.contents, file.encoding)
+        );
+      }
+      return changes;
+    };
     return await this.edit(
       session,
       shelf,
-      changes,
+      changesFor,
       input.message ?? null,
       "edit"
     );
@@ -2207,7 +2577,13 @@ export class ShelfIndex extends DurableObject<Env> {
     const changes = new Map<string, Uint8Array | null>(
       existing.files.map((file) => [`${existing.path}/${file}`, null])
     );
-    return await this.edit(session, shelf, changes, `remove ${id}`, "edit");
+    return await this.edit(
+      session,
+      shelf,
+      () => changes,
+      `remove ${id}`,
+      "edit"
+    );
   }
 
   setFavourite(
@@ -2451,7 +2827,7 @@ export class ShelfIndex extends DurableObject<Env> {
     return await this.edit(
       session,
       shelf,
-      changes,
+      () => changes,
       message ?? `save ${path}`,
       "edit"
     );
@@ -2470,7 +2846,7 @@ export class ShelfIndex extends DurableObject<Env> {
     return await this.edit(
       session,
       shelf,
-      new Map([[path, null]]),
+      () => new Map([[path, null]]),
       `remove ${path}`,
       "edit"
     );
@@ -2769,7 +3145,7 @@ export class ShelfIndex extends DurableObject<Env> {
     return await this.edit(
       session,
       shelf,
-      new Map([["shelf.json", bytes]]),
+      () => new Map([["shelf.json", bytes]]),
       "edit shelf.json",
       "edit"
     );
@@ -3345,7 +3721,7 @@ export class ShelfIndex extends DurableObject<Env> {
     const committed = await this.edit(
       session,
       shelf,
-      changes,
+      () => changes,
       `import ${id}`,
       "import"
     );
@@ -3769,6 +4145,40 @@ function forbidden(): Committed {
   };
 }
 
+/** Whether a write was refused because the shelf's repository had moved on from the commit it was indexed at. */
+function isRepositoryConflict(committed: Committed): boolean {
+  return (
+    !committed.ok &&
+    committed.reason === "conflict" &&
+    committed.errors.some((error) => error.path === "<repository>")
+  );
+}
+
+/** Who a commit the Worker makes names as its author: the person, the key's name, or the owner. */
+function authorOf(session: Session) {
+  const id = keyIdOf(session) ?? "shelfkit";
+  const email = `${id.replaceAll(":", "-")}@shelfkit.invalid`;
+  if (session.kind === "person") {
+    return { email, name: session.person.name };
+  }
+  if (session.kind === "owner") {
+    return { email, name: session.person?.name ?? "owner" };
+  }
+  if (session.kind === "key") {
+    return { email, name: session.name };
+  }
+  return { email, name: "shelfkit" };
+}
+
+/** A promise that settles when `work` does, and never rejects: the next queued write runs whatever this one did. */
+async function settled(work: Promise<unknown>): Promise<void> {
+  try {
+    await work;
+  } catch {
+    // The write's own caller gets its error.
+  }
+}
+
 function keyIdOf(session: Session): string | null {
   if (session.kind === "owner" || session.kind === "key") {
     return session.keyId;
@@ -3803,13 +4213,14 @@ function snapshotRecord(
   row: typeof table.snapshot.$inferSelect
 ): SnapshotRecord {
   return {
+    commit: row.commit,
     createdAt: row.createdAt,
     digest: row.digest,
     fileCount: row.fileCount,
     keyId: row.keyId,
     message: row.message,
     origin: v.parse(
-      v.picklist(["push", "forge", "edit", "import"]),
+      v.picklist(["push", "forge", "edit", "import", "git"]),
       row.origin
     ),
     parent: row.parent,

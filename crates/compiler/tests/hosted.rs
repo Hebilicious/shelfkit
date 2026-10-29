@@ -1,4 +1,4 @@
-//! `shelfkit login`, `push`, and `fetch` against an in-memory stand-in for
+//! `shelfkit login`, `open`, and `publish` against an in-memory stand-in for
 //! the hosted service, speaking the same GraphQL operations and routes the
 //! Worker serves. The Worker's own tests cover the service; these cover the
 //! client: what it sends, what it keeps, and that a key is never printed.
@@ -56,14 +56,9 @@ fn hex(bytes: &[u8]) -> String {
 
 #[derive(Default)]
 struct State {
-    objects: BTreeMap<String, Vec<u8>>,
-    /// `path -> sha256` of the current snapshot.
-    files: Option<BTreeMap<String, String>>,
-    origin: String,
+    /// `(package, version) -> digest` of every published version.
     packages: BTreeMap<(String, String), String>,
     requests: Vec<String>,
-    /// Every object a commit has named: what `knownObjects` answers from.
-    committed: std::collections::BTreeSet<String>,
 }
 
 /// The hosted service, in memory, plus a keychain and an environment.
@@ -136,58 +131,11 @@ impl Service {
     fn graphql(&self, body: &[u8]) -> Value {
         let request: Value = serde_json::from_slice(body).unwrap();
         let query = request["query"].as_str().unwrap();
-        let variables = &request["variables"];
-        let mut state = self.state.borrow_mut();
         if query.contains("createSignInLink") {
             return json!({ "data": { "createSignInLink": { "url": SIGN_IN_LINK, "expiresAt": "2026-10-22T12:15:00Z" } } });
         }
         if query.contains("viewer") {
             return json!({ "data": { "viewer": { "authenticated": true, "owner": true, "shelf": null, "keyName": null } } });
-        }
-        if query.contains("commitSnapshot") {
-            let files: BTreeMap<String, String> = variables["files"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|file| {
-                    (
-                        file["path"].as_str().unwrap().to_owned(),
-                        file["sha256"].as_str().unwrap().to_owned(),
-                    )
-                })
-                .collect();
-            let missing: Vec<&String> = files
-                .values()
-                .filter(|sha| !state.objects.contains_key(*sha))
-                .collect();
-            assert!(missing.is_empty(), "committed before uploading {missing:?}");
-            let digest = format!(
-                "sha256:{}",
-                hex(serde_json::to_string(&files).unwrap().as_bytes())
-            );
-            state.committed.extend(files.values().cloned());
-            state.files = Some(files);
-            state.origin = "push".to_owned();
-            return json!({ "data": { "commitSnapshot": { "ok": true, "reason": null, "errors": [], "missing": [], "snapshot": { "digest": digest, "fileCount": 0 } } } });
-        }
-        if query.contains("knownObjects") {
-            let known: Vec<&String> = variables["sha256"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter_map(|sha| state.committed.get(sha.as_str().unwrap()))
-                .collect();
-            return json!({ "data": { "shelf": { "knownObjects": known } } });
-        }
-        if query.contains("Hosted") {
-            let Some(files) = &state.files else {
-                return json!({ "data": { "shelf": null } });
-            };
-            let listed: Vec<Value> = files
-                .iter()
-                .map(|(path, sha)| json!({ "path": path, "sha256": sha, "size": state.objects[sha].len() }))
-                .collect();
-            return json!({ "data": { "shelf": { "snapshot": { "digest": "sha256:current", "origin": state.origin }, "files": listed } } });
         }
         panic!("an operation the stand-in does not know: {query}");
     }
@@ -259,17 +207,6 @@ impl System for Service {
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         let mut state = self.state.borrow_mut();
         match (request.method, parts.as_slice()) {
-            ("PUT", ["raw", _, "objects", sha]) => {
-                assert_eq!(hex(&request.body), *sha);
-                state
-                    .objects
-                    .insert((*sha).to_owned(), request.body.clone());
-                answer(204, b"")
-            }
-            ("GET", ["raw", _, "objects", sha]) => match state.objects.get(*sha) {
-                Some(bytes) => answer(200, bytes),
-                None => answer(404, b""),
-            },
             ("PUT", ["apm", "v1", "packages", owner, repo, "versions", version]) => {
                 let key = (format!("{owner}/{repo}"), (*version).replace("%2B", "+"));
                 if state.packages.contains_key(&key) {
@@ -696,169 +633,139 @@ fn login_refuses_plain_http_to_a_host_that_is_not_loopback() {
     assert!(service.keychain.borrow().is_empty());
 }
 
+/// Every profile at the `version` `1.0.0`, and a third with only `typescript-strict`, so a changed `commit-style`
+/// changes the bytes of `default` alone.
+fn versioned_profiles(shelf: &Path) {
+    let version = |name: &str| {
+        let path = shelf.join(format!("profiles/{name}.json"));
+        let mut profile: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        profile["version"] = json!("1.0.0");
+        std::fs::write(&path, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
+        profile
+    };
+    version("agent-tools");
+    let default = version("default");
+    let mut minimal = default.clone();
+    minimal["id"] = json!("minimal");
+    minimal["items"] = json!(["typescript-strict"]);
+    minimal["compile"]["name"] = json!("minimal");
+    std::fs::write(
+        shelf.join("profiles/minimal.json"),
+        serde_json::to_vec_pretty(&minimal).unwrap(),
+    )
+    .unwrap();
+}
+
 #[test]
-fn push_uploads_each_file_once_commits_and_publishes_every_profile() {
-    let service = Service::logged_in("push");
-    let shelf = own_shelf("push");
-    let ran = shelfkit(&service, &shelf, &["push", "--url", URL]);
+fn publish_puts_every_profile_to_the_registry() {
+    let service = Service::logged_in("publish");
+    let shelf = own_shelf("publish");
+    versioned_profiles(&shelf);
+    let ran = shelfkit(&service, &shelf, &["publish", "--url", URL]);
     assert_eq!(ran.code, 0, "{}", ran.stderr);
-    assert!(
-        ran.stdout.contains("Pushed `hebilicious`"),
-        "{}",
-        ran.stdout
-    );
-    for profile in ["default", "agent-tools"] {
+    for package in [
+        "hebilicious/agent-tools@1.0.0",
+        "hebilicious/default@1.0.0",
+        "hebilicious/minimal@1.0.0",
+    ] {
         assert!(
-            ran.stdout
-                .contains(&format!("Published hebilicious/{profile}@")),
+            ran.stdout.contains(&format!("Published {package}")),
             "{}",
             ran.stdout
         );
     }
     let state = service.state.borrow();
-    let files = state.files.as_ref().unwrap();
-    assert!(files.contains_key("shelf.json"));
-    assert!(files.contains_key("items/prompts/commit-style/prompt.md"));
-    assert_eq!(state.packages.len(), 2);
-    drop(state);
+    let published: Vec<&(String, String)> = state.packages.keys().collect();
+    assert_eq!(
+        published,
+        [
+            &("hebilicious/agent-tools".to_owned(), "1.0.0".to_owned()),
+            &("hebilicious/default".to_owned(), "1.0.0".to_owned()),
+            &("hebilicious/minimal".to_owned(), "1.0.0".to_owned()),
+        ]
+    );
+    // Publishing touches the registry and nothing else: the shelf's files reach the service through Git.
+    assert!(
+        state
+            .requests
+            .iter()
+            .all(|request| request.starts_with("PUT /apm/v1/packages/")),
+        "{:?}",
+        state.requests
+    );
+}
 
-    let again = shelfkit(&service, &shelf, &["push"]);
+#[test]
+fn publish_reports_a_version_already_published_with_the_same_bytes() {
+    let service = Service::logged_in("publish-again");
+    let shelf = own_shelf("publish-again");
+    assert_eq!(shelfkit(&service, &shelf, &["publish"]).code, 0);
+    let again = shelfkit(&service, &shelf, &["publish"]);
     assert_eq!(again.code, 0, "{}", again.stderr);
-    assert!(again.stdout.contains("(0 uploaded)"), "{}", again.stdout);
     assert!(
         again.stdout.contains("already published with these bytes"),
         "{}",
         again.stdout
     );
+    assert_eq!(service.state.borrow().packages.len(), 2);
 }
 
 #[test]
-fn push_reads_the_key_from_the_environment_before_the_keychain() {
-    let mut service = Service::new("push-env");
-    service.vars.insert(KEY_ENV.to_owned(), KEY.to_owned());
-    service.vars.insert(URL_ENV.to_owned(), URL.to_owned());
-    let shelf = own_shelf("push-env");
-    let ran = shelfkit(&service, &shelf, &["push", "--no-publish"]);
-    assert_eq!(ran.code, 0, "{}", ran.stderr);
-    assert!(service.state.borrow().packages.is_empty());
-}
-
-#[test]
-fn push_does_not_overwrite_changes_made_on_the_service_without_force() {
-    let service = Service::logged_in("push-edited");
-    let shelf = own_shelf("push-edited");
-    assert_eq!(shelfkit(&service, &shelf, &["push", "--url", URL]).code, 0);
-    service.state.borrow_mut().origin = "edit".to_owned();
+fn publish_fails_for_a_version_already_published_with_other_bytes() {
+    let service = Service::logged_in("publish-changed");
+    let shelf = own_shelf("publish-changed");
+    versioned_profiles(&shelf);
+    assert_eq!(shelfkit(&service, &shelf, &["publish"]).code, 0);
+    let published = service.state.borrow().packages.clone();
     std::fs::write(
         shelf.join("items/prompts/commit-style/prompt.md"),
-        "Changed here.\n",
+        "Changed, with the version left as it was.\n",
     )
     .unwrap();
-    let refused = shelfkit(&service, &shelf, &["push"]);
+
+    let refused = shelfkit(&service, &shelf, &["publish"]);
     assert_eq!(refused.code, 1);
     assert!(
-        refused.stderr.contains("shelfkit fetch"),
+        refused.stderr.contains(
+            "hebilicious/default@1.0.0 is already published with other bytes, and a version is immutable: give the \
+             profile a new `version`"
+        ),
         "{}",
         refused.stderr
     );
-    let forced = shelfkit(&service, &shelf, &["push", "--force", "--no-publish"]);
-    assert_eq!(forced.code, 0, "{}", forced.stderr);
-}
-
-#[test]
-fn fetch_writes_the_hosted_shelf_byte_for_byte_and_removes_what_it_no_longer_has() {
-    let service = Service::logged_in("fetch");
-    let shelf = own_shelf("fetch");
-    assert_eq!(shelfkit(&service, &shelf, &["push", "--url", URL]).code, 0);
-
-    let out = scratch("fetch-out");
-    let ran = shelfkit(
-        &service,
-        &out,
-        &[
-            "fetch",
-            "--id",
-            "hebilicious",
-            "--out",
-            out.to_str().unwrap(),
-        ],
-    );
-    assert_eq!(ran.code, 0, "{}", ran.stderr);
-    for path in [
-        "shelf.json",
-        "items/prompts/commit-style/prompt.md",
-        "profiles/default.json",
-    ] {
-        assert_eq!(
-            std::fs::read(out.join(path)).unwrap(),
-            std::fs::read(shelf.join(path)).unwrap(),
-            "{path}"
-        );
-    }
-
-    std::fs::create_dir_all(out.join("items/prompts/stale")).unwrap();
-    std::fs::write(out.join("items/prompts/stale/item.json"), "{}").unwrap();
-    let again = shelfkit(&service, &out, &["fetch", "--force"]);
-    assert_eq!(again.code, 0, "{}", again.stderr);
-    assert!(again.stdout.contains("1 removed"), "{}", again.stdout);
-    assert!(!out.join("items/prompts/stale").exists());
-}
-
-#[test]
-fn fetch_refuses_to_discard_work_that_was_never_pushed() {
-    let service = Service::logged_in("fetch-unpushed");
-    let shelf = own_shelf("fetch-unpushed");
-    assert_eq!(shelfkit(&service, &shelf, &["push", "--url", URL]).code, 0);
-    let prompt = shelf.join("items/prompts/commit-style/prompt.md");
-    let pushed = std::fs::read(&prompt).unwrap();
-
-    // An edit made here and never pushed, and a new item: neither is the service's to replace.
-    std::fs::write(&prompt, "Edited here, not pushed.\n").unwrap();
-    std::fs::create_dir_all(shelf.join("items/prompts/draft")).unwrap();
-    std::fs::write(shelf.join("items/prompts/draft/item.json"), "{}").unwrap();
-    let refused = shelfkit(&service, &shelf, &["fetch"]);
-    assert_eq!(refused.code, 1);
+    // Every profile is still tried: the unchanged one is reported after the one that failed.
     assert!(
         refused
-            .stderr
-            .contains("items/prompts/commit-style/prompt.md: changed here and never pushed"),
+            .stdout
+            .contains("hebilicious/minimal@1.0.0 is already published with these bytes"),
         "{}",
-        refused.stderr
+        refused.stdout
     );
-    assert!(
-        refused.stderr.contains("items/prompts/draft/item.json"),
-        "{}",
-        refused.stderr
-    );
-    assert_eq!(
-        std::fs::read(&prompt).unwrap(),
-        b"Edited here, not pushed.\n"
-    );
-    assert!(shelf.join("items/prompts/draft/item.json").exists());
+    assert_eq!(service.state.borrow().packages, published);
+}
 
-    // `--force` discards them.
-    let forced = shelfkit(&service, &shelf, &["fetch", "--force"]);
-    assert_eq!(forced.code, 0, "{}", forced.stderr);
-    assert_eq!(std::fs::read(&prompt).unwrap(), pushed);
-    assert!(!shelf.join("items/prompts/draft").exists());
-
-    // Content the service has had (an older push) is replaced by the newer one without `--force`.
-    std::fs::write(&prompt, "A second version.\n").unwrap();
-    assert_eq!(
-        shelfkit(&service, &shelf, &["push", "--no-publish"]).code,
-        0
-    );
-    std::fs::write(&prompt, &pushed).unwrap();
-    let newer = shelfkit(&service, &shelf, &["fetch"]);
-    assert_eq!(newer.code, 0, "{}", newer.stderr);
-    assert_eq!(std::fs::read(&prompt).unwrap(), b"A second version.\n");
+#[test]
+fn publish_reads_the_key_from_the_environment_before_the_keychain() {
+    let mut service = Service::new("publish-env");
+    service.vars.insert(KEY_ENV.to_owned(), KEY.to_owned());
+    service.vars.insert(URL_ENV.to_owned(), URL.to_owned());
+    // The keychain holds another key for the deployment; the stand-in accepts only `KEY`.
+    service
+        .keychain
+        .borrow_mut()
+        .insert(URL.to_owned(), "sko_another".to_owned());
+    let shelf = own_shelf("publish-env");
+    let ran = shelfkit(&service, &shelf, &["publish"]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    // ShelfKit's own shelf has two profiles.
+    assert_eq!(service.state.borrow().packages.len(), 2);
 }
 
 #[test]
 fn a_command_with_no_key_says_how_to_log_in() {
     let service = Service::new("no-key");
     let shelf = own_shelf("no-key");
-    let ran = shelfkit(&service, &shelf, &["push", "--url", URL]);
+    let ran = shelfkit(&service, &shelf, &["publish", "--url", URL]);
     assert_eq!(ran.code, 1);
     assert!(
         ran.stderr
@@ -866,4 +773,5 @@ fn a_command_with_no_key_says_how_to_log_in() {
         "{}",
         ran.stderr
     );
+    assert!(service.state.borrow().requests.is_empty());
 }

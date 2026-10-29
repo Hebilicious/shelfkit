@@ -41,7 +41,7 @@ test("a shelf's raw objects are served as bytes a browser must not sniff", async
   request,
 }) => {
   const shelf = "headers-e2e";
-  seedShelf(FIXTURES.allKinds, shelf);
+  await seedShelf(FIXTURES.allKinds, shelf);
   const authorization = `Bearer ${OWNER_KEY}`;
   const listed = await request.post(`${BASE_URL}/graphql`, {
     data: {

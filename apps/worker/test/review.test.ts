@@ -25,6 +25,7 @@ import { resolveSecret } from "../src/secrets.ts";
 import type { ShelfIndex } from "../src/shelf-index.ts";
 import { TEST_SESSION_SECRET } from "./fake-github.ts";
 import {
+  basic,
   createKey,
   data,
   decodeBase64,
@@ -342,15 +343,11 @@ describe("5. a request for a shelf that does not exist", () => {
       `sks_junk_${"A".repeat(43)}`
     );
     expect(viewer.status).toBe(401);
-    const put = await exports.default.fetch(
-      `${ORIGIN}/raw/junk/objects/${"0".repeat(64)}`,
-      {
-        body: "x",
-        headers: { authorization: `Bearer sks_junk_${"A".repeat(43)}` },
-        method: "PUT",
-      }
+    const pushed = await exports.default.fetch(
+      `${ORIGIN}/git/junk.git/info/refs?service=git-receive-pack`,
+      { headers: { authorization: basic(`sks_junk_${"A".repeat(43)}`) } }
     );
-    expect(put.status).toBe(401);
+    expect(pushed.status).toBe(401);
     // The surfaces that may write ask R2 first, and name no object.
     const created = await listDurableObjectIds(env.SHELF);
     const junk = ["junk-0", "junk-1", "junk-2", "junk-3", "junk-4"].map(
@@ -540,7 +537,7 @@ describe("6. a secret", () => {
 describe("7. storage of uploads and archives", () => {
   beforeEach(fresh);
 
-  it("does not serve an upload no commit took", async () => {
+  it("does not serve an object no commit references", async () => {
     await pushKit();
     const bytes = new TextEncoder().encode("never committed\n");
     const hash = [
@@ -548,20 +545,8 @@ describe("7. storage of uploads and archives", () => {
     ]
       .map((byte) => byte.toString(16).padStart(2, "0"))
       .join("");
-    const put = await exports.default.fetch(
-      `${ORIGIN}/raw/kit/objects/${hash}`,
-      {
-        body: bytes,
-        headers: { authorization: `Bearer ${TEST_OWNER_KEY}` },
-        method: "PUT",
-      }
-    );
-    expect(put.status).toBe(204);
-    const refused = await stub().commitSnapshot(owner, {
-      files: [{ path: "shelf.json", sha256: hash, size: bytes.length }],
-      shelf: "kit",
-    });
-    expect(refused.ok).toBeFalsy();
+    // In R2 under its hash, as an index from a forge leaves a file it stored before its commit was refused.
+    await env.BLOBS.put(`objects/${hash}`, bytes);
     const get = await exports.default.fetch(
       `${ORIGIN}/raw/kit/objects/${hash}`,
       {
@@ -607,22 +592,6 @@ describe("7. storage of uploads and archives", () => {
       archive
     );
     await expect(env.BLOBS.head(`archives/${hash}`)).resolves.not.toBeNull();
-  });
-});
-
-describe("8. the content a shelf has had", () => {
-  beforeEach(fresh);
-
-  it("is what knownObjects answers, so fetch can tell unpushed work from old content", async () => {
-    await pushKit();
-    const files = await stub().files(owner, "kit");
-    const known = files?.files[0]?.sha256 ?? "";
-    const found = await data(
-      v.object({ shelf: v.object({ knownObjects: v.array(v.string()) }) }),
-      `query K($s: [String!]!) { shelf(id: "kit") { knownObjects(sha256: $s) } }`,
-      { s: [known, "f".repeat(64)] }
-    );
-    expect(found.shelf.knownObjects).toStrictEqual([known]);
   });
 });
 

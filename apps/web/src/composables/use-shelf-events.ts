@@ -1,7 +1,7 @@
 /**
  * Live updates: `subscription { shelfChanged(shelf) }` over server-sent events, pushed from the shelf's own Durable
  * Object (`docs/PRD.md` section 10.2). Every event marks the shelf's cached answers stale (`data/cache.ts`), so a
- * prompt edited in another tab, an import finishing, or a `shelfkit push` shows up without a reload, while every screen
+ * prompt edited in another tab, an import finishing, or a `git push` shows up without a reload, while every screen
  * keeps showing what it has until the new answer lands. `EventSource` reconnects by itself after a dropped connection.
  */
 import * as v from "valibot";

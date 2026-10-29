@@ -4,7 +4,8 @@
 //! Every command reaches `PATH` and child processes through [`System`], and
 //! only `install` and `doctor` ever call it. Tests pass a double that panics
 //! on any call, which is how they prove `compile` never runs APM. The hosted
-//! service's client (`login`, `push`, `fetch`) is the only caller of the
+//! service's client (`login`, `logout`, `open`, `publish`, and `add` from a
+//! remote source) and `doctor`'s drift check are the only callers of the
 //! network and keychain methods, whose defaults refuse, so a double that does
 //! not provide them proves a command never reaches either.
 

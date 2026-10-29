@@ -5,6 +5,8 @@ import { RouterLink, useRouter } from "vue-router";
 import { sessionError, shelves, viewer } from "../composables/session.ts";
 
 const router = useRouter();
+/** Where a shelf's repository is: Git is how a shelf's files arrive. */
+const remote = `${window.location.origin}/git/<id>.git`;
 
 // One shelf is the common case: go straight to it.
 watch(
@@ -40,13 +42,13 @@ watch(
       <p><RouterLink class="button primary" :to='{ name: "sign-in" }'>Sign in</RouterLink></p>
     </template>
     <p v-else-if="viewer !== null && shelves.length === 0 && viewer.owner" class="muted">
-      There is no shelf yet. Push one with <code>shelfkit push</code>, or import one.
+      There is no shelf yet. Push one from its repository with <code>git push {{ remote }} main</code>, or import one.
     </p>
     <p v-else-if="viewer?.principal && shelves.length === 0" class="muted" data-testid="no-access">
       {{ viewer.name }} has no access to a shelf here yet. The owner can invite you from a shelf's Settings.
     </p>
     <p v-else-if="viewer !== null && shelves.length === 0" class="muted">
-      This key reaches no shelf yet. Push one with <code>shelfkit push</code>, or import one.
+      This key reaches no shelf yet. The owner chooses which shelves a key reaches.
     </p>
     <ul class="list panel">
       <li v-for="shelf in shelves" :key="shelf.id">

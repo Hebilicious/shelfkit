@@ -10,7 +10,7 @@
  *   an exact version. A range cannot follow a profile, since APM ranks every generated `0.0.0+…` version the same and
  *   picks the oldest among them (`crates/compiler/src/package.rs`).
  *
- * Either way the profile comes from the shelf's registry, which `shelfkit push` publishes it to, and a profile's
+ * Either way the profile comes from the shelf's registry, which `shelfkit publish` publishes it to, and a profile's
  * instructions, tech stacks, and library notes go into one section of AGENTS.md, which `apm compile` writes between
  * two marker lines and CLAUDE.md imports (`crates/compiler/src/cli/install.rs` does the same steps).
  */

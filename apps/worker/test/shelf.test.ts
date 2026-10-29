@@ -72,7 +72,7 @@ describe("a push", () => {
     }
     expect(summary.value.itemCount).toBe(14);
     expect(summary.value.profileCount).toBe(3);
-    expect(summary.value.snapshot?.origin).toBe("push");
+    expect(summary.value.snapshot?.origin).toBe("git");
     const version = await runInDurableObject(
       stub(),
       (_instance: ShelfIndex, state) =>
@@ -103,14 +103,10 @@ describe("a push", () => {
     expect(pushed.errors[0]?.message).toContain("`elsewhere`");
   });
 
-  it("that names an object never uploaded is refused, asking for it", async () => {
-    const answer = await graphql(
-      `mutation { commitSnapshot(shelf: "kit", files: [{ path: "shelf.json", sha256: "${"a".repeat(64)}", size: 1 }]) { ok reason missing } }`,
-      {}
-    );
-    expect(answer.errors?.[0]?.extensions?.code).toBe("UNAUTHENTICATED");
+  it("that names an object never stored is refused, asking for it", async () => {
     const missing = await stub().commitSnapshot(owner, {
       files: [{ path: "shelf.json", sha256: "a".repeat(64), size: 1 }],
+      origin: "forge",
       shelf: "kit",
     });
     expect(missing).toMatchObject({
@@ -135,15 +131,9 @@ describe("a push", () => {
 
   it("creates a shelf only with the owner key", async () => {
     const key = await createKey("kit", ["read", "publish:kit/*"]);
-    const refused = await exports.default.fetch(
-      `${ORIGIN}/raw/fresh/objects/${"0".repeat(64)}`,
-      {
-        body: "x",
-        headers: { authorization: `Bearer ${key.secret}` },
-        method: "PUT",
-      }
-    );
-    expect(refused.status).toBe(403);
+    const refused = await push("fresh", shelfOf("fresh", false), key.secret);
+    expect(refused).toMatchObject({ commit: null, ok: false });
+    expect(refused.errors[0]?.message).toContain("no such shelf");
   });
 });
 

@@ -2,7 +2,7 @@
  * Indexing a shelf from a Git forge. The forge sits behind `Forge`, so a later implementation (Cloudflare Artifacts, or
  * a Durable Object that speaks Git, `docs/PRD.md` section 13 question 3) replaces `GitHubForge` without touching the
  * rest: `indexFromForge` stores each file in R2 under `objects/<sha256>` and commits the snapshot to the shelf's
- * object, exactly as `shelfkit push` does.
+ * object.
  */
 import type { Session } from "../auth/index.ts";
 import { shelfStub } from "../auth/index.ts";
@@ -47,7 +47,7 @@ export async function indexFromForge(
 ): Promise<Committed> {
   const read = await forge.snapshot(input.repository, input.ref, input.root);
   const stub = shelfStub(env, input.shelf);
-  if (!(await stub.mayUpload(session, input.shelf))) {
+  if (!(await stub.mayCommit(session, input.shelf))) {
     return {
       errors: [
         { message: "this key cannot write to this shelf", path: "<shelf>" },

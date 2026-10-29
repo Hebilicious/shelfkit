@@ -1,7 +1,7 @@
 /**
- * What the Playwright specs share: the deployment they run against, the owner key the CLI uses with it, the CLI built
- * from this repository, seeding a shelf through `shelfkit push`, and signing the browser in with GitHub, the way a
- * person would.
+ * What the Playwright specs share: the deployment they run against, the owner key the CLI and Git use with it, the CLI
+ * built from this repository, seeding a shelf with `git push` to its repository, and signing the browser in with
+ * GitHub, the way a person would.
  */
 import { execFileSync } from "node:child_process";
 import {
@@ -9,11 +9,13 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { test as base, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
@@ -89,15 +91,104 @@ export function shelfkit(
 }
 
 /**
- * Copy a fixture shelf, let `prepare` change the copy, name it `namespace` on the registry, and push it. Returns the
- * local copy.
+ * `git` in `cwd`, with no user or system configuration, presenting `key` (the owner key unless given) to the deployment at `url` as a
+ * Bearer header. The key goes through the environment, never the command line, where any user's `ps` would see it.
  */
-export function seedShelf(
+export function git(
+  cwd: string,
+  args: readonly string[],
+  url: string = BASE_URL,
+  key: string = OWNER_KEY
+): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_EMAIL: "e2e@shelfkit.invalid",
+      GIT_AUTHOR_NAME: "ShelfKit e2e",
+      GIT_COMMITTER_EMAIL: "e2e@shelfkit.invalid",
+      GIT_COMMITTER_NAME: "ShelfKit e2e",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_KEY_0: `http.${url}/.extraHeader`,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_VALUE_0: `Authorization: Bearer ${key}`,
+      GIT_TERMINAL_PROMPT: "0",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+const IndexedSchema = v.object({
+  data: v.object({
+    shelf: v.nullable(
+      v.object({
+        repository: v.object({
+          commit: v.nullable(v.string()),
+          refused: v.nullable(
+            v.object({
+              commit: v.string(),
+              errors: v.array(
+                v.object({ message: v.string(), path: v.string() })
+              ),
+            })
+          ),
+        }),
+      })
+    ),
+  }),
+});
+
+/** Wait until the deployment has indexed `commit` as the shelf's head: the queue indexes a push after it lands. */
+export async function indexedAt(
+  shelf: string,
+  commit: string,
+  url: string = BASE_URL
+): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- polling: each read waits for the one before.
+    const response = await fetch(`${url}/graphql`, {
+      body: JSON.stringify({
+        query:
+          "query Indexed($id: ID!) { shelf(id: $id) { repository { commit refused { commit errors { path message } } } } }",
+        variables: { id: shelf },
+      }),
+      headers: {
+        authorization: `Bearer ${OWNER_KEY}`,
+        "content-type": "application/json",
+      },
+      method: "POST",
+    });
+    // oxlint-disable-next-line eslint/no-await-in-loop -- as above.
+    const repository = v.parse(IndexedSchema, await response.json()).data.shelf
+      ?.repository;
+    if (repository?.commit === commit) {
+      return;
+    }
+    if (repository?.refused?.commit === commit) {
+      throw new Error(
+        `${shelf} refused ${commit}: ${JSON.stringify(repository.refused.errors)}`
+      );
+    }
+    // oxlint-disable-next-line eslint/no-await-in-loop -- as above.
+    await sleep(100);
+  }
+  throw new Error(`${shelf} did not index ${commit} within 30 seconds`);
+}
+
+/**
+ * Copy a fixture shelf, let `prepare` change the copy, name it `namespace` on the registry, commit it, push it to the
+ * shelf's repository with Git, wait for the deployment to index it, and publish its profiles. Returns the local copy,
+ * a Git repository of its own.
+ */
+export async function seedShelf(
   fixture: string,
   namespace: string,
   prepare?: (root: string) => void,
   url: string = BASE_URL
-): string {
+): Promise<string> {
   const root = temporary(namespace);
   cpSync(fixture, root, { recursive: true });
   prepare?.(root);
@@ -107,8 +198,17 @@ export function seedShelf(
     `"namespace": "${namespace}"`
   );
   writeFileSync(manifestPath, manifest);
+  git(root, ["init", "--quiet", "--initial-branch=main"], url);
+  git(root, ["add", "--all"], url);
+  git(root, ["commit", "--quiet", "--message", "seed"], url);
   // `--force`: a spec's shelf may hold edits from an earlier attempt of the same run.
-  shelfkit(["--shelf", root, "push", "--force", "-m", "seed"], url);
+  git(
+    root,
+    ["push", "--quiet", "--force", `${url}/git/${namespace}.git`, "main"],
+    url
+  );
+  await indexedAt(namespace, git(root, ["rev-parse", "HEAD"], url).trim(), url);
+  shelfkit(["--shelf", root, "publish"], url);
   return root;
 }
 
@@ -136,10 +236,19 @@ export function dryRun(shelfRoot: string, profile: string): string {
   ]);
 }
 
-/** Download a hosted shelf's snapshot, as `shelfkit fetch` does. */
+/** Clone a hosted shelf's repository with Git, and keep only its files. */
 export function fetchShelf(id: string): string {
-  const root = temporary(`fetch-${id}`);
-  shelfkit(["fetch", "--id", id, "--out", root]);
+  const parent = temporary(`clone-${id}`);
+  git(parent, [
+    "clone",
+    "--quiet",
+    "--depth",
+    "1",
+    `${BASE_URL}/git/${id}.git`,
+    "shelf",
+  ]);
+  const root = path.join(parent, "shelf");
+  rmSync(path.join(root, ".git"), { force: true, recursive: true });
   return root;
 }
 

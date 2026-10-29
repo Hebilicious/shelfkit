@@ -151,11 +151,18 @@ tasks:
       cache: false
       runInCI: false
 
+  local-config:
+    description: "Write wrangler.local.json: wrangler.jsonc without Artifacts, which has no local simulator, for dev and the tests."
+    command: "../../node_modules/.bin/tsx scripts/local-config.ts"
+    options:
+      cache: false
   dev:
-    command: "node_modules/.bin/wrangler dev"
+    description: "The Worker on Miniflare, with no Cloudflare account, and so without repositories. `wrangler dev` with wrangler.jsonc uses the account's Artifacts."
+    command: "node_modules/.bin/wrangler dev -c wrangler.local.json"
     deps:
       - "web:build"
       - "engine:build"
+      - "local-config"
     options:
       persistent: true
       runInCI: false
@@ -180,7 +187,7 @@ tasks:
     options:
       runInCI: false
   setup:
-    description: "Provision R2, the bucket lock, the queues, the owner key, and the session secret, deploy, check /health, then open the owner's one-time sign-in link to add a passkey. Idempotent. Pass options after `--`: --dry-run, --keychain, --no-open, --rotate-owner-key, --rotate-session-secret, --no-github-sign-in (turn it off), and --github-sign-in (with --github-owner <login>, --github-org <org>, --recreate-github-app) to let people sign in with GitHub too."
+    description: "Provision R2, the bucket lock, the queues, the Artifacts namespace, the owner key, and the session secret, deploy, check /health, then open the owner's one-time sign-in link to add a passkey. Idempotent. Pass options after `--`: --artifacts-jurisdiction eu|us, --dry-run, --keychain, --no-open, --rotate-owner-key, --rotate-session-secret, --no-github-sign-in (turn it off), and --github-sign-in (with --github-owner <login>, --github-org <org>, --recreate-github-app) to let people sign in with GitHub too."
     command: "../../node_modules/.bin/tsx ../../scripts/setup.ts"
     deps:
       - "web:build"

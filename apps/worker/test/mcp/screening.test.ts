@@ -111,11 +111,12 @@ async function answerTo(probe: Probe, name: string) {
 }
 
 describe("a relayed call", () => {
-  // The first request loads the Worker's modules; a hook, with its longer timeout, takes that cost, not the first probe.
+  // The first request loads the Worker's modules; this hook takes that cost, not the first probe. Loading them while
+  // the rest of the suite runs in parallel can take longer than the default hook timeout, so it has a minute.
   beforeAll(async () => {
     const health = await exports.default.fetch(`${ORIGIN}/health`);
     await health.arrayBuffer();
-  });
+  }, 60_000);
 
   it.each(Object.keys(PROBES))(
     "is answered as AcidCat answers a call to shelf.search: %s",

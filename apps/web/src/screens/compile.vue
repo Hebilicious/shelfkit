@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Install a profile into a repository. The profile is in the shelf's registry (`shelfkit push` publishes it), so stock
+ * Install a profile into a repository. The profile is in the shelf's registry (`shelfkit publish` publishes it), so stock
  * APM installs it: the repository's apm.yml names the registry and the profile, and `apm install` puts each item
  * where each agent reads it. The ShelfKit CLI is the default way there, and APM alone the other; each as a prompt for an
  * agent or commands for a terminal. Everything here is computed from the profiles and the index already in memory.
@@ -198,7 +198,7 @@ async function copy(text: string, way: Way): Promise<void> {
     />
     <template v-if="profile !== null && target !== null">
       <p v-if="!published" class="severity-warning small" role="alert">
-        This profile is not in the shelf's registry yet, so nothing below can fetch it. <code>shelfkit push</code>
+        This profile is not in the shelf's registry yet, so nothing below can fetch it. <code>shelfkit publish</code>
         publishes it.
       </p>
       <section class="stack" data-testid="install-cli">
