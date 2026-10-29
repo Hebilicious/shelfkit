@@ -17,8 +17,8 @@ import {
 
 const SHELF = "sign-in-e2e";
 
-test.beforeAll(() => {
-  seedShelf(FIXTURES.allKinds, SHELF, makePrivate);
+test.beforeAll(async () => {
+  await seedShelf(FIXTURES.allKinds, SHELF, makePrivate);
 });
 
 test("the owner's enrollment link adds a passkey, which then signs in from a private shelf's page and returns to it", async ({

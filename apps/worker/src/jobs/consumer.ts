@@ -134,6 +134,10 @@ export async function runJob(
       await indexForge(message, env, dependencies);
       return;
     }
+    case "repository.sync": {
+      await syncRepository(message, env);
+      return;
+    }
     default: {
       const unhandled: never = message;
       throw new Error(`no job runs \`${JSON.stringify(unhandled)}\``);
@@ -387,6 +391,24 @@ async function indexForge(
     console.error(
       `indexing ${message.repository} into ${message.shelf} was refused`,
       committed.errors
+    );
+  }
+}
+
+/** Index the head of a shelf's repository; a head the engine refuses is recorded on the shelf, not retried. */
+async function syncRepository(
+  message: JobOf<"repository.sync">,
+  env: Env
+): Promise<void> {
+  const session: Session = { job: message.type, kind: "system" };
+  const synced = await shelfStub(env, message.shelf).syncRepository(
+    session,
+    message.shelf
+  );
+  if (synced.status === "refused") {
+    console.error(
+      `the head of ${message.shelf}'s repository, ${synced.commit}, was refused`,
+      synced.errors
     );
   }
 }

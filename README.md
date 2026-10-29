@@ -77,7 +77,7 @@ moon run worker:setup -- --github-sign-in       # also let people sign in with G
 
 Setup is a moon task, not `pnpm setup`: `pnpm setup` is pnpm's own built-in command, and this repository has no npm scripts. Wrangler is the only deployment path. Setup is idempotent: run again, it creates nothing that exists and keeps the owner key (`--rotate-owner-key` replaces it) and the session secret (`--rotate-session-secret`, which signs every browser out). Pass `CLOUDFLARE_ACCOUNT_ID` when Wrangler can reach more than one account.
 
-It creates, in order: the R2 bucket `shelfkit-blobs`, with a bucket lock that retains everything under `archives/` indefinitely (published registry archives, addressed by `sha256`, so a published version cannot be overwritten or deleted at the storage layer; uploaded content under `objects/` is not locked); the queues `shelfkit-jobs-dlq` and `shelfkit-jobs`; the owner key, of which the Worker keeps only the SHA-256 as the secret `OWNER_KEY_HASH`; the session secret `SESSION_SECRET`; and the deploy, which creates the Durable Object namespaces and applies their migrations. A new owner key is shown once and stored nowhere else. Every secret is set after the deploy with `wrangler secret put`, on its standard input, so none is ever written to a file; until then the Worker authenticates nobody. If Wrangler cannot list the Worker's secrets for a reason other than the Worker not existing yet, setup stops instead of replacing them.
+It creates, in order: the R2 bucket `shelfkit-blobs`, with a bucket lock that retains everything under `archives/` indefinitely (published registry archives, addressed by `sha256`, so a published version cannot be overwritten or deleted at the storage layer; file contents under `objects/` are not locked); the queues `shelfkit-jobs-dlq` and `shelfkit-jobs`; the owner key, of which the Worker keeps only the SHA-256 as the secret `OWNER_KEY_HASH`; the session secret `SESSION_SECRET`; and the deploy, which creates the Durable Object namespaces and applies their migrations. A new owner key is shown once and stored nowhere else. Every secret is set after the deploy with `wrangler secret put`, on its standard input, so none is ever written to a file; until then the Worker authenticates nobody. If Wrangler cannot list the Worker's secrets for a reason other than the Worker not existing yet, setup stops instead of replacing them.
 
 ### Signing in
 
@@ -105,22 +105,70 @@ GitHub sends the browser back only to a registered callback. A custom domain add
 
 The owner's GitHub account signs in as the owner. Others hold what you grant their GitHub account in a shelf's Settings. The Worker uses GitHub's token once to learn who signed in, then revokes it, and looks logins up with the app's client id and secret (GitHub documents that for OAuth apps as 5,000 requests an hour instead of 60 per IP address); if GitHub runs out, the grant says until when.
 
-Then, from a shelf:
+### A hosted shelf is a Git repository
+
+Each shelf is the repository `https://shelfkit.<you>.workers.dev/git/<shelf>.git`, and Git is the one way a checkout's files reach it. The owner's first push creates the shelf; an edit in the UI is a commit you pull; a push the engine cannot load is shown on the shelf with its errors and leaves the shelf as it was.
 
 ```bash
 shelfkit login https://shelfkit.<you>.workers.dev   # approve it in your browser; the key goes to the OS keychain
-shelfkit push                                       # upload the shelf, commit it, publish every profile
-shelfkit fetch                                      # write the hosted shelf (edits made in the UI) back
+git push https://shelfkit.<you>.workers.dev/git/<shelf>.git main
+shelfkit publish                                    # publish every profile to the deployment's registry
 shelfkit open                                       # open the web UI in your browser, signed in as you
 ```
 
 `shelfkit login` shows a code and opens the deployment's approval page: sign in there, check the page shows the same code as your terminal, and approve. The CLI then holds a key that acts as you (the owner, or what each shelf grants you), listed under "CLI sign-ins" in Settings, where revoking it signs that CLI out. Approve only a code you see in your own terminal. In CI, or with `--key`, it reads a key made in Settings from standard input instead.
 
+Git asks for a user name and a password the first time it reaches the deployment: any user name, and a key as the password, which your credential helper keeps. A program gives Git the key as a header, through the environment rather than its command line:
+
+```bash
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader \
+GIT_CONFIG_VALUE_0="Authorization: Bearer $SHELFKIT_KEY" git push "$SHELFKIT_URL/git/<shelf>.git" main
+```
+
+**A shelf that is a repository of its own** has the deployment as a remote:
+
+```bash
+git remote add shelf https://shelfkit.<you>.workers.dev/git/<shelf>.git
+git push shelf main    # what you committed
+git pull shelf main    # edits made in the UI, and other people's pushes
+```
+
+A push that does not fast-forward is refused, as on any Git host: pull first. A shelf that also lives on GitHub has two remotes, like any mirrored repository.
+
+**A shelf inside a larger repository** is a submodule of its hosted repository. The larger repository records which commit of the shelf it uses, and the shelf's history, the UI's edits included, stays in the shelf's repository:
+
+```bash
+git submodule add https://shelfkit.<you>.workers.dev/git/<shelf>.git shelf
+git commit -m "The shelf, as a submodule"
+
+git -C shelf pull                                       # edits made in the UI
+git -C shelf commit -am "Tighten the review prompt"     # edits made here
+git -C shelf push origin HEAD:main
+git commit -am "The shelf, updated"                     # the larger repository moves to that commit
+```
+
+A clone of the larger repository gets the shelf with `git clone --recurse-submodules`, or `git submodule update --init` afterwards; a private shelf asks for a key there as well.
+
+To turn a directory that is already in a larger repository into its own shelf, with its history:
+
+```bash
+git subtree split --prefix=shelf -b shelf-history       # the directory's commits, as a branch of their own
+git push https://shelfkit.<you>.workers.dev/git/<shelf>.git shelf-history:main
+git rm -r -q shelf && git commit -m "The shelf moves to its own repository"
+git submodule add https://shelfkit.<you>.workers.dev/git/<shelf>.git shelf
+git commit -m "The shelf, as a submodule"
+git branch -D shelf-history
+```
+
+The push creates a shelf that does not exist yet. For one that exists already, bring its history into the branch first: `git switch shelf-history && git pull --no-rebase --allow-unrelated-histories <url> main`, resolve, and push.
+
+`shelfkit publish` is separate from Git: it packages each profile exactly as `shelfkit serve` does and publishes it to the deployment's registry at its `version`, or `0.0.0+sha256.<revision>.format<N>` without one. A published version is immutable, so a changed profile with a `version` needs a new one before it publishes again.
+
 A profile then installs from the deployment with APM's registry client: `registries: { shelf: { url: https://shelfkit.<you>.workers.dev/apm } }` in `apm.yml`, the dependency `{ id: <namespace>/<profile>, version: <version> }`, and `apm experimental enable registries`.
 
 Keys are for programs: the CLI, agents, CI, and APM's registry client, which need a bearer token. They are managed over GraphQL (`createKey`, `revokeKey`) and in Settings, with the registry's scopes: `read`, `read:{shelf}/{profile}`, `publish:{shelf}/{profile}`, `publish:{shelf}/*`, plus `mcp:{shelf}/{item}` for the MCP relay. A key works on the registry, GraphQL, and `/mcp` alike, and a revoked one fails on all three at once. A browser never holds a key; people sign in with passkeys.
 
-Uploads no commit takes (a refused or abandoned push) stay in `objects/` and are never served: `/raw` serves only objects a committed snapshot names. Removing them is a follow-up: objects are shared by hash across a deployment's shelves, so a sweep must know that no shelf references an object before it deletes it, and there is no cross-shelf query to ask. The plan is per-shelf reference records in R2 (`refs/<sha256>/<shelf>`), written at commit, which a cron sweep reads before deleting an unreferenced object older than a day.
+File contents no commit takes (from a push the engine refused) stay in `objects/` and are never served: `/raw` serves only objects a committed snapshot names. Removing them is a follow-up: objects are shared by hash across a deployment's shelves, so a sweep must know that no shelf references an object before it deletes it, and there is no cross-shelf query to ask. The plan is per-shelf reference records in R2 (`refs/<sha256>/<shelf>`), written at commit, which a cron sweep reads before deleting an unreferenced object older than a day.
 
 To tear a deployment down: `wrangler delete shelfkit`; `wrangler queues delete shelfkit-jobs` and `shelfkit-jobs-dlq`; `wrangler r2 bucket lock remove shelfkit-blobs --id archives-immutable` (and `--id objects-immutable` on a deployment set up before the lock moved), empty the bucket, and `wrangler r2 bucket delete shelfkit-blobs`.
 

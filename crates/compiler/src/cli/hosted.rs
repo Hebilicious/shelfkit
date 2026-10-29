@@ -1,5 +1,5 @@
-//! The hosted service's client: `shelfkit login`, `logout`, `open`, `push`,
-//! and `fetch` (`docs/PRD.md` sections 4.1 and 10.3).
+//! The hosted service's client: `shelfkit login`, `logout`, `open`, and
+//! `publish` (`docs/PRD.md` sections 4.1 and 10.3).
 //!
 //! A deployment is addressed by its URL. `login` signs the CLI in through
 //! the browser: it starts a login at `/auth/cli/start`, opens the page that
@@ -13,19 +13,18 @@
 //! agents), else from the keychain. A key is never printed, logged, or put
 //! in an error.
 //!
-//! `push` uploads every file of the shelf to `/raw/{shelf}/objects/{sha256}`,
-//! commits them as the shelf's snapshot over GraphQL, and publishes each
-//! profile to the deployment's OpenAPM registry with the same deterministic
-//! packaging `serve` uses. `fetch` writes the hosted snapshot back into a
-//! directory. All network access goes through [`System::http`].
+//! A shelf's files reach the service only through Git: each hosted shelf is
+//! the repository `<deployment>/git/<shelf>.git`, pushed to and pulled from
+//! with plain git. `publish` packages each profile with the same
+//! deterministic packaging `serve` uses and publishes it to the deployment's
+//! OpenAPM registry, as APM's registry client would. All network access goes
+//! through [`System::http`].
 
 use super::system::{HttpRequest, HttpResponse, System};
 use super::{Context, Failure, Outcome, absolute};
 use crate::engine::{Request, inventory, package_profile};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use shelfkit_core::{DirSource, Errors};
-use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// The environment variable a key is read from before the keychain.
@@ -33,9 +32,6 @@ pub const KEY_ENV: &str = "SHELFKIT_KEY";
 /// The environment variable the deployment's URL is read from before the
 /// remembered default.
 pub const URL_ENV: &str = "SHELFKIT_URL";
-
-/// The directories of a shelf the format reads, besides `shelf.json`.
-const SHELF_DIRECTORIES: [&str; 3] = ["items", "bundles", "profiles"];
 
 /// Check and normalize a deployment's URL to its origin: `https://`, or plain
 /// `http://` only for a loopback host (a local `wrangler dev`).
@@ -184,13 +180,6 @@ impl<'a> Remote<'a> {
         }
         Ok(value.get("data").cloned().unwrap_or(Value::Null))
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 /// `+` and anything else outside the URL path's unreserved set, escaped.
@@ -529,222 +518,14 @@ pub(super) fn open(ctx: &mut Context<'_>, url: Option<&str>, print: bool) -> Out
     Ok(())
 }
 
-/// One file of a shelf on disk.
-struct LocalFile {
-    path: String,
-    bytes: Vec<u8>,
-    sha256: String,
-}
-
-/// Every file the shelf format reads, sorted by path, as `DirSource` reads
-/// them. A symbolic link is an error, as it is for the loader.
-fn local_files(root: &Path) -> Result<Vec<LocalFile>, Failure> {
-    let mut paths = vec!["shelf.json".to_owned()];
-    for directory in SHELF_DIRECTORIES {
-        walk(root, &root.join(directory), &mut paths)?;
-    }
-    paths.sort();
-    paths
-        .into_iter()
-        .map(|path| {
-            let bytes =
-                std::fs::read(root.join(&path)).map_err(|error| format!("{path}: {error}"))?;
-            Ok(LocalFile {
-                sha256: hex(&bytes),
-                bytes,
-                path,
-            })
-        })
-        .collect()
-}
-
-fn walk(root: &Path, dir: &Path, paths: &mut Vec<String>) -> Result<(), Failure> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Ok(());
-    };
-    for entry in entries {
-        let entry = entry.map_err(|error| format!("{}: {error}", dir.display()))?;
-        let kind = entry
-            .file_type()
-            .map_err(|error| format!("{}: {error}", entry.path().display()))?;
-        let path = entry.path();
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|error| error.to_string())?
-            .components()
-            .map(|part| part.as_os_str().to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join("/");
-        if kind.is_symlink() {
-            return Err(format!("{relative}: symbolic links are not allowed in a shelf").into());
-        }
-        if kind.is_dir() {
-            walk(root, &path, paths)?;
-        } else if kind.is_file() {
-            paths.push(relative);
-        }
-    }
-    Ok(())
-}
-
-const HOSTED: &str = "query Hosted($id: ID!) { shelf(id: $id) { snapshot { digest origin } files { path sha256 size } } }";
-
-/// The hosted shelf's snapshot and files, or `None` when there is none the key
-/// can read.
-struct Hosted {
-    digest: String,
-    origin: String,
-    files: BTreeMap<String, (String, u64)>,
-}
-
-fn hosted(remote: &Remote<'_>, shelf: &str) -> Result<Option<Hosted>, String> {
-    let data = remote.graphql(HOSTED, json!({ "id": shelf }))?;
-    let found = &data["shelf"];
-    let (Some(digest), Some(files)) = (
-        found["snapshot"]["digest"].as_str(),
-        found["files"].as_array(),
-    ) else {
-        return Ok(None);
-    };
-    let files = files
-        .iter()
-        .filter_map(|file| {
-            Some((
-                file["path"].as_str()?.to_owned(),
-                (file["sha256"].as_str()?.to_owned(), file["size"].as_u64()?),
-            ))
-        })
-        .collect();
-    Ok(Some(Hosted {
-        digest: digest.to_owned(),
-        files,
-        origin: found["snapshot"]["origin"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned(),
-    }))
-}
-
-pub(super) struct PushOptions<'a> {
-    pub url: Option<&'a str>,
-    pub message: Option<&'a str>,
-    pub publish: bool,
-    pub force: bool,
-}
-
-const COMMIT: &str =
-    "mutation Push($shelf: ID!, $files: [SnapshotFileInput!]!, $message: String, $parent: String) {
-  commitSnapshot(shelf: $shelf, files: $files, message: $message, parent: $parent) {
-    ok reason errors { path message } missing snapshot { digest fileCount }
-  }
-}";
-
-/// `shelfkit push`: upload the shelf, make it the hosted snapshot, and publish
-/// its profiles.
-pub(super) fn push(ctx: &mut Context<'_>, root: &Path, options: &PushOptions<'_>) -> Outcome {
+/// `shelfkit publish`: package every profile and publish it to the
+/// deployment's registry. A version already published with the same bytes is
+/// reported and left; one published with other bytes fails the command, after
+/// every profile has been tried.
+pub(super) fn publish(ctx: &mut Context<'_>, root: &Path, url: Option<&str>) -> Outcome {
     let source = DirSource::new(root);
     let found = inventory(&source)?;
-    let shelf = found
-        .manifest
-        .registry
-        .as_ref()
-        .map(|registry| registry.namespace.clone())
-        .ok_or_else(|| {
-            "shelf.json has no `registry.namespace`: a hosted shelf is addressed by it".to_owned()
-        })?;
-    let files = local_files(root)?;
-    let remote = Remote::connect(ctx.system, options.url)?;
-    let current = hosted(&remote, &shelf)?;
-
-    if let Some(current) = &current {
-        let same: BTreeMap<&str, &str> = files
-            .iter()
-            .map(|file| (file.path.as_str(), file.sha256.as_str()))
-            .collect();
-        let theirs: BTreeMap<&str, &str> = current
-            .files
-            .iter()
-            .map(|(path, (sha, _))| (path.as_str(), sha.as_str()))
-            .collect();
-        if same != theirs && current.origin != "push" && !options.force {
-            return Err(format!(
-                "the hosted shelf `{shelf}` has changes made there (its snapshot {} came from `{}`). \
-                 Run `shelfkit fetch` and commit them first, or push with `--force` to replace them",
-                current.digest, current.origin
-            )
-            .into());
-        }
-    }
-
-    let known: BTreeSet<&str> = current
-        .as_ref()
-        .map(|current| {
-            current
-                .files
-                .values()
-                .map(|(sha, _)| sha.as_str())
-                .collect()
-        })
-        .unwrap_or_default();
-    let mut uploaded = 0;
-    let mut sent = BTreeSet::new();
-    for file in &files {
-        if known.contains(file.sha256.as_str()) || !sent.insert(file.sha256.clone()) {
-            continue;
-        }
-        let response = remote.send(
-            "PUT",
-            &format!("/raw/{shelf}/objects/{}", file.sha256),
-            Some("application/octet-stream"),
-            file.bytes.clone(),
-        )?;
-        if response.status != 204 {
-            return Err(format!(
-                "uploading {} answered {}: {}",
-                file.path,
-                response.status,
-                String::from_utf8_lossy(&response.body)
-            )
-            .into());
-        }
-        uploaded += 1;
-    }
-
-    let variables = json!({
-        "shelf": shelf,
-        "files": files.iter().map(|file| json!({ "path": file.path, "sha256": file.sha256, "size": file.bytes.len() })).collect::<Vec<_>>(),
-        "message": options.message,
-        "parent": current.as_ref().map(|current| current.digest.clone()),
-    });
-    let committed = remote.graphql(COMMIT, variables)?;
-    let committed = &committed["commitSnapshot"];
-    if committed["ok"] != Value::Bool(true) {
-        for error in committed["errors"].as_array().into_iter().flatten() {
-            let _ = writeln!(
-                ctx.stderr,
-                "{}: {}",
-                error["path"].as_str().unwrap_or_default(),
-                error["message"].as_str().unwrap_or_default()
-            );
-        }
-        return Err(format!(
-            "{} refused the snapshot ({})",
-            remote.url(),
-            committed["reason"].as_str().unwrap_or("unknown")
-        )
-        .into());
-    }
-    let _ = writeln!(
-        ctx.stdout,
-        "Pushed `{shelf}` to {}: {} files ({uploaded} uploaded), snapshot {}.",
-        remote.url(),
-        files.len(),
-        committed["snapshot"]["digest"].as_str().unwrap_or_default()
-    );
-
-    if !options.publish {
-        return Ok(());
-    }
+    let remote = Remote::connect(ctx.system, url)?;
     let mut failed = false;
     for profile in &found.profiles {
         let id = &profile.profile.id;
@@ -752,46 +533,46 @@ pub(super) fn push(ctx: &mut Context<'_>, root: &Path, options: &PushOptions<'_>
             profile: Some(id.clone()),
             ..Request::default()
         };
-        match package_profile(&source, &request) {
-            Ok(packaged) => {
-                let outcome = publish(
-                    &remote,
-                    &packaged.owner,
-                    &packaged.repo,
-                    &packaged.version,
-                    &packaged.digest,
-                    packaged.archive.clone(),
-                )?;
-                match outcome {
-                    Published::Created => {
-                        let _ = writeln!(
-                            ctx.stdout,
-                            "Published {}@{} ({}).",
-                            packaged.package, packaged.version, packaged.digest
-                        );
-                    }
-                    Published::Already => {
-                        let _ = writeln!(
-                            ctx.stdout,
-                            "{}@{} is already published with these bytes.",
-                            packaged.package, packaged.version
-                        );
-                    }
-                    Published::Different => {
-                        failed = true;
-                        let _ = writeln!(
-                            ctx.stderr,
-                            "shelfkit: {}@{} is already published with other bytes, and a version is immutable: give the profile a new `version`",
-                            packaged.package, packaged.version
-                        );
-                    }
-                }
-            }
+        let packaged = match package_profile(&source, &request) {
+            Ok(packaged) => packaged,
             Err(errors) => {
                 let _ = writeln!(
                     ctx.stdout,
                     "Not published: the profile `{id}` cannot be a registry package ({}).",
                     first_message(&errors)
+                );
+                continue;
+            }
+        };
+        let outcome = publish_version(
+            &remote,
+            &packaged.owner,
+            &packaged.repo,
+            &packaged.version,
+            &packaged.digest,
+            packaged.archive.clone(),
+        )?;
+        match outcome {
+            Published::Created => {
+                let _ = writeln!(
+                    ctx.stdout,
+                    "Published {}@{} ({}).",
+                    packaged.package, packaged.version, packaged.digest
+                );
+            }
+            Published::Already => {
+                let _ = writeln!(
+                    ctx.stdout,
+                    "{}@{} is already published with these bytes.",
+                    packaged.package, packaged.version
+                );
+            }
+            Published::Different => {
+                failed = true;
+                let _ = writeln!(
+                    ctx.stderr,
+                    "shelfkit: {}@{} is already published with other bytes, and a version is immutable: give the profile a new `version`",
+                    packaged.package, packaged.version
                 );
             }
         }
@@ -817,7 +598,7 @@ enum Published {
 }
 
 /// Publish one package version, as APM's registry client would.
-fn publish(
+fn publish_version(
     remote: &Remote<'_>,
     owner: &str,
     repo: &str,
@@ -858,201 +639,6 @@ fn publish(
     }
 }
 
-pub(super) struct FetchOptions<'a> {
-    pub url: Option<&'a str>,
-    pub id: Option<&'a str>,
-    pub out: Option<&'a Path>,
-    pub force: bool,
-}
-
-const KNOWN: &str = "query Known($id: ID!, $sha256: [String!]!) { shelf(id: $id) { knownObjects(sha256: $sha256) } }";
-
-/// The local shelf files a fetch would replace or remove whose content the
-/// service has never had: work that exists only here.
-fn unpushed(
-    remote: &Remote<'_>,
-    id: &str,
-    dir: &Path,
-    hosted: &Hosted,
-) -> Result<Vec<String>, Failure> {
-    let mut local = Vec::new();
-    if dir.join("shelf.json").is_file() {
-        local.push("shelf.json".to_owned());
-    }
-    for directory in SHELF_DIRECTORIES {
-        walk(dir, &dir.join(directory), &mut local)?;
-    }
-    let mut changed: Vec<(String, String)> = Vec::new();
-    for path in local {
-        let bytes = std::fs::read(dir.join(&path)).map_err(|error| format!("{path}: {error}"))?;
-        let sha256 = hex(&bytes);
-        if hosted
-            .files
-            .get(&path)
-            .is_some_and(|(theirs, _)| *theirs == sha256)
-        {
-            continue;
-        }
-        changed.push((path, sha256));
-    }
-    if changed.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut known = BTreeSet::new();
-    for chunk in changed.chunks(2000) {
-        let hashes: Vec<&str> = chunk.iter().map(|(_, sha)| sha.as_str()).collect();
-        let data = remote.graphql(KNOWN, json!({ "id": id, "sha256": hashes }))?;
-        for found in data["shelf"]["knownObjects"]
-            .as_array()
-            .into_iter()
-            .flatten()
-        {
-            if let Some(sha) = found.as_str() {
-                known.insert(sha.to_owned());
-            }
-        }
-    }
-    Ok(changed
-        .into_iter()
-        .filter(|(_, sha)| !known.contains(sha))
-        .map(|(path, _)| path)
-        .collect())
-}
-
-/// Whether a path from the service is one a shelf has: `shelf.json`, or a
-/// relative path under `items/`, `bundles/`, or `profiles/` with no `.` or
-/// `..` segment.
-fn is_shelf_path(path: &str) -> bool {
-    if path == "shelf.json" {
-        return true;
-    }
-    let segments: Vec<&str> = path.split('/').collect();
-    segments.len() > 1
-        && SHELF_DIRECTORIES.contains(&segments[0])
-        && segments.iter().all(|segment| {
-            !segment.is_empty() && *segment != "." && *segment != ".." && !segment.contains('\\')
-        })
-}
-
-/// `shelfkit fetch`: write the hosted snapshot into a directory, and remove the
-/// shelf files it no longer has.
-pub(super) fn fetch(
-    ctx: &mut Context<'_>,
-    shelf_dir: Option<PathBuf>,
-    options: &FetchOptions<'_>,
-) -> Outcome {
-    let remote = Remote::connect(ctx.system, options.url)?;
-    let dir = match (options.out, shelf_dir) {
-        (Some(out), _) => absolute(ctx, Some(out)),
-        (None, Some(dir)) => absolute(ctx, Some(&dir)),
-        (None, None) => ctx
-            .cwd
-            .ancestors()
-            .find(|dir| dir.join("shelf.json").is_file())
-            .map_or_else(|| ctx.cwd.clone(), Path::to_path_buf),
-    };
-    let id = match options.id {
-        Some(id) => id.to_owned(),
-        None => local_namespace(&dir)
-            .or_else(|| {
-                remote
-                    .graphql(VIEWER, json!({}))
-                    .ok()
-                    .and_then(|data| data["viewer"]["shelf"].as_str().map(str::to_owned))
-            })
-            .ok_or_else(|| {
-                "which shelf? Pass `--id <shelf>`, or fetch into a shelf whose shelf.json names its `registry.namespace`".to_owned()
-            })?,
-    };
-    let hosted = hosted(&remote, &id)?
-        .ok_or_else(|| format!("{} has no shelf `{id}` this key can read", remote.url()))?;
-    if !options.force {
-        let local_only = unpushed(&remote, &id, &dir, &hosted)?;
-        if !local_only.is_empty() {
-            for path in &local_only {
-                let _ = writeln!(ctx.stderr, "{path}: changed here and never pushed");
-            }
-            return Err(format!(
-                "fetching would replace or remove {} local file(s) the service has never had. Push them first, or \
-                 fetch with `--force` to discard them",
-                local_only.len()
-            )
-            .into());
-        }
-    }
-    let mut written = 0;
-    for (path, (sha256, _)) in &hosted.files {
-        if !is_shelf_path(path) {
-            return Err(format!("{} sent a file outside a shelf: `{path}`", remote.url()).into());
-        }
-        let target = dir.join(path);
-        if std::fs::read(&target).is_ok_and(|bytes| hex(&bytes) == *sha256) {
-            continue;
-        }
-        let response = remote.send(
-            "GET",
-            &format!("/raw/{id}/objects/{sha256}"),
-            None,
-            Vec::new(),
-        )?;
-        if response.status != 200 || hex(&response.body) != *sha256 {
-            return Err(format!(
-                "downloading {path} failed ({}), or its bytes are not {sha256}",
-                response.status
-            )
-            .into());
-        }
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("{}: {error}", parent.display()))?;
-        }
-        std::fs::write(&target, &response.body)
-            .map_err(|error| format!("{}: {error}", target.display()))?;
-        written += 1;
-    }
-    let mut removed = 0;
-    if dir.join("shelf.json").is_file() {
-        let mut local = Vec::new();
-        for directory in SHELF_DIRECTORIES {
-            walk(&dir, &dir.join(directory), &mut local)?;
-        }
-        for path in local {
-            if !hosted.files.contains_key(&path) {
-                std::fs::remove_file(dir.join(&path))
-                    .map_err(|error| format!("{path}: {error}"))?;
-                remove_empty_parents(&dir, &dir.join(&path));
-                removed += 1;
-            }
-        }
-    }
-    let _ = writeln!(
-        ctx.stdout,
-        "Fetched `{id}` from {} into {}: snapshot {}, {} files ({written} written, {removed} removed).",
-        remote.url(),
-        dir.display(),
-        hosted.digest,
-        hosted.files.len()
-    );
-    Ok(())
-}
-
-fn local_namespace(dir: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(dir.join("shelf.json")).ok()?;
-    let value: Value = serde_json::from_str(&text).ok()?;
-    value["registry"]["namespace"].as_str().map(str::to_owned)
-}
-
-/// Remove the directories a removed file leaves empty, up to the shelf root.
-fn remove_empty_parents(root: &Path, file: &Path) {
-    let mut current = file.parent();
-    while let Some(dir) = current {
-        if dir == root || std::fs::remove_dir(dir).is_err() {
-            return;
-        }
-        current = dir.parent();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1089,14 +675,5 @@ mod tests {
     #[test]
     fn a_version_is_escaped_as_a_path_segment() {
         assert_eq!(encode_segment("1.0.0+build.1"), "1.0.0%2Bbuild.1");
-    }
-
-    #[test]
-    fn only_shelf_paths_are_written() {
-        assert!(is_shelf_path("shelf.json"));
-        assert!(is_shelf_path("items/prompts/x/prompt.md"));
-        assert!(!is_shelf_path("items/../../etc/passwd"));
-        assert!(!is_shelf_path("README.md"));
-        assert!(!is_shelf_path("items"));
     }
 }

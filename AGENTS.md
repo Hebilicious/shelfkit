@@ -13,7 +13,7 @@ moon run :build            # build every project that has a build task
 moon run :check :lint      # typecheck, lint, format and authorship checks
 moon run :test             # tests
 moon run web:dev           # SPA on :5173
-moon run worker:dev        # Worker on :8787
+moon run worker:dev        # Worker on :8787, on Miniflare without Artifacts (wrangler.local.json)
 moon query tasks           # every task, by project
 moon run worker:setup      # provision a Cloudflare account and deploy (not `pnpm setup`, which is pnpm's own command)
 moon run worker:db-generate      # the shelf object's next migration, from apps/worker/src/db/schema.ts
@@ -32,8 +32,9 @@ moon run root:hooks-install # install the git hooks, once per clone
 | `crates/core` | The shelf format: item kinds, profiles, revisions, resolution. **The product.** |
 | `crates/compiler` | Profile to `apm.yml`, plus the `shelfkit` binary (its `cli` feature). The OpenAPM manifest schema is vendored in `schemas/`. |
 | `crates/registry` | The OpenAPM Registry HTTP API with no I/O: routing, auth decisions, publish validation, RFC 7807 problems, deterministic `tar.gz`. `shelfkit serve` and the Worker both run it. Its conformance cases are `conformance/cases.json`. |
-| `crates/wasm` | The core, compiler, and registry as a `wasm32-unknown-unknown` module with a JSON ABI. No bindings generator. |
-| `apps/worker` | Cloudflare Worker: registry, MCP, GraphQL, static assets. `src/shelf-index.ts` is the shelf's Durable Object and its API; `schema.graphql` is the committed SDL. |
+| `crates/git` | Git objects, trees, packfiles, and smart HTTP's both sides, with no I/O: how the Worker commits to a shelf's repository, and how local mode serves one (`serve`). |
+| `crates/wasm` | The core, compiler, registry, and Git encoding as a `wasm32-unknown-unknown` module with a JSON ABI. No bindings generator. |
+| `apps/worker` | Cloudflare Worker: registry, MCP, GraphQL, Git, static assets. `src/shelf-index.ts` is the shelf's Durable Object and its API; `src/repository/` is each shelf's repository, in Artifacts or, locally, in R2; `src/git.ts` relays Git clients to it; `schema.graphql` is the committed SDL. |
 | `apps/web` | Vue 3 SPA. |
 | `packages/schema` | Boundary validation shared by the Worker and the CLI. |
 | `packages/importers` | Source adapters and scanners behind the interface the Worker's import jobs call. |
@@ -47,11 +48,13 @@ moon run root:hooks-install # install the git hooks, once per clone
 - **APM owns install.** `shelfkit compile` writes `apm.yml` and stops. It never writes a lockfile, never materializes skills into harness directories, and never runs APM unless the `install` command was asked for. Beyond `apm.yml`, `shelfkit install` writes only the two marker lines of AGENTS.md's managed section and CLAUDE.md's `@AGENTS.md` import, which route instructions through AGENTS.md for every agent (`docs/PRD.md` section 4.2); APM writes everything else.
 - **Never parse human-oriented `apm` output.** Only `audit -f json`, `deps why --json`, `pack --json`, `policy status --json`, `targets --json`, and `lock export` are structured. Drive the rest by exit code and read `apm.lock.yaml`.
 - **The registry is `crates/registry`, and it is served as it is.** Three endpoints, `tar.gz` as `application/gzip` only, immutable versions (a repeat `PUT` is `409`), `401` for a missing or unknown credential, `403` only for a missing scope, and a known key reads a public shelf whatever its scopes. Archives are read strictly: anything Python's `tarfile` (APM's extractor) could read differently is refused. A host does I/O and nothing else; a new rule goes into the library and a case into `conformance/cases.json`, which both hosts run.
+- **A shelf's files live in its Artifacts repository; the Durable Object indexes its head.** Every write the Worker makes is a commit first and a snapshot second, one at a time per shelf; a push from a Git client is indexed afterwards, and a head the engine refuses leaves the index where it was. Artifacts has no local simulator, so local mode runs without its binding (`scripts/local-config.ts`) and keeps each repository in R2, serving Git itself (`src/repository/local.ts`); the Worker tests stand in for Artifacts (`test/fake-artifacts.ts`) and run local mode's repositories too.
+- **Git is the one way a checkout's files reach a hosted shelf.** There is no upload API: a shelf of its own pushes to `/git/{shelf}.git`, and a shelf inside a larger repository is a submodule of it (`docs/PRD.md` section 10.6). The CLI's hosted commands are `login`, `logout`, `open`, and `publish`.
 - **One Durable Object per shelf, SQLite, no D1.** There is no cross-shelf query and no shared database. Content lives in R2 keyed by `sha256`; databases hold metadata only.
 - **No stateful MCP servers.** ShelfKit serves stateless tools and distributes MCP definitions. It never runs a shelf's server code, in any form.
 - **APM targets verbatim.** Emit only the OpenAPM v0.1 canonical producer set by default; anything outside it is an explicit opt-in that `check` reports.
 - **Migrations run inside the Durable Object**, behind `blockConcurrencyWhile`: in the constructor for an object that already holds a shelf (skipped when `schema_version` is current), and on the first write for one that has never been written, so reading an unknown shelf id stores nothing. There is no CLI path to its SQLite and `PRAGMA user_version` is unsupported. They are generated by Drizzle Kit (`worker:db-generate`) and committed; `meta.schema_version` records the version, and the gate fails when the schema has changes no migration covers.
-- **One auth module** (`apps/worker/src/auth/`) turns a Bearer key, HTTP Basic, or the browser's cookie into a session for every surface. Nothing caches a key's resolution, so a revoked key fails everywhere at once. A key is never printed or logged, by the Worker or the CLI.
+- **One auth module** (`apps/worker/src/auth/`) turns a Bearer key, HTTP Basic, or the browser's cookie into a session for every surface, `/git` included. An Artifacts repository token is minted per Git exchange and never leaves the Worker. Nothing caches a key's resolution, so a revoked key fails everywhere at once. A key is never printed or logged, by the Worker or the CLI.
 - **The Worker's module scope only imports.** The engine and the GraphQL schema are built on first use; `worker:startup-check` holds startup to a CPU budget.
 - **Item ids are kebab-case and contain no `__`**, which the MCP namespace separator reserves.
 

@@ -523,11 +523,13 @@ fn add_lists_a_remote_source_through_the_hosted_import_then_imports_what_was_pic
         imported.stdout
     );
     assert!(
-        imported.stdout.contains("shelfkit fetch"),
+        imported
+            .stdout
+            .contains("(https://shelf.example/git/curated.git). Run `git pull`"),
         "{}",
         imported.stdout
     );
-    // The import happened on the hosted shelf; this one is untouched until `fetch`.
+    // The import happened on the hosted shelf; this one is untouched until `git pull`.
     assert_eq!(snapshot(&root), before);
     let _ = std::fs::remove_dir_all(root);
 }

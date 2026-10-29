@@ -16,9 +16,9 @@ import {
 const SHELF = "live-e2e";
 const PRIVATE = "live-private-e2e";
 
-test.beforeAll(() => {
-  seedShelf(FIXTURES.allKinds, SHELF);
-  seedShelf(FIXTURES.allKinds, PRIVATE, makePrivate);
+test.beforeAll(async () => {
+  await seedShelf(FIXTURES.allKinds, SHELF);
+  await seedShelf(FIXTURES.allKinds, PRIVATE, makePrivate);
 });
 
 test("a private shelf's page holds still for a signed-out browser, and asks the server nothing more", async ({

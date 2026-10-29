@@ -30,7 +30,7 @@ walkdir = "2"
 # without wasm-bindgen imports (its hasher seeds from `getrandom`).
 jsonschema = { version = "0.59", default-features = false }
 clap = { version = "4", features = ["derive"] }
-# The hosted service's client (`shelfkit login`, `push`, `fetch`): a blocking
+# The hosted service's client (`shelfkit login`, `open`, `publish`): a blocking
 # HTTP client, so the binary needs no async runtime, with rustls and Mozilla's
 # roots rather than the platform's TLS.
 ureq = { version = "3", default-features = false, features = ["rustls"] }

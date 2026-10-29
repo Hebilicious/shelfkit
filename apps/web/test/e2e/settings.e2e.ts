@@ -24,9 +24,9 @@ const SHELF = "settings-e2e";
 const PRIVATE = "people-e2e";
 let seeded = "";
 
-test.beforeAll(() => {
-  seeded = seedShelf(FIXTURES.allKinds, SHELF);
-  seedShelf(FIXTURES.allKinds, PRIVATE, makePrivate);
+test.beforeAll(async () => {
+  seeded = await seedShelf(FIXTURES.allKinds, SHELF);
+  await seedShelf(FIXTURES.allKinds, PRIVATE, makePrivate);
 });
 
 test("creates a key that is shown once, and revokes it after a second click", async ({

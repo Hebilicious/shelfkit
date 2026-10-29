@@ -21,8 +21,8 @@ import {
 const SHELF = "compose-e2e";
 let seeded = "";
 
-test.beforeAll(() => {
-  seeded = seedShelf(FIXTURES.allKinds, SHELF);
+test.beforeAll(async () => {
+  seeded = await seedShelf(FIXTURES.allKinds, SHELF);
 });
 
 test.beforeEach(async ({ page }) => {
@@ -158,7 +158,7 @@ test("a prompt.md that starts with a byte-order mark previews as the CLI compile
   page,
 }) => {
   const shelf = "bom-e2e";
-  const root = seedShelf(FIXTURES.allKinds, shelf, (copy) => {
+  const root = await seedShelf(FIXTURES.allKinds, shelf, (copy) => {
     const prompt = path.join(copy, "items/prompts/pr-description/prompt.md");
     writeFileSync(prompt, `\uFEFF${readFileSync(prompt, "utf-8")}`);
   });

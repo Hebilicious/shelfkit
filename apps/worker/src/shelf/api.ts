@@ -85,7 +85,9 @@ export interface SnapshotRecord {
   /** `sha256:<hex>` of the canonical manifest, which is itself the R2 object `objects/<hex>`. */
   readonly digest: string;
   readonly parent: string | null;
-  readonly origin: "push" | "forge" | "edit" | "import";
+  readonly origin: "push" | "forge" | "edit" | "import" | "git";
+  /** The commit in the shelf's repository that holds these files; null for a snapshot from before repositories. */
+  readonly commit: string | null;
   readonly message: string | null;
   readonly keyId: string | null;
   readonly createdAt: string;
@@ -107,8 +109,16 @@ export type Committed =
     }
   | {
       readonly ok: false;
-      /** `invalid`: the engine refused the shelf. `missing`: objects to upload first. `conflict`: the shelf moved. */
-      readonly reason: "invalid" | "missing" | "conflict" | "forbidden";
+      /**
+       * `invalid`: the engine refused the shelf. `missing`: objects to upload first. `conflict`: the shelf moved.
+       * `unavailable`: the shelf's repository did not take the commit.
+       */
+      readonly reason:
+        | "invalid"
+        | "missing"
+        | "conflict"
+        | "forbidden"
+        | "unavailable";
       readonly errors: readonly ShelfProblem[];
       readonly missing?: readonly string[];
     };

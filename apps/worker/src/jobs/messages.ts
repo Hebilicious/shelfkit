@@ -7,7 +7,9 @@
  * - `upstream.check`: compare every imported item with its upstream (`SourceAdapter.checkUpstream`); the hourly cron
  *   queues one per shelf.
  * - `scan.item`: run every scanner on one item revision and record each verdict against that revision.
- * - `index.forge`: read a shelf from a Git forge's REST API, snapshot it into R2, and commit it (`src/forge/`).
+ * - `index.forge`: read a shelf from a Git forge, snapshot it into R2, and commit it (`src/forge/`).
+ * - `repository.sync`: index the head of the shelf's repository (`ShelfIndex.syncRepository`), queued by the Git route
+ *   once a push through it is done.
  */
 import { ItemIdSchema, RevisionSchema, ShelfIdSchema } from "@shelfkit/schema";
 import * as v from "valibot";
@@ -44,6 +46,7 @@ export const JobMessageSchema = v.variant("type", [
     shelf: ShelfIdSchema,
     type: v.literal("index.forge"),
   }),
+  v.strictObject({ shelf: ShelfIdSchema, type: v.literal("repository.sync") }),
 ]);
 
 export type JobMessage = v.InferOutput<typeof JobMessageSchema>;

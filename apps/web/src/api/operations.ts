@@ -767,6 +767,17 @@ export const SettingsQuery = graphql(`
       name
       public
       registryUrl
+      repository {
+        url
+        commit
+        refused {
+          commit
+          errors {
+            path
+            message
+          }
+        }
+      }
       sources
       databaseBytes
       viewerAccess {

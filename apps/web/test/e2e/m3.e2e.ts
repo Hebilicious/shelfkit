@@ -18,8 +18,8 @@ import {
 const SHELF = "m3-e2e";
 const REPOSITORY_NAME = "my-repo";
 
-test.beforeAll(() => {
-  seedShelf(FIXTURES.allKinds, SHELF);
+test.beforeAll(async () => {
+  await seedShelf(FIXTURES.allKinds, SHELF);
 });
 
 test("finds a prompt, copies it filled in, composes a profile and copies how to install it", async ({

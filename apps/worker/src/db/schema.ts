@@ -9,6 +9,7 @@
  * Migrations are generated from this file by `moon run worker:db-generate` and run inside the object, in its
  * constructor, behind `blockConcurrencyWhile` (`src/db/migrate.ts`). Never edit a generated migration.
  */
+import type { GitMode } from "@shelfkit/engine";
 import type {
   Candidate,
   ImportSource,
@@ -39,6 +40,8 @@ export const meta = sqliteTable("meta", {
 
 /** Every snapshot the shelf has had. The manifest (path, sha256, size per file) is the R2 object `digest`. */
 export const snapshot = sqliteTable("snapshot", {
+  /** The Git commit in the shelf's repository that holds these files; null where the deployment has no Artifacts. */
+  commit: text(),
   createdAt: text("created_at").notNull(),
   /** `sha256:<hex>` of the canonical manifest. */
   digest: text().primaryKey(),
@@ -46,7 +49,10 @@ export const snapshot = sqliteTable("snapshot", {
   /** The key that made it: a key id, or `owner`. */
   keyId: text("key_id"),
   message: text(),
-  /** `push`, `forge`, `edit`, or `import`. */
+  /**
+   * `forge`, `edit`, `import`, or `git` (a push to the shelf's repository, indexed afterwards); `push` is a snapshot
+   * `shelfkit push` uploaded, before Git was the one way files reached a shelf.
+   */
   origin: text().notNull(),
   parent: text(),
   totalBytes: integer("total_bytes").notNull(),
@@ -58,6 +64,18 @@ export const file = sqliteTable("file", {
   /** Lowercase hex; the R2 object is `objects/<sha256>`. */
   sha256: text().notNull(),
   size: integer().notNull(),
+});
+
+/**
+ * Every entry of the Git tree of the commit the shelf is indexed at (`meta.commit`), files outside the shelf's paths
+ * included, so a commit the Worker makes keeps them. Empty where the deployment has no Artifacts.
+ */
+export const repositoryEntry = sqliteTable("repository_entry", {
+  /** The Git object id: 40 lowercase hex digits. */
+  id: text().notNull(),
+  /** `100644`, `100755`, `120000` (a symbolic link), or `160000` (a submodule). */
+  mode: text().$type<GitMode>().notNull(),
+  path: text().primaryKey(),
 });
 
 /** Every R2 object this shelf references or uploaded, so a key reads only its own shelf's objects. */

@@ -352,6 +352,47 @@ async function removeSecretName(
         </div>
         <p class="small muted">Storage used by the shelf's database: {{ Math.round(settings.databaseBytes / 1024) }} KiB.</p>
       </section>
+      <section v-if="settings.repository !== null" class="panel" data-testid="repository">
+        <h2>Repository</h2>
+        <div class="row">
+          <span class="small muted">The shelf's files, as a Git repository. Clone it with a key as the password:</span>
+          <code data-testid="repository-url">{{ settings.repository.url }}</code>
+          <button
+            class="small"
+            type="button"
+            @click='copy(`git clone ${settings.repository.url}`, "Clone command")'
+          >
+            Copy
+          </button>
+        </div>
+        <p class="small muted">
+          Indexed at
+          <code>{{
+              settings.repository.commit === null
+                ? "no commit yet"
+                : settings.repository.commit.slice(0, 12)
+            }}</code>.
+        </p>
+        <div
+          v-if="settings.repository.refused !== null"
+          class="error-text small"
+          data-testid="repository-refused"
+          role="alert"
+        >
+          <p>
+            The repository's head, <code>{{ settings.repository.refused.commit.slice(0, 12) }}</code>, does not load, so
+            the shelf stays at the commit before it. Push a fix:
+          </p>
+          <ul>
+            <li
+              v-for="error in settings.repository.refused.errors"
+              :key="`${error.path}:${error.message}`"
+            >
+              <code>{{ error.path }}</code>: {{ error.message }}
+            </li>
+          </ul>
+        </div>
+      </section>
       <PeoplePanel
         v-if="owner"
         :grants="grants"

@@ -9,8 +9,8 @@ import { FIXTURES, expect, makePrivate, seedShelf, test } from "./support.ts";
 
 const SHELF = "github-e2e";
 
-test.beforeAll(() => {
-  seedShelf(FIXTURES.allKinds, SHELF, makePrivate, GITHUB_BASE_URL);
+test.beforeAll(async () => {
+  await seedShelf(FIXTURES.allKinds, SHELF, makePrivate, GITHUB_BASE_URL);
 });
 
 test("a private shelf's page sends the browser through GitHub and back to it, signed in as the owner", async ({

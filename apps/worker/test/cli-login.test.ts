@@ -463,10 +463,10 @@ describe("an invited person's CLI", () => {
       acme: { id: "acme" },
       other: null,
     });
-    // A read grant writes nothing, through the key as through the browser.
+    // A read grant writes nothing, through the key as through the browser: not even a push to the repository.
     const upload = await exports.default.fetch(
-      `${ORIGIN}/raw/acme/objects/${"0".repeat(64)}`,
-      { body: "", headers: { authorization: `Bearer ${key}` }, method: "PUT" }
+      `${ORIGIN}/git/acme.git/info/refs?service=git-receive-pack`,
+      { headers: { authorization: `Bearer ${key}` } }
     );
     const created = await graphql(
       `
