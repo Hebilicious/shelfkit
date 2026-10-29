@@ -52,6 +52,12 @@ moon run worker:setup  # provision a Cloudflare account and deploy
 
 `moon run :build` and friends run a task in every project that defines it. `moon query tasks` lists every task.
 
+### Local mode
+
+`moon run worker:dev` runs the Worker on Miniflare with no Cloudflare account: the Durable Objects, R2, and the queue are Miniflare's, and every Git repository (each shelf's, and each published profile's) is in Cloudflare's local Artifacts simulator, which serves it with `git http-backend`. It needs Git 2.32 or newer on `PATH`, and so do the Worker tests and the browser tests, which run the same simulator. Repositories live under `.wrangler/state` with the rest of local state, and the address of a repository's remote changes on every start.
+
+No Wrangler release wires the simulator in yet: it is in Miniflare ([cloudflare/workers-sdk#16177](https://github.com/cloudflare/workers-sdk/pull/16177)), and its wiring into Wrangler and the Workers Vitest pool is [cloudflare/workers-sdk#16186](https://github.com/cloudflare/workers-sdk/pull/16186), still open. Until it ships, `patches/` carries the runtime half of #16186 for the pinned `wrangler` and `miniflare`, applied by pnpm (`patchedDependencies` in `pnpm-workspace.yaml`), and the local configuration (`apps/worker/scripts/local-config.ts`) marks the Artifacts binding `"remote": false`. Delete the patches and their entry once a Wrangler release includes #16186. A version bump of either package needs them regenerated (`pnpm patch`, the same edits, `pnpm patch-commit`): `pnpm install` fails on a patch whose version is no longer installed.
+
 ## A shelf as a registry
 
 `shelfkit serve` publishes every profile of a shelf as `{registry.namespace}/{profile}` and serves the OpenAPM Registry HTTP API on `http://127.0.0.1:7878`, in memory. APM installs from it with its experimental registry client:
@@ -166,7 +172,7 @@ The push creates a shelf that does not exist yet. For one that exists already, b
 
 A published profile installs with APM in two ways, which give the same files, and `shelfkit publish` prints both:
 
-- **From its Git repository**, `https://shelfkit.<you>.workers.dev/git/<shelf>/<profile>.git`, with no experimental flag. Every published version is a commit there holding exactly its archive's files, tagged `v<version>`, and `main` is the latest one published. APM resolves a version range against the tags:
+- **From its Git repository**, `https://shelfkit.<you>.workers.dev/git/<shelf>/<profile>.git`, with no experimental flag. It is the Artifacts repository `<shelf>.<profile>`, beside the shelf's own, and the Worker relays Git to it as it does to a shelf's. Every published version is a commit there holding exactly its archive's files, tagged `v<version>`, and `main` is the latest one published. APM resolves a version range against the tags:
 
   ```yaml
   dependencies:

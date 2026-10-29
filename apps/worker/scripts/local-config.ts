@@ -3,9 +3,10 @@
  * Write the Worker's local configurations from `wrangler.jsonc`, beside it so its relative paths still hold. Both are
  * generated, and ignored by Git.
  *
- * - `wrangler.local.json`, for `moon run worker:dev` and the browser tests: without the bindings that have no local
- *   simulator (Artifacts), so it runs on Miniflare with no Cloudflare account, keeping each shelf's repository in R2
- *   (`src/repository/index.ts`).
+ * - `wrangler.local.json`, for `moon run worker:dev` and the browser tests: every Artifacts binding with
+ *   `"remote": false`, so it runs on Miniflare's local Artifacts simulator with no Cloudflare account. The simulator
+ *   serves each repository with `git http-backend`, so Git 2.32 or newer must be on PATH. Wrangler wires the simulator
+ *   in only with the patches in `patches/` (see `pnpm-workspace.yaml`).
  * - `wrangler.test.json`, for the Worker tests: the same, and with no queue consumer either. A test runs the jobs it
  *   means to run with `runJob`; a live consumer would run the rest in the background, whenever it got to them.
  */
@@ -18,25 +19,27 @@ import { stripJsonc } from "./jsonc.ts";
 
 const worker = path.resolve(import.meta.dirname, "..");
 
-/** The bindings a local run leaves out: Wrangler will never simulate them. */
-const REMOTE_ONLY = new Set(["artifacts"]);
-
 /** Wrangler's configuration, as far as this script reads it: its top-level keys. Wrangler validates the rest. */
 const WranglerConfigSchema = v.record(v.string(), v.unknown());
 type WranglerConfig = v.InferOutput<typeof WranglerConfigSchema>;
 
-/** `wrangler.jsonc` without its remote-only bindings. */
+/** The Artifacts bindings, as far as this script reads them. */
+const ArtifactsSchema = v.array(v.looseObject({ binding: v.string() }));
+
+/** `wrangler.jsonc` with its Artifacts bindings on the local simulator. */
 function localConfig(): WranglerConfig {
-  // BOUNDARY: wrangler.jsonc is Wrangler's to validate; this only drops keys from it.
+  // BOUNDARY: wrangler.jsonc is Wrangler's to validate; this only changes one key of it.
   const parsed = v.parse(
     WranglerConfigSchema,
     JSON.parse(
       stripJsonc(readFileSync(path.join(worker, "wrangler.jsonc"), "utf-8"))
     )
   );
-  return Object.fromEntries(
-    Object.entries(parsed).filter(([key]) => !REMOTE_ONLY.has(key))
-  );
+  const artifacts = v.parse(ArtifactsSchema, parsed.artifacts ?? []);
+  return {
+    ...parsed,
+    artifacts: artifacts.map((binding) => ({ ...binding, remote: false })),
+  };
 }
 
 function write(name: string, config: WranglerConfig): string {

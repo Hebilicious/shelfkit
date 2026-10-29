@@ -1,18 +1,14 @@
-//! The Git calls: `shelfkit_git_commit` and `shelfkit_git_report` for a
-//! client; `shelfkit_git_receive`, `shelfkit_git_advertise`,
-//! `shelfkit_git_upload_request`, `shelfkit_git_upload_response`, and
-//! `shelfkit_git_status` for a server (see the crate documentation for their
-//! JSON).
+//! The Git calls, a client's side of a repository: `shelfkit_git_commit`,
+//! `shelfkit_git_version`, `shelfkit_git_report`, and `shelfkit_git_refs`
+//! (see the crate documentation for their JSON).
 
 use crate::{Encoding, Failure, Problem, Status, bad_request};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use shelfkit_git::receive_pack::{self, RefStatus};
-use shelfkit_git::serve::{self, Negotiation, Service, UploadAnswer};
-use shelfkit_git::tree;
 use shelfkit_git::{
-    Commit, CommitInput, CommitPlan, FileEntry, Kind, Mode, NewFile, ObjectId, Signature, Source,
-    pack, plan_commit,
+    AdvertisedRef, CommitInput, CommitPlan, FileEntry, Mode, NewFile, ObjectId, Signature, Source,
+    parse_advertisement, plan_commit,
 };
 use shelfkit_registry::{PackageId, base64};
 
@@ -329,314 +325,38 @@ pub fn report(input: &[u8]) -> (Status, Vec<u8>) {
     )
 }
 
-/// Read a receive-pack request as a server does: the output of
-/// `shelfkit_git_receive`.
-pub fn receive(input: &[u8]) -> (Status, Vec<u8>) {
-    let body = match body(input, "receive") {
-        Ok(body) => body,
-        Err(answer) => return answer,
-    };
-    let request = match receive_pack::parse_request(&body) {
-        Ok(request) => request,
-        Err(error) => return failure(&[error]),
-    };
-    let objects = if request.pack.is_empty() {
-        Vec::new()
-    } else {
-        match pack::read(&request.pack) {
-            Ok(objects) => objects,
-            Err(error) => return failure(&[error]),
-        }
-    };
-    let mut described = Vec::with_capacity(objects.len());
-    for object in &objects {
-        match describe(object) {
-            Ok(value) => described.push(value),
-            Err(error) => return failure(&[error]),
-        }
-    }
-    let updates: Vec<Value> = request
-        .updates
-        .iter()
-        .map(|update| {
-            json!({
-                "old": update.old.to_string(),
-                "new": update.new.to_string(),
-                "name": update.name,
-            })
-        })
-        .collect();
-    let output = json!({
-        "updates": updates,
-        "capabilities": request.capabilities,
-        "objects": described,
-    });
-    (
-        Status::Planned,
-        serde_json::to_vec(&output).unwrap_or_default(),
-    )
-}
-
-/// One object of a received pack, decoded by its kind.
-fn describe(object: &pack::PackObject) -> shelfkit_git::Result<Value> {
-    let id = object.id.to_string();
-    let kind = object.kind.name();
-    Ok(match object.kind {
-        Kind::Blob | Kind::Tag => {
-            json!({ "id": id, "kind": kind, "contents": base64::encode(&object.body) })
-        }
-        Kind::Tree => {
-            let entries: Vec<Value> = tree::decode(&object.body)?
-                .into_iter()
-                .map(|entry| {
-                    json!({
-                        "name": entry.name,
-                        "mode": entry.mode.as_str(),
-                        "id": entry.id.to_string(),
-                    })
-                })
-                .collect();
-            json!({ "id": id, "kind": kind, "entries": entries, "body": base64::encode(&object.body) })
-        }
-        Kind::Commit => {
-            let commit = Commit::decode(&object.body)?;
-            let parents: Vec<String> = commit.parents.iter().map(ToString::to_string).collect();
-            json!({
-                "id": id,
-                "kind": kind,
-                "tree": commit.tree.to_string(),
-                "parents": parents,
-                "author": { "name": commit.author.name, "email": commit.author.email },
-                "committer": { "name": commit.committer.name, "email": commit.committer.email },
-                "authoredAt": commit.author.time,
-                "committedAt": commit.committer.time,
-                "message": commit.message,
-                "body": base64::encode(&object.body),
-            })
-        }
-    })
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AdvertiseRequest {
-    service: String,
-    refs: Vec<RefInput>,
-    #[serde(default)]
-    head: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RefInput {
+#[derive(Serialize)]
+struct RefOutput {
     name: String,
     id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peeled: Option<String>,
 }
 
-fn service(name: &str) -> Result<Service, String> {
-    match name {
-        "git-upload-pack" => Ok(Service::UploadPack),
-        "git-receive-pack" => Ok(Service::ReceivePack),
-        other => Err(format!(
-            "`{other}` is not `git-upload-pack` or `git-receive-pack`"
-        )),
-    }
-}
-
-fn answer(body: shelfkit_git::Result<Vec<u8>>) -> (Status, Vec<u8>) {
-    match body {
-        Ok(body) => (
-            Status::Planned,
-            serde_json::to_vec(&json!({ "body": base64::encode(&body) })).unwrap_or_default(),
-        ),
-        Err(error) => failure(&[error]),
-    }
-}
-
-/// The body of `GET info/refs?service=<service>`: the output of
-/// `shelfkit_git_advertise`.
-pub fn advertise(input: &[u8]) -> (Status, Vec<u8>) {
-    let request: AdvertiseRequest = match serde_json::from_slice(input) {
-        Ok(request) => request,
-        Err(error) => return bad_request(format!("not an advertise request: {error}")),
-    };
-    let wanted = match service(&request.service) {
-        Ok(wanted) => wanted,
-        Err(message) => return bad_request(message),
-    };
-    let mut refs = Vec::with_capacity(request.refs.len());
-    for reference in request.refs {
-        match object_id(&reference.id) {
-            Ok(id) => refs.push((reference.name, id)),
-            Err(message) => return bad_request(message),
-        }
-    }
-    answer(serve::advertise(wanted, &refs, request.head.as_deref()))
-}
-
-fn negotiation_name(negotiation: Negotiation) -> &'static str {
-    match negotiation {
-        Negotiation::None => "none",
-        Negotiation::Round => "round",
-        Negotiation::Done => "done",
-    }
-}
-
-fn ids(ids: &[ObjectId]) -> Vec<String> {
-    ids.iter().map(ToString::to_string).collect()
-}
-
-/// Read a `git-upload-pack` request: the output of
-/// `shelfkit_git_upload_request`.
-pub fn upload_request(input: &[u8]) -> (Status, Vec<u8>) {
-    let body = match body(input, "upload") {
+/// Read a reference advertisement: the output of `shelfkit_git_refs`.
+pub fn refs(input: &[u8]) -> (Status, Vec<u8>) {
+    let body = match body(input, "refs") {
         Ok(body) => body,
         Err(answer) => return answer,
     };
-    let request = match serve::parse_upload_request(&body) {
-        Ok(request) => request,
+    let advertisement = match parse_advertisement(&body) {
+        Ok(advertisement) => advertisement,
         Err(error) => return failure(&[error]),
     };
-    let output = json!({
-        "wants": ids(&request.wants),
-        "capabilities": request.capabilities,
-        "shallows": ids(&request.shallows),
-        "depth": request.depth,
-        "haves": ids(&request.haves),
-        "negotiation": negotiation_name(request.negotiation),
-        "deepens": request.deepens(),
-    });
+    let refs: Vec<RefOutput> = advertisement
+        .refs
+        .into_iter()
+        .map(|AdvertisedRef { name, id, peeled }| RefOutput {
+            name,
+            id: id.to_string(),
+            peeled: peeled.map(|id| id.to_string()),
+        })
+        .collect();
+    let output = json!({ "refs": refs, "capabilities": advertisement.capabilities });
     (
         Status::Planned,
         serde_json::to_vec(&output).unwrap_or_default(),
     )
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UploadResponseRequest {
-    deepens: bool,
-    shallow: Vec<String>,
-    unshallow: Vec<String>,
-    negotiation: String,
-    common: Vec<String>,
-    pack: Vec<PackInput>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PackInput {
-    kind: String,
-    /// The object's body, base64.
-    body: String,
-}
-
-fn parse_ids(texts: &[String]) -> Result<Vec<ObjectId>, String> {
-    texts.iter().map(|text| object_id(text)).collect()
-}
-
-fn kind(name: &str) -> Result<Kind, String> {
-    match name {
-        "commit" => Ok(Kind::Commit),
-        "tree" => Ok(Kind::Tree),
-        "blob" => Ok(Kind::Blob),
-        "tag" => Ok(Kind::Tag),
-        other => Err(format!("`{other}` is not an object kind")),
-    }
-}
-
-/// The body of a `git-upload-pack` answer: the output of
-/// `shelfkit_git_upload_response`.
-pub fn upload_response(input: &[u8]) -> (Status, Vec<u8>) {
-    let request: UploadResponseRequest = match serde_json::from_slice(input) {
-        Ok(request) => request,
-        Err(error) => return bad_request(format!("not an upload response request: {error}")),
-    };
-    let read = || -> Result<_, String> {
-        let negotiation = match request.negotiation.as_str() {
-            "none" => Negotiation::None,
-            "round" => Negotiation::Round,
-            "done" => Negotiation::Done,
-            other => return Err(format!("`{other}` is not `none`, `round`, or `done`")),
-        };
-        let mut pack = Vec::with_capacity(request.pack.len());
-        for object in &request.pack {
-            let body = base64::decode(&object.body)
-                .ok_or_else(|| "an object's `body` is not valid base64".to_owned())?;
-            pack.push((kind(&object.kind)?, body));
-        }
-        Ok((
-            negotiation,
-            parse_ids(&request.shallow)?,
-            parse_ids(&request.unshallow)?,
-            parse_ids(&request.common)?,
-            pack,
-        ))
-    };
-    let (negotiation, shallow, unshallow, common, pack) = match read() {
-        Ok(read) => read,
-        Err(message) => return bad_request(message),
-    };
-    answer(serve::upload_response(&UploadAnswer {
-        deepens: request.deepens,
-        shallow: &shallow,
-        unshallow: &unshallow,
-        negotiation,
-        common: &common,
-        pack: &pack,
-    }))
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StatusRequest {
-    unpack: UnpackInput,
-    refs: Vec<RefStatusInput>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UnpackInput {
-    ok: bool,
-    #[serde(default)]
-    message: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RefStatusInput {
-    name: String,
-    ok: bool,
-    #[serde(default)]
-    reason: Option<String>,
-}
-
-/// The body of a `git-receive-pack` answer: the output of
-/// `shelfkit_git_status`.
-pub fn status(input: &[u8]) -> (Status, Vec<u8>) {
-    let request: StatusRequest = match serde_json::from_slice(input) {
-        Ok(request) => request,
-        Err(error) => return bad_request(format!("not a status request: {error}")),
-    };
-    let refused = |reason: Option<String>| reason.unwrap_or_else(|| "refused".to_owned());
-    let unpack = if request.unpack.ok {
-        Ok(())
-    } else {
-        Err(refused(request.unpack.message))
-    };
-    let refs: Vec<RefStatus> = request
-        .refs
-        .into_iter()
-        .map(|reference| RefStatus {
-            name: reference.name,
-            result: if reference.ok {
-                Ok(())
-            } else {
-                Err(refused(reference.reason))
-            },
-        })
-        .collect();
-    answer(serve::status_report(&unpack, &refs))
 }
 
 fn failure(errors: &[shelfkit_git::Error]) -> (Status, Vec<u8>) {
@@ -667,6 +387,18 @@ mod tests {
         (status, serde_json::from_slice(&output).unwrap())
     }
 
+    /// The update lines of a planned request, without their capabilities.
+    fn updates(plan: &Value) -> Vec<String> {
+        let request = base64::decode(plan["request"].as_str().unwrap()).unwrap();
+        let mut reader = shelfkit_git::pktline::Reader::new(&request);
+        let mut lines = Vec::new();
+        while let Some(shelfkit_git::pktline::Packet::Data(line)) = reader.next_packet().unwrap() {
+            let line = String::from_utf8_lossy(line);
+            lines.push(line.split('\0').next().unwrap().trim_end().to_owned());
+        }
+        lines
+    }
+
     #[test]
     fn a_published_version_is_a_tagged_commit_on_main() {
         let mut files = std::collections::BTreeMap::new();
@@ -683,22 +415,16 @@ mod tests {
         });
         let (status, plan) = call(version, &request);
         assert_eq!(status, Status::Planned, "{plan}");
-        let (_, received) = call(receive, &json!({ "body": plan["request"] }));
-        let names: Vec<&str> = received["updates"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|update| update["name"].as_str().unwrap())
-            .collect();
-        assert_eq!(names, ["refs/heads/main", "refs/tags/v1.0.0"]);
-        let commit = received["objects"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|object| object["kind"] == "commit")
-            .unwrap();
-        assert_eq!(commit["author"]["name"], "ShelfKit");
-        assert_eq!(commit["committedAt"], 1_760_000_000);
+        let commit = plan["commit"].as_str().unwrap();
+        assert_eq!(
+            updates(&plan),
+            [
+                format!("{} {commit} refs/heads/main", "0".repeat(40)),
+                format!("{} {commit} refs/tags/v1.0.0", "0".repeat(40)),
+            ]
+        );
+        // The commit is a function of the version: the same request makes it again.
+        assert_eq!(call(version, &request).1["commit"], commit);
 
         let (status, refused) = call(
             version,
@@ -709,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn a_commit_round_trips_through_receive() {
+    fn a_commit_is_planned_with_the_request_that_pushes_it() {
         let (status, plan) = call(
             commit,
             &json!({
@@ -727,25 +453,18 @@ mod tests {
         assert_eq!(plan["objects"], 5);
         assert_eq!(plan["files"][1]["mode"], "100755");
 
-        let (status, received) = call(receive, &json!({ "body": plan["request"] }));
-        assert_eq!(status, Status::Planned, "{received}");
-        assert_eq!(received["updates"][0]["old"], "0".repeat(40));
-        assert_eq!(received["updates"][0]["new"], plan["commit"]);
-        assert_eq!(received["updates"][0]["name"], "refs/heads/main");
-        let objects = received["objects"].as_array().unwrap();
-        assert_eq!(objects.len(), 5);
-        assert_eq!(objects[0]["kind"], "commit");
-        assert_eq!(objects[0]["tree"], plan["tree"]);
-        assert_eq!(objects[0]["parents"], json!([]));
-        assert_eq!(objects[0]["authoredAt"], 1_700_000_000);
-        assert_eq!(objects[0]["message"], "Create\n");
-        let blob = objects
-            .iter()
-            .find(|object| object["id"] == plan["files"][1]["id"])
-            .unwrap();
         assert_eq!(
-            base64::decode(blob["contents"].as_str().unwrap()).unwrap(),
-            b"#!/bin/sh\n"
+            updates(&plan),
+            [format!(
+                "{} {} refs/heads/main",
+                "0".repeat(40),
+                plan["commit"].as_str().unwrap()
+            )]
+        );
+        // Contents in base64 are decoded before they are hashed.
+        assert_eq!(
+            plan["files"][1]["id"],
+            shelfkit_git::object_id(shelfkit_git::Kind::Blob, b"#!/bin/sh\n").to_string()
         );
 
         // The same files on top of that commit are unchanged.
@@ -809,14 +528,8 @@ mod tests {
             plan["files"],
             json!([{ "path": "vendor/sub", "mode": "160000", "id": submodule }])
         );
-        let (_, received) = call(receive, &json!({ "body": plan["request"] }));
-        let vendor = received["objects"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|object| object["entries"][0]["name"] == "sub")
-            .unwrap();
-        assert_eq!(vendor["entries"][0]["mode"], "160000");
+        // The commit, the root, and `vendor`: a gitlink packs nothing.
+        assert_eq!(plan["objects"], 3);
 
         let (status, output) = call(
             commit,
@@ -863,5 +576,43 @@ mod tests {
         let (status, output) = call(report, &json!({ "body": base64::encode(b"nonsense") }));
         assert_eq!(status, Status::Failed);
         assert!(output["errors"][0]["message"].is_string());
+    }
+
+    #[test]
+    fn reads_advertised_references() {
+        let (one, two) = ("1".repeat(40), "2".repeat(40));
+        let mut body = Vec::new();
+        for line in [
+            "# service=git-upload-pack\n".to_owned(),
+            String::new(),
+            format!("{one} HEAD\0symref=HEAD:refs/heads/main\n"),
+            format!("{one} refs/heads/main\n"),
+            format!("{two} refs/tags/v1.0.0\n"),
+            format!("{one} refs/tags/v1.0.0^{{}}\n"),
+            String::new(),
+        ] {
+            if line.is_empty() {
+                body.extend_from_slice(shelfkit_git::pktline::FLUSH);
+            } else {
+                shelfkit_git::pktline::write(&mut body, line.as_bytes()).unwrap();
+            }
+        }
+        let (status, output) = call(refs, &json!({ "body": base64::encode(&body) }));
+        assert_eq!(status, Status::Planned, "{output}");
+        assert_eq!(
+            output,
+            json!({
+                "refs": [
+                    { "name": "HEAD", "id": "1".repeat(40) },
+                    { "name": "refs/heads/main", "id": "1".repeat(40) },
+                    { "name": "refs/tags/v1.0.0", "id": "2".repeat(40), "peeled": "1".repeat(40) }
+                ],
+                "capabilities": ["symref=HEAD:refs/heads/main"]
+            })
+        );
+        let (status, output) = call(refs, &json!({ "body": base64::encode(b"0000PACK") }));
+        assert_eq!(status, Status::Failed);
+        assert_eq!(output["errors"][0]["path"], "advertisement");
+        assert_eq!(call(refs, &json!({ "body": "!" })).0, Status::BadRequest);
     }
 }

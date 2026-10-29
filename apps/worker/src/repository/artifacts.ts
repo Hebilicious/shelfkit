@@ -1,8 +1,13 @@
 /**
- * `ShelfRepository` over Cloudflare Artifacts: one repository per shelf, named by the shelf's id, in the namespace the
- * `ARTIFACTS` binding names. The binding reads commits, trees, and blobs and mints repository tokens; it cannot write,
- * so a commit is pushed over Git's smart HTTP protocol with a write token that lives for a minute. Tokens never leave
- * the Worker: a Git client reaches a repository through the Worker's own Git route, which mints one per request.
+ * `ShelfRepository` over Cloudflare Artifacts, in the namespace the `ARTIFACTS` binding names: one repository per shelf,
+ * named by the shelf's id, and one per published profile, `<shelf>.<profile>` (`src/packages.ts`). The binding reads
+ * commits, trees, and blobs and mints repository tokens; it cannot write, so a commit is pushed over Git's smart HTTP
+ * protocol with a write token that lives for a minute, and the references are read from the repository's ref
+ * advertisement with a read token. Tokens never leave the Worker: a Git client reaches a repository through the
+ * Worker's own Git route, which mints one per request.
+ *
+ * Local mode and the tests run this on Miniflare's local Artifacts simulator, whose remotes are `git http-backend` on
+ * a loopback port that changes on every start, so a remote's URL is read from the binding each time and never kept.
  */
 import type { GitMode } from "@shelfkit/engine";
 import * as v from "valibot";
@@ -126,7 +131,7 @@ export class ArtifactsRepository implements ShelfRepository {
         try {
           // oxlint-disable-next-line eslint/no-await-in-loop -- as above.
           await this.#binding.create(shelf, {
-            description: `ShelfKit shelf ${shelf}`,
+            description: `ShelfKit repository ${shelf}`,
             setDefaultBranch: REPOSITORY_BRANCH,
           });
         } catch (error) {
@@ -239,6 +244,37 @@ export class ArtifactsRepository implements ShelfRepository {
       throw new Error(`the blob ${id} is missing from ${shelf}'s repository`);
     }
     return bytes;
+  };
+
+  readonly references = async (
+    shelf: string
+  ): Promise<ReadonlyMap<string, string> | null> => {
+    const response = await this.exchange(shelf, {
+      body: null,
+      headers: new Headers(),
+      method: "GET",
+      path: "info/refs?service=git-upload-pack",
+      scope: "read",
+    });
+    if (response === null) {
+      return null;
+    }
+    const body = new Uint8Array(await response.arrayBuffer());
+    if (!response.ok) {
+      throw new Error(
+        `${shelf}'s repository answered ${response.status} to its ref advertisement`
+      );
+    }
+    const shelfEngine = await engine();
+    const advertised = shelfEngine.gitRefs(body);
+    if (!advertised.ok) {
+      throw new Error(
+        `${shelf}'s ref advertisement does not read: ${advertised.errors.map((error) => error.message).join("; ")}`
+      );
+    }
+    return new Map(
+      advertised.value.refs.map((ref) => [ref.name, ref.peeled ?? ref.id])
+    );
   };
 
   readonly push = async (

@@ -1,7 +1,7 @@
 /**
  * A hosted shelf through Git, the one way a checkout's files reach it: a clone pushes to it and pulls an edit made in
  * the UI back, and a shelf inside a larger repository is a submodule of its repository, pushed to from there. Local
- * mode serves these repositories itself, from R2, as Artifacts serves a deployment's.
+ * mode runs these repositories on Miniflare's local Artifacts simulator, as Artifacts serves a deployment's.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";

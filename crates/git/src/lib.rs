@@ -1,36 +1,37 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
-//! Git objects, packfiles, and the receive-pack exchange, as a pure library:
-//! no I/O.
+//! Git objects, packfiles, and a client's side of smart HTTP, as a pure
+//! library: no I/O.
 //!
 //! A hosted shelf keeps its source files in a Cloudflare Artifacts repository,
-//! a Git smart-HTTP remote with SHA-1 object ids. The Worker reads that
-//! repository through its binding, but the only way to write is `git push`:
-//! a receive-pack request over HTTP, protocol v1. This crate builds that
-//! request, and reads what comes back, so the Worker only sends bytes.
+//! a Git smart-HTTP remote with SHA-1 object ids, and each published profile
+//! keeps its versions in one too. The Worker reads a repository through its
+//! binding, but the only way to write is `git push`: a receive-pack request
+//! over HTTP, protocol v1. This crate builds that request, and reads what
+//! comes back, so the Worker only sends bytes. Artifacts, deployed or as
+//! Miniflare's local simulator, is the server; nothing here serves Git.
 //!
 //! - [`plan_commit`]: a shelf's complete new file list, on top of its parent
 //!   commit's, to the commit and the receive-pack request that pushes it.
 //! - [`object`]: object ids, kinds, and file modes.
-//! - [`tree`]: building every tree of a file list, and decoding a tree.
-//! - [`commit`]: encoding and decoding commit bodies.
-//! - [`pack`]: writing and reading pack files, deltas included.
+//! - [`tree`]: building every tree of a file list.
+//! - [`commit`]: encoding commit bodies.
+//! - [`pack`]: writing a pack of whole objects.
 //! - [`pktline`]: the framing of every exchange.
-//! - [`receive_pack`]: the push request, the server's report, and reading a
-//!   request as a server does.
-//! - [`serve`]: the rest of a server's side, for a host that stores a
-//!   repository itself (ShelfKit's local mode): the reference
-//!   advertisement, clone and fetch, and the push's report.
+//! - [`receive_pack`]: the push request, and the server's report.
+//! - [`advertisement`]: the references a server advertises, read from `GET
+//!   info/refs`.
 
+pub mod advertisement;
 pub mod commit;
 pub mod object;
 pub mod pack;
 pub mod pktline;
 mod plan;
 pub mod receive_pack;
-pub mod serve;
 pub mod tree;
 
+pub use advertisement::{AdvertisedRef, Advertisement, parse_advertisement};
 pub use commit::{Commit, Signature};
 pub use object::{Kind, Mode, ObjectId, object_id};
 pub use plan::{CommitInput, CommitPlan, NewFile, Push, Source, plan_commit};
@@ -44,8 +45,9 @@ pub enum Error {
     /// Input that cannot become a commit: a file path, a reference name, or
     /// a signature. `path` names it.
     Invalid { path: String, reason: String },
-    /// Bytes that are not what they claim to be: a pack, a pkt-line stream,
-    /// an object, or a report. `what` says which, and where in it.
+    /// Bytes that are not what they claim to be, or cannot become a pack: a
+    /// pkt-line stream, a report, an advertisement, or a pack's objects.
+    /// `what` says which, and where in it.
     Malformed { what: String, reason: String },
     /// The server ended the exchange with a fatal error of its own.
     Remote { message: String },

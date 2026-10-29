@@ -12,7 +12,8 @@ import { env, exports } from "cloudflare:workers";
 import * as v from "valibot";
 import { beforeEach, describe, expect, inject, it } from "vitest";
 
-import { packageRepository, PACKAGES_PREFIX } from "../src/packages.ts";
+import { packageRepositoryName } from "../src/packages.ts";
+import { shelfRepository } from "../src/repository/index.ts";
 import {
   basic,
   createKey,
@@ -105,9 +106,9 @@ describe("the Worker's registry", () => {
       return { send: async (request) => await send(request, keys) };
     });
     expect(failures).toStrictEqual([]);
-    // Every scenario starts from nothing, and each publish also commits to the profile's Git repository: about two
-    // seconds alone, more beside the rest of the suite.
-  }, 30_000);
+    // Every scenario starts from nothing, and each publish also commits to the profile's Git repository on the local
+    // Artifacts simulator: about five seconds alone, more beside the rest of the suite, within the default minute.
+  });
 });
 
 /** One archive of the conformance suite, by its name there. */
@@ -194,20 +195,29 @@ describe("a published profile's repository", () => {
     const first = await put(conformanceArchive("web-1.0.0"));
     const second = await put(conformanceArchive("web-1.1.0"), "1.1.0");
     expect([first.status, second.status]).toStrictEqual([201, 201]);
-    const repository = packageRepository(env);
-    const refs = (await repository.references("acme/web")) ?? {};
-    expect(Object.keys(refs).toSorted()).toStrictEqual([
-      "refs/heads/main",
-      "refs/tags/v1.0.0",
-      "refs/tags/v1.1.0",
-    ]);
-    expect(refs["refs/heads/main"]).toBe(refs["refs/tags/v1.1.0"]);
-    const head = await repository.head("acme/web");
+    const repository = shelfRepository(env);
+    const name = packageRepositoryName("acme", "web");
+    expect(name).toBe("acme.web");
+    const refs =
+      (await repository.references(name)) ?? new Map<string, string>();
+    expect({
+      main: refs.get("refs/heads/main"),
+      names: [...refs.keys()].toSorted((a, b) => a.localeCompare(b)),
+    }).toStrictEqual({
+      main: refs.get("refs/tags/v1.1.0"),
+      names: [
+        "HEAD",
+        "refs/heads/main",
+        "refs/tags/v1.0.0",
+        "refs/tags/v1.1.0",
+      ],
+    });
+    const head = await repository.head(name);
     expect(head?.message).toContain("acme/web 1.1.0");
-    const files = await repository.entries("acme/web", head?.tree ?? "");
+    const files = await repository.entries(name, head?.tree ?? "");
     const manifest = files.find((file) => file.path === "apm.yml");
     const text = new TextDecoder().decode(
-      await repository.blob("acme/web", manifest?.id ?? "")
+      await repository.blob(name, manifest?.id ?? "")
     );
     expect(text).toContain("1.1.0");
   });
@@ -215,15 +225,18 @@ describe("a published profile's repository", () => {
   it("is cloned over the Git route", async () => {
     await push("acme", shelfOf("acme", true));
     await put(conformanceArchive("web-1.0.0"));
-    const refs = (await packageRepository(env).references("acme/web")) ?? {};
+    const refs =
+      (await shelfRepository(env).references("acme.web")) ??
+      new Map<string, string>();
+    const tagged = refs.get("refs/tags/v1.0.0") ?? "";
     const advertised = await advertisePackage("acme/web");
     expect(advertised.status).toBe(200);
     const body = new TextDecoder().decode(await advertised.arrayBuffer());
-    expect(body).toContain(`${refs["refs/tags/v1.0.0"]} refs/tags/v1.0.0`);
+    expect(body).toContain(`${tagged} refs/tags/v1.0.0`);
     const cloned = await exports.default.fetch(
       `${ORIGIN}/git/acme/web.git/git-upload-pack`,
       {
-        body: `0032want ${refs["refs/tags/v1.0.0"]}\n00000009done\n`,
+        body: `0032want ${tagged}\n00000009done\n`,
         headers: { "content-type": "application/x-git-upload-pack-request" },
         method: "POST",
       }
@@ -270,16 +283,33 @@ describe("a published profile's repository", () => {
   it("commits on the next read a version whose commit was lost, as the same commit", async () => {
     await push("acme", shelfOf("acme", true));
     await put(conformanceArchive("web-1.0.0"));
-    const repository = packageRepository(env);
-    const before = await repository.references("acme/web");
-    const listed = await env.BLOBS.list({
-      prefix: `${PACKAGES_PREFIX}acme/web/`,
-    });
-    await env.BLOBS.delete(listed.objects.map((object) => object.key));
-    await expect(repository.references("acme/web")).resolves.toBeNull();
+    const repository = shelfRepository(env);
+    const before = await repository.references("acme.web");
+    await expect(env.ARTIFACTS.delete("acme.web")).resolves.toBeTruthy();
+    await expect(repository.references("acme.web")).resolves.toBeNull();
     const advertised = await advertisePackage("acme/web");
     await advertised.arrayBuffer();
-    await expect(repository.references("acme/web")).resolves.toStrictEqual(
+    await expect(repository.references("acme.web")).resolves.toStrictEqual(
+      before
+    );
+  });
+
+  it("is committed once when two reads race to commit the same version", async () => {
+    await push("acme", shelfOf("acme", true));
+    await put(conformanceArchive("web-1.0.0"));
+    await put(conformanceArchive("web-1.1.0"), "1.1.0");
+    const repository = shelfRepository(env);
+    const before = await repository.references("acme.web");
+    await env.ARTIFACTS.delete("acme.web");
+    const statuses = await Promise.all(
+      Array.from({ length: 3 }, async () => {
+        const response = await advertisePackage("acme/web");
+        await response.arrayBuffer();
+        return response.status;
+      })
+    );
+    expect(statuses).toStrictEqual([200, 200, 200]);
+    await expect(repository.references("acme.web")).resolves.toStrictEqual(
       before
     );
   });

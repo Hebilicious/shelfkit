@@ -1,6 +1,6 @@
 [package]
 name = "shelfkit-git"
-description = "Git objects, packfiles, and the receive-pack exchange as a pure library: no I/O."
+description = "Git objects, packfiles, and a client's side of smart HTTP as a pure library: no I/O."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

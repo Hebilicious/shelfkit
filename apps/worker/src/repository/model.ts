@@ -51,6 +51,13 @@ export interface ShelfRepository {
   /** The bytes of a blob. */
   readonly blob: (shelf: string, id: string) => Promise<Uint8Array>;
   /**
+   * Every reference of the repository (`refs/heads/main`, `refs/tags/v1.0.0`, and `HEAD`) and the commit it is at, an
+   * annotated tag's peeled, as the repository advertises them to a clone. Null when the repository does not exist.
+   */
+  readonly references: (
+    shelf: string
+  ) => Promise<ReadonlyMap<string, string> | null>;
+  /**
    * Send a `git-receive-pack` request the engine prepared (`Engine.gitCommit`), creating the repository first when
    * it does not exist. `parent` is the commit the branch must still be at.
    */

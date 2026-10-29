@@ -1,27 +1,27 @@
-import type { GitReport } from "@shelfkit/engine";
 /**
  * Each shelf's Git repository (`src/repository/`, `src/git.ts`): every write the Worker makes becomes a commit, a push
  * through `/git/{shelf}.git` is indexed afterwards, a head the engine refuses leaves the index where it was, and the
- * Git route decides access with the same keys as every other surface. Artifacts is the stand-in in
- * `fake-artifacts.ts`, behind the real adapter.
+ * Git route decides access with the same keys as every other surface. Artifacts is Miniflare's local simulator, behind
+ * the real adapter.
  */
 import { abortAllDurableObjects, reset } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import * as v from "valibot";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import type { Session } from "../src/auth/index.ts";
 import { engine } from "../src/engine.ts";
 import { ArtifactsRepository } from "../src/repository/artifacts.ts";
-import { fakeArtifacts, repositories } from "./fake-artifacts.ts";
 import {
   basic,
   createKey,
   data,
   ORIGIN,
   push,
+  pushToRemote,
   shelfOf,
   TEST_OWNER_KEY,
+  withArtifactsRepo,
 } from "./helpers.ts";
 
 const system: Session = { job: "test", kind: "system" };
@@ -52,15 +52,14 @@ async function indexed(shelf: string): Promise<boolean> {
 async function fresh(): Promise<void> {
   await reset();
   await abortAllDurableObjects();
-  repositories.artifacts = true;
-  fakeArtifacts.requests.length = 0;
-  fakeArtifacts.upstreams.clear();
 }
 
 /** The commits of a repository's `main`, newest first. */
 async function history(shelf: string): Promise<ArtifactsCommitMetadata[]> {
-  const repo = await fakeArtifacts.get(shelf);
-  return await repo.log({ ref: "main" });
+  return await withArtifactsRepo(
+    shelf,
+    async (repo) => await repo.log({ ref: "main" })
+  );
 }
 
 async function headOf(shelf: string): Promise<ArtifactsCommitMetadata> {
@@ -95,8 +94,10 @@ async function filesUnder(
 /** The files of a repository's head, by path, as text. */
 async function headFiles(shelf: string): Promise<Record<string, string>> {
   const head = await headOf(shelf);
-  const repo = await fakeArtifacts.get(shelf);
-  const files = await filesUnder(repo, head.treeHash, "");
+  const files = await withArtifactsRepo(
+    shelf,
+    async (repo) => await filesUnder(repo, head.treeHash, "")
+  );
   return Object.fromEntries(files.toSorted(([a], [b]) => a.localeCompare(b)));
 }
 
@@ -141,32 +142,6 @@ async function gitPush(
   // The route indexes the push once its whole answer has been read.
   await response.arrayBuffer();
   return { commit: planned.value.commit, status: response.status };
-}
-
-/** POST a receive-pack request to the Git route as the owner, and read the report. */
-async function receivePack(
-  shelf: string,
-  request: Uint8Array
-): Promise<GitReport> {
-  const response = await exports.default.fetch(
-    `${ORIGIN}/git/${shelf}.git/git-receive-pack`,
-    {
-      body: Uint8Array.from(request),
-      headers: {
-        authorization: basic(TEST_OWNER_KEY),
-        "content-type": "application/x-git-receive-pack-request",
-      },
-      method: "POST",
-    }
-  );
-  const shelfEngine = await engine();
-  const report = shelfEngine.gitReport(
-    new Uint8Array(await response.arrayBuffer())
-  );
-  if (!report.ok) {
-    throw new Error(report.errors.map((error) => error.message).join("; "));
-  }
-  return report.value;
 }
 
 /** The ref advertisement of a shelf's repository, as a Git client asks for it. */
@@ -455,37 +430,22 @@ describe("pushes through the Git route", () => {
     await push("kit", shelfOf("kit", false, PROMPT));
     const before = await headOf("kit");
     // A push with an Artifacts token of the operator's own, straight to the repository: no sync is queued for it.
-    const repo = await fakeArtifacts.get("kit");
-    const token = await repo.createToken("write", 60);
-    const shelfEngine = await engine();
-    const planned = shelfEngine.gitCommit({
-      author: {
-        email: "ops@example.com",
-        name: "Ops",
-        offset: 0,
-        time: 1_700_000_000,
-      },
-      base: [],
-      files: Object.entries({
+    const { remote, token } = await withArtifactsRepo("kit", async (repo) => {
+      const [info, minted] = await Promise.all([
+        repo.info(),
+        repo.createToken("write", 60),
+      ]);
+      return { remote: info.remote, token: minted.plaintext };
+    });
+    const around = await pushToRemote(
+      remote,
+      token,
+      {
         ...shelfOf("kit", false, PROMPT),
         "README.md": "# Pushed around the Worker\n",
-      }).map(([path, contents]) => ({
-        contents: encoder.encode(contents),
-        path,
-      })),
-      message: "around the Worker",
-      parent: before.hash,
-      ref: "refs/heads/main",
-    });
-    if (!planned.ok || planned.value.request === null) {
-      throw new Error("nothing to push");
-    }
-    const { remote } = await repo.info();
-    await fakeArtifacts.fetch(`${remote}/git-receive-pack`, {
-      body: Uint8Array.from(planned.value.request),
-      headers: { authorization: `Bearer ${token.plaintext}` },
-      method: "POST",
-    });
+      },
+      before.hash
+    );
 
     const edited = await data(
       v.object({ updatePrompt: v.object({ ok: v.boolean() }) }),
@@ -493,7 +453,7 @@ describe("pushes through the Git route", () => {
     );
     expect(edited.updatePrompt.ok).toBeTruthy();
     const head = await headOf("kit");
-    expect(head.parents).toStrictEqual([planned.value.commit]);
+    expect(head.parents).toStrictEqual([around]);
     const files = await headFiles("kit");
     expect([
       files["README.md"],
@@ -521,12 +481,20 @@ describe("access to the Git route", () => {
     await push("kit", shelfOf("kit", false, PROMPT));
   });
 
-  it("lets anyone clone a public shelf, with a token that never leaves the Worker", async () => {
+  it("lets anyone clone a public shelf, with a token the Worker mints and keeps", async () => {
     const response = await advertise("open", "git-upload-pack");
     expect(response.status).toBe(200);
-    await expect(response.arrayBuffer()).resolves.toBeInstanceOf(ArrayBuffer);
-    const relayed = fakeArtifacts.requests.at(-1);
-    expect(relayed?.headers.get("authorization")).toMatch(/^Bearer art_fake_/u);
+    const head = await headOf("open");
+    const advertised = new TextDecoder().decode(await response.arrayBuffer());
+    expect(advertised).toContain(`${head.hash} refs/heads/main`);
+    // The repository itself refuses the same request without the Worker's token.
+    const { remote } = await withArtifactsRepo(
+      "open",
+      async (repo) => await repo.info()
+    );
+    const direct = await fetch(`${remote}/info/refs?service=git-upload-pack`);
+    await direct.arrayBuffer();
+    expect(direct.status).toBe(401);
   });
 
   it("asks a client without a key for one", async () => {
@@ -563,142 +531,51 @@ describe("access to the Git route", () => {
     expect(denied.status).toBe(403);
   });
 
-  it("relays upload-pack with the request's Git headers and nothing else", async () => {
+  it("relays the protocol version a Git client asks for", async () => {
     const response = await exports.default.fetch(
-      `${ORIGIN}/git/open.git/git-upload-pack`,
+      `${ORIGIN}/git/open.git/info/refs?service=git-upload-pack`,
       {
-        body: "0000",
         headers: {
-          "content-type": "application/x-git-upload-pack-request",
           cookie: "shelfkit_session=x",
           "git-protocol": "version=2",
         },
-        method: "POST",
       }
     );
     expect(response.status).toBe(200);
-    await response.arrayBuffer();
-    const relayed = fakeArtifacts.requests.at(-1);
-    expect({
-      cookie: relayed?.headers.get("cookie"),
-      path: relayed?.path,
-      protocol: relayed?.headers.get("git-protocol"),
-    }).toStrictEqual({
-      cookie: null,
-      path: "/git/open.git/git-upload-pack",
-      protocol: "version=2",
-    });
+    // Protocol v2 answers with its capabilities, and lists no reference until a client asks.
+    const answer = new TextDecoder().decode(await response.arrayBuffer());
+    expect(answer).toContain("version 2");
+    expect(answer).not.toContain("refs/heads/main");
   });
 });
 
-describe("a deployment without Artifacts, as local mode is", () => {
-  beforeEach(fresh);
-  afterEach(() => {
-    repositories.artifacts = true;
-  });
-
-  it("keeps each shelf's repository in R2, and serves it over the Git route", async () => {
-    repositories.artifacts = false;
-    await push("kit", shelfOf("kit", false, PROMPT));
-    const second = await push(
-      "kit",
-      shelfOf("kit", false, withPrompt("Warmly.\n"))
-    );
-    await expect(repositoryOf("kit")).resolves.toMatchObject({
-      repository: { commit: second.commit },
-      snapshot: { commit: second.commit, origin: "git" },
-    });
-    const advertised = await advertise(
-      "kit",
-      "git-upload-pack",
-      TEST_OWNER_KEY
-    );
-    await expect(advertised.text()).resolves.toContain(
-      `${second.commit} refs/heads/main`
-    );
-    const cloned = await exports.default.fetch(
-      `${ORIGIN}/git/kit.git/git-upload-pack`,
-      {
-        body: `0032want ${second.commit}\n00000009done\n`,
-        headers: {
-          authorization: basic(TEST_OWNER_KEY),
-          "content-type": "application/x-git-upload-pack-request",
-        },
-        method: "POST",
-      }
-    );
-    const answer = new TextDecoder().decode(await cloned.arrayBuffer());
-    expect(answer.slice(0, 12)).toBe("0008NAK\nPACK");
-  });
-
-  it("commits an edit in the UI there", async () => {
-    repositories.artifacts = false;
-    const pushed = await push("kit", shelfOf("kit", false, PROMPT));
-    await data(
-      v.unknown(),
-      `mutation { updatePrompt(shelf: "kit", id: "hello", body: "Hi.\\n") { ok } }`
-    );
-    const shelf = await repositoryOf("kit");
-    expect(shelf.snapshot).toMatchObject({ origin: "edit" });
-    expect(shelf.repository?.commit).toBe(shelf.snapshot?.commit);
-    expect(shelf.repository?.commit).not.toBe(pushed.commit);
-  });
-
-  it("refuses a pack that names an object it lacks, and never deletes main", async () => {
-    repositories.artifacts = false;
-    const pushed = await push("kit", shelfOf("kit", false, PROMPT));
-    const ghost = "1".repeat(40);
-    const shelfEngine = await engine();
-    const planned = shelfEngine.gitCommit({
-      author: { email: "dev@example.com", name: "Dev", offset: 0, time: 1 },
-      base: [{ id: ghost, mode: "100644", path: "ghost.md" }],
-      files: [
-        ...Object.entries(shelfOf("kit", false, PROMPT)).map(
-          ([path, contents]) => ({ contents, path })
-        ),
-        { id: ghost, path: "ghost.md" },
-      ],
-      message: "names a blob nobody has",
-      parent: pushed.commit ?? undefined,
-    });
-    if (!planned.ok || planned.value.request === null) {
-      throw new Error("nothing to push");
-    }
-    const missing = await receivePack("kit", planned.value.request);
-    expect(missing.unpack).toStrictEqual({
-      message: `the pack names ${ghost}, which neither it nor the repository holds`,
-      ok: false,
-    });
-    const deleting = `${pushed.commit} ${"0".repeat(40)} refs/heads/main\0report-status\n`;
-    const deleted = await receivePack(
-      "kit",
-      encoder.encode(
-        `${(deleting.length + 4).toString(16).padStart(4, "0")}${deleting}0000`
-      )
-    );
-    expect(deleted.refs).toStrictEqual([
-      {
-        name: "refs/heads/main",
-        ok: false,
-        reason: "the shelf's branch cannot be deleted",
-      },
-    ]);
-    await expect(repositoryOf("kit")).resolves.toMatchObject({
-      repository: { commit: pushed.commit },
-    });
-  });
-});
+/** A binding method the test's stand-in does not answer, since `head` never calls it. */
+async function unused(): Promise<never> {
+  await Promise.resolve();
+  throw new Error("not called by `head`");
+}
 
 describe("errors from the Artifacts binding", () => {
   it("are read through `wrangler dev`'s remote proxy too, which drops their code", async () => {
+    // The binding as `wrangler dev` relays a deployed namespace: an `ArtifactsError` arrives as a plain `Error` whose
+    // message names it. The simulator throws the real error, so this stand-in answers `get` the proxy's way.
     const proxied: Artifacts = {
-      ...fakeArtifacts,
+      create: unused,
+      delete: unused,
       get: async (name) => {
         await Promise.resolve();
         throw new Error(`ArtifactsError: Repository not found: ${name}.`);
       },
+      import: unused,
+      list: unused,
     };
-    const repository = new ArtifactsRepository(proxied, fakeArtifacts.fetch);
+    const repository = new ArtifactsRepository(proxied, fetch);
     await expect(repository.head("nowhere")).resolves.toBeNull();
+  });
+
+  it("are read from the simulator as they are deployed", async () => {
+    const repository = new ArtifactsRepository(env.ARTIFACTS, fetch);
+    await expect(repository.head("nowhere")).resolves.toBeNull();
+    await expect(repository.references("nowhere")).resolves.toBeNull();
   });
 });

@@ -17,11 +17,6 @@ impl ObjectId {
     pub fn is_zero(&self) -> bool {
         *self == Self::ZERO
     }
-
-    /// The id from its 20 raw bytes, as trees and packs carry it.
-    pub(crate) fn from_slice(bytes: &[u8]) -> Option<Self> {
-        <[u8; 20]>::try_from(bytes).ok().map(Self)
-    }
 }
 
 impl fmt::Display for ObjectId {
@@ -88,16 +83,6 @@ impl Kind {
             Self::Tree => 2,
             Self::Blob => 3,
             Self::Tag => 4,
-        }
-    }
-
-    pub(crate) fn from_pack_type(number: u8) -> Option<Self> {
-        match number {
-            1 => Some(Self::Commit),
-            2 => Some(Self::Tree),
-            3 => Some(Self::Blob),
-            4 => Some(Self::Tag),
-            _ => None,
         }
     }
 }

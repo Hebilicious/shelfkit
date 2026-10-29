@@ -48,9 +48,10 @@
   // Content by sha256 under `objects/`; published archives under `archives/`, which a bucket lock keeps immutable;
   // `shelves/` lists the shelves held.
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "shelfkit-blobs" }],
-  // Each shelf's files are a Git repository in this Artifacts namespace, named by the shelf's id (src/repository/).
-  // Artifacts has no local simulator: `remote` says so, and the local configuration (scripts/local-config.ts) that
-  // `worker:dev` and the tests run leaves the binding out.
+  // Each shelf's files are a Git repository in this Artifacts namespace, named by the shelf's id, and each published
+  // profile's versions one named `<shelf>.<profile>` (src/repository/, src/packages.ts). `remote` uses the account's
+  // Artifacts under `wrangler dev`; the local configuration (scripts/local-config.ts) that `worker:dev` and the tests
+  // run sets it to false, for Miniflare's local simulator.
   "artifacts": [
     { "binding": "ARTIFACTS", "namespace": "shelfkit", "remote": true },
   ],

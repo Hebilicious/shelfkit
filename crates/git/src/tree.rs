@@ -1,10 +1,9 @@
-//! Trees: building every tree object of a flat file list, and decoding one.
+//! Trees: building every tree object of a flat file list.
 
 use crate::object::{Kind, Mode, ObjectId, object_id};
 use crate::{Error, Result};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::fmt;
 
 /// One file of a commit: its path from the repository root, its mode, and
 /// its blob's id.
@@ -159,80 +158,6 @@ fn canonical_order(left: &str, left_is_tree: bool, right: &str, right_is_tree: b
         .cmp(right.bytes().chain(slash(right_is_tree)))
 }
 
-/// The mode of an entry in a tree someone else wrote.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EntryMode {
-    /// A file, a symbolic link, or a gitlink.
-    Leaf(Mode),
-    /// `40000`: a directory.
-    Tree,
-}
-
-impl EntryMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Leaf(mode) => mode.as_str(),
-            Self::Tree => TREE_MODE,
-        }
-    }
-}
-
-impl fmt::Display for EntryMode {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-/// One entry of a decoded tree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TreeEntry {
-    pub name: String,
-    pub mode: EntryMode,
-    pub id: ObjectId,
-}
-
-/// Decode a tree's body into its entries, in the order it lists them.
-pub fn decode(body: &[u8]) -> Result<Vec<TreeEntry>> {
-    let mut entries = Vec::new();
-    let mut rest = body;
-    while !rest.is_empty() {
-        let what = || format!("tree entry {}", entries.len() + 1);
-        let space = rest
-            .iter()
-            .position(|&byte| byte == b' ')
-            .ok_or_else(|| Error::malformed(what(), "no space after the mode"))?;
-        let mode = match &rest[..space] {
-            b"100644" => EntryMode::Leaf(Mode::File),
-            b"100755" => EntryMode::Leaf(Mode::Executable),
-            b"120000" => EntryMode::Leaf(Mode::Symlink),
-            b"160000" => EntryMode::Leaf(Mode::Gitlink),
-            b"40000" => EntryMode::Tree,
-            other => {
-                return Err(Error::malformed(
-                    what(),
-                    format!("unknown mode `{}`", String::from_utf8_lossy(other)),
-                ));
-            }
-        };
-        rest = &rest[space + 1..];
-        let nul = rest
-            .iter()
-            .position(|&byte| byte == 0)
-            .ok_or_else(|| Error::malformed(what(), "no NUL after the name"))?;
-        let name = std::str::from_utf8(&rest[..nul])
-            .map_err(|_| Error::malformed(what(), "the name is not UTF-8"))?
-            .to_owned();
-        rest = &rest[nul + 1..];
-        let id = rest
-            .get(..20)
-            .and_then(ObjectId::from_slice)
-            .ok_or_else(|| Error::malformed(what(), "the object id is cut short"))?;
-        rest = &rest[20..];
-        entries.push(TreeEntry { name, mode, id });
-    }
-    Ok(entries)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,21 +230,10 @@ mod tests {
         let trees = build(&[file("a0"), file("a/x"), file("a.b")]).unwrap();
         let (root_id, root) = trees.objects.last().unwrap();
         assert_eq!(*root_id, trees.root);
-        let names: Vec<String> = decode(root).unwrap().into_iter().map(|e| e.name).collect();
-        assert_eq!(names, ["a.b", "a", "a0"]);
-    }
-
-    #[test]
-    fn decodes_what_it_builds() {
-        let trees = build(&[file("dir/one"), file("two")]).unwrap();
-        let root = decode(&trees.objects[1].1).unwrap();
-        assert_eq!(root[0].name, "dir");
-        assert_eq!(root[0].mode, EntryMode::Tree);
-        assert_eq!(root[0].id, trees.objects[0].0);
-        assert_eq!(root[1].mode, EntryMode::Leaf(Mode::File));
-        assert!(decode(b"100644 x").is_err());
-        assert!(decode(b"100664 x\0aaaaaaaaaaaaaaaaaaaa").is_err());
-        assert!(decode(b"100644 x\0short").is_err());
+        let text = String::from_utf8_lossy(root);
+        let at = |entry: &str| text.find(entry).unwrap();
+        assert!(at("100644 a.b\0") < at("40000 a\0"), "{text:?}");
+        assert!(at("40000 a\0") < at("100644 a0\0"), "{text:?}");
     }
 
     #[test]

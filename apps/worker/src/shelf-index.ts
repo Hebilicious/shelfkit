@@ -200,7 +200,7 @@ export interface ShelfSummary {
   /** Bytes of the database, which the platform caps at 10 GB per object. */
   readonly databaseBytes: number;
   readonly notices: Inventory["notices"];
-  /** The shelf's repository; null where the deployment has no Artifacts. */
+  /** Where the shelf's repository stands against the index. */
   readonly repository: RepositoryState | null;
 }
 
@@ -3195,7 +3195,12 @@ export class ShelfIndex extends DurableObject<Env> {
       return;
     }
     try {
-      await commitVersions(this.env, packageKey, this.published(packageKey));
+      await commitVersions(
+        this.env,
+        shelf,
+        profile,
+        this.published(packageKey)
+      );
     } catch (error) {
       console.error(
         `committing ${packageKey}'s new version to its repository failed`,

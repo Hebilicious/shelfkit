@@ -1,9 +1,8 @@
 /**
  * The shelf's repository over Git's smart HTTP protocol: `/git/{shelf}.git`, for `git clone`, `fetch`, and `push`,
  * and for APM installing from it. The Worker decides who may do what with the same auth module as every other
- * surface, then relays the exchange to the shelf's repository: in Artifacts, with a token it mints for that one
- * request, so a revoked key fails here at once and no Artifacts token ever reaches a client; or, in local mode, to the
- * repository the Worker keeps in R2 (`src/repository/local.ts`).
+ * surface, then relays the exchange to the shelf's repository in Artifacts with a token it mints for that one request,
+ * so a revoked key fails here at once and no Artifacts token ever reaches a client.
  *
  * Git is the one way a checkout's files reach a hosted shelf. A shelf that is a repository of its own pushes and pulls
  * here; a shelf inside a larger repository is a submodule of this one.
@@ -14,9 +13,10 @@
  * After a push, the shelf's object indexes the new head (`ShelfIndex.syncRepository`), refusing a head the engine
  * cannot load. The browser's cookie is never read here.
  *
- * `/git/{shelf}/{profile}.git` is a published profile's own repository (`src/packages.ts`): every version the registry
- * published, tagged `v{version}`, which APM installs with a version range and no experimental flag. It is cloned and
- * fetched, never pushed: publishing writes it. Reading it needs what reading the package from the registry needs.
+ * `/git/{shelf}/{profile}.git` is a published profile's own repository (`src/packages.ts`), the Artifacts repository
+ * `<shelf>.<profile>`: every version the registry published, tagged `v{version}`, which APM installs with a version
+ * range and no experimental flag. It is cloned and fetched, never pushed: publishing writes it. Reading it needs what
+ * reading the package from the registry needs, and the exchange is relayed with a read token, as a shelf's is.
  */
 import { ProfileIdSchema, ShelfIdSchema } from "@shelfkit/schema";
 import * as v from "valibot";
@@ -25,7 +25,7 @@ import { authenticateHeader, existingShelf, shelfStub } from "./auth/index.ts";
 import type { Session } from "./auth/index.ts";
 import { problem } from "./http.ts";
 import type { JobMessage } from "./jobs/messages.ts";
-import { commitVersions, packageRepository } from "./packages.ts";
+import { commitVersions, packageRepositoryName } from "./packages.ts";
 import { shelfRepository } from "./repository/index.ts";
 import type { GitExchange } from "./repository/index.ts";
 
@@ -282,12 +282,11 @@ async function packageRoute(
   if (granted === null || !granted.ok) {
     return packageRefusal(granted?.status ?? 404);
   }
-  const name = `${shelf}/${profile}`;
   if (advertise) {
-    await commitVersions(env, name, granted.versions);
+    await commitVersions(env, shelf, profile, granted.versions);
   }
-  const upstream = await packageRepository(env).exchange(
-    name,
+  const upstream = await shelfRepository(env).exchange(
+    packageRepositoryName(shelf, profile),
     exchangeOf(request, { advertise, service: "git-upload-pack", shelf })
   );
   if (upstream === null) {

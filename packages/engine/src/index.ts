@@ -18,9 +18,9 @@
  * what comes back.
  *
  * `gitCommit` builds the commit and the `git-receive-pack` request body that push a shelf's files to its Git repository
- * (`crates/git`), and `gitReport` reads the server's answer, so the Worker sends bytes and decides nothing about Git's
- * encoding. `gitReceive`, `gitAdvertise`, `gitUploadRequest`, `gitUploadResponse`, and `gitStatus` are a server's side,
- * for a repository the host stores itself: local mode, which has no Artifacts, and test doubles.
+ * (`crates/git`), `gitVersion` does the same for a published version, `gitReport` reads the server's answer, and
+ * `gitRefs` reads the references a repository advertises, so the Worker sends bytes and decides nothing about Git's
+ * encoding. They are a client's side only: Artifacts, deployed or as Miniflare's local simulator, is the server.
  */
 import {
   CompilePlanSchema,
@@ -42,7 +42,7 @@ import * as v from "valibot";
 export type ProfileDocument = v.InferInput<typeof ProfileSchema>;
 
 /** The ABI this port speaks; the module reports its own through `shelfkit_abi_version`. */
-export const ABI_VERSION = 7;
+export const ABI_VERSION = 8;
 
 export { NOTE_SEVERITY, conflictsOf } from "./conflicts.ts";
 export type {
@@ -394,109 +394,20 @@ export type GitRefStatus =
   | { readonly name: string; readonly ok: true }
   | { readonly name: string; readonly ok: false; readonly reason: string };
 
-/** A receive-pack request as a server reads it, for test doubles. */
-export interface GitReceived {
-  readonly updates: readonly GitUpdate[];
+/** The references a repository advertises (`GET info/refs?service=<service>`), protocol v0 or v1. */
+export interface GitRefs {
+  /** Every reference, in the order advertised: `HEAD` first when the server lists it. */
+  readonly refs: readonly GitRef[];
+  /** The capabilities the advertisement's first line carried. */
   readonly capabilities: readonly string[];
-  readonly objects: readonly GitObject[];
 }
 
-/** One reference update: from `old` to `new`, either being forty zeros for none. */
-export interface GitUpdate {
-  readonly old: string;
-  readonly new: string;
+/** One advertised reference: its full name (`refs/tags/v1.0.0`, or `HEAD`) and the object it is at. */
+export interface GitRef {
   readonly name: string;
-}
-
-/** An object as a received pack holds it, decoded; a tree and a commit carry their encoded `body` too. */
-export type GitObject =
-  | {
-      readonly id: string;
-      readonly kind: "blob" | "tag";
-      readonly contents: Uint8Array;
-    }
-  | {
-      readonly id: string;
-      readonly kind: "tree";
-      readonly entries: readonly GitTreeEntry[];
-      readonly body: Uint8Array;
-    }
-  | {
-      readonly id: string;
-      readonly kind: "commit";
-      readonly body: Uint8Array;
-      readonly tree: string;
-      readonly parents: readonly string[];
-      readonly author: GitPerson;
-      readonly committer: GitPerson;
-      /** Unix seconds. */
-      readonly authoredAt: number;
-      /** Unix seconds. */
-      readonly committedAt: number;
-      readonly message: string;
-    };
-
-/** An entry of a tree: a file, a symbolic link, a gitlink, or a directory (`40000`). */
-export interface GitTreeEntry {
-  readonly name: string;
-  readonly mode: GitMode | "40000";
   readonly id: string;
-}
-
-export interface GitPerson {
-  readonly name: string;
-  readonly email: string;
-}
-
-/** The kind of a Git object. */
-export type GitKind = GitObject["kind"];
-
-/** The two services of Git's smart HTTP protocol: clone and fetch, and push. */
-export type GitService = "git-upload-pack" | "git-receive-pack";
-
-/** A repository's references, for `GET info/refs?service=<service>`. */
-export interface GitAdvertiseRequest {
-  readonly service: GitService;
-  readonly refs: readonly { readonly name: string; readonly id: string }[];
-  /** The reference `HEAD` points at, which upload-pack lists first. */
-  readonly head?: string;
-}
-
-/**
- * What a `git-upload-pack` request carries after its wants: nothing (a client asking for a depth sends its wants alone
- * first), haves and a flush (another round follows), or `done` (it waits for the pack).
- */
-export type GitNegotiation = "none" | "round" | "done";
-
-/** A `git-upload-pack` request, as a server reads it. */
-export interface GitUploadRequest {
-  readonly wants: readonly string[];
-  readonly capabilities: readonly string[];
-  /** The commits the client's shallow clone stops at. */
-  readonly shallows: readonly string[];
-  /** How many commits deep the client wants its history, or null for all of it. */
-  readonly depth: number | null;
-  readonly haves: readonly string[];
-  readonly negotiation: GitNegotiation;
-  /** Whether the answer starts with the shallow section: a depth was asked for, or the clone is shallow already. */
-  readonly deepens: boolean;
-}
-
-/** What a server answers a `git-upload-pack` request with, once it has walked its objects. */
-export interface GitUploadAnswer {
-  readonly deepens: boolean;
-  /** The commits the client's history now stops at. */
-  readonly shallow: readonly string[];
-  /** The client's shallow commits whose parents it now gets. */
-  readonly unshallow: readonly string[];
-  readonly negotiation: GitNegotiation;
-  /** The client's haves the server has; the first is acknowledged. */
-  readonly common: readonly string[];
-  /** Every object the client lacks, sent when it is done. */
-  readonly pack: readonly {
-    readonly kind: GitKind;
-    readonly body: Uint8Array;
-  }[];
+  /** For an annotated tag, the object the tag points at. */
+  readonly peeled?: string;
 }
 
 /** An engine call that answered: its parsed output. */
@@ -560,22 +471,8 @@ export interface Engine {
   ) => EngineResult<GitCommitted>;
   /** Read the body of a receive-pack response. A side-band response ending in a fatal error is an error on `<remote>`. */
   readonly gitReport: (body: Uint8Array) => EngineResult<GitReport>;
-  /** Read a receive-pack request body as a server does, every object of its pack decoded. */
-  readonly gitReceive: (body: Uint8Array) => EngineResult<GitReceived>;
-  /** The body of the answer to `GET info/refs?service=<service>`. */
-  readonly gitAdvertise: (
-    request: GitAdvertiseRequest
-  ) => EngineResult<Uint8Array>;
-  /** Read a `git-upload-pack` request body as a server does. */
-  readonly gitUploadRequest: (
-    body: Uint8Array
-  ) => EngineResult<GitUploadRequest>;
-  /** The body of the answer to a `git-upload-pack` request. */
-  readonly gitUploadResponse: (
-    answer: GitUploadAnswer
-  ) => EngineResult<Uint8Array>;
-  /** The body of the answer to a receive-pack request whose client asked for `report-status`. */
-  readonly gitStatus: (report: GitReport) => EngineResult<Uint8Array>;
+  /** Read the body of a ref advertisement, the answer to `GET <remote>/info/refs?service=<service>`. */
+  readonly gitRefs: (body: Uint8Array) => EngineResult<GitRefs>;
 }
 
 /** The module's exports. */
@@ -594,11 +491,7 @@ interface Abi {
   readonly shelfkit_git_commit: () => number;
   readonly shelfkit_git_version: () => number;
   readonly shelfkit_git_report: () => number;
-  readonly shelfkit_git_receive: () => number;
-  readonly shelfkit_git_advertise: () => number;
-  readonly shelfkit_git_upload_request: () => number;
-  readonly shelfkit_git_upload_response: () => number;
-  readonly shelfkit_git_status: () => number;
+  readonly shelfkit_git_refs: () => number;
   readonly shelfkit_output_ptr: () => number;
   readonly shelfkit_output_len: () => number;
 }
@@ -626,11 +519,7 @@ const FUNCTIONS = [
   "shelfkit_git_commit",
   "shelfkit_git_version",
   "shelfkit_git_report",
-  "shelfkit_git_receive",
-  "shelfkit_git_advertise",
-  "shelfkit_git_upload_request",
-  "shelfkit_git_upload_response",
-  "shelfkit_git_status",
+  "shelfkit_git_refs",
   "shelfkit_output_ptr",
   "shelfkit_output_len",
 ] as const;
@@ -711,11 +600,15 @@ export async function createEngine(
       }
     };
   return {
-    gitAdvertise: guarded((instance: Abi, request: GitAdvertiseRequest) =>
-      bytesCall(instance, instance.shelfkit_git_advertise, request)
-    ),
     gitCommit: guarded(gitCommit),
-    gitReceive: guarded(gitReceive),
+    gitRefs: guarded((instance: Abi, body: Uint8Array) =>
+      engineCall(
+        instance,
+        instance.shelfkit_git_refs,
+        { body: toBase64(body) },
+        GitRefsSchema
+      )
+    ),
     gitReport: guarded((instance: Abi, body: Uint8Array) =>
       engineCall(
         instance,
@@ -723,26 +616,6 @@ export async function createEngine(
         { body: toBase64(body) },
         GitReportSchema
       )
-    ),
-    gitStatus: guarded((instance: Abi, report: GitReport) =>
-      bytesCall(instance, instance.shelfkit_git_status, report)
-    ),
-    gitUploadRequest: guarded((instance: Abi, body: Uint8Array) =>
-      engineCall(
-        instance,
-        instance.shelfkit_git_upload_request,
-        { body: toBase64(body) },
-        GitUploadRequestSchema
-      )
-    ),
-    gitUploadResponse: guarded((instance: Abi, answer: GitUploadAnswer) =>
-      bytesCall(instance, instance.shelfkit_git_upload_response, {
-        ...answer,
-        pack: answer.pack.map((object) => ({
-          body: toBase64(object.body),
-          kind: object.kind,
-        })),
-      })
     ),
     gitVersion: guarded(gitVersion),
     inventory: guarded((instance: Abi, files: readonly ShelfFile[]) =>
@@ -849,7 +722,6 @@ function engineCall<const TSchema extends v.GenericSchema>(
     | OutputRequest
     | GitCommitInput
     | GitBodyInput
-    | GitServerInput
     | GitVersionInput,
   schema: TSchema
 ): EngineResult<v.InferOutput<TSchema>> {
@@ -1038,26 +910,15 @@ type GitCommitInput = Omit<GitCommitRequest, "files"> & {
   readonly files: readonly GitFileRequest[];
 };
 
-/** What `shelfkit_git_report`, `shelfkit_git_receive`, and `shelfkit_git_upload_request` read: the bytes, in base64. */
+/** What `shelfkit_git_report` and `shelfkit_git_refs` read: the bytes, in base64. */
 interface GitBodyInput {
   readonly body: string;
 }
 
-/** What the calls that write a server's answer read: `shelfkit_git_upload_response`'s pack in base64. */
 /** What `shelfkit_git_version` reads: the request, its archive in base64. */
 type GitVersionInput = Omit<GitVersionRequest, "archive"> & {
   readonly archive: string;
 };
-
-type GitServerInput =
-  | GitAdvertiseRequest
-  | GitReport
-  | (Omit<GitUploadAnswer, "pack"> & {
-      readonly pack: readonly {
-        readonly kind: GitKind;
-        readonly body: string;
-      }[];
-    });
 
 const GitModeSchema = v.picklist(["100644", "100755", "120000", "160000"]);
 
@@ -1103,50 +964,14 @@ const GitReportSchema = v.strictObject({
   ]),
 });
 
-const GitPersonSchema = v.strictObject({ email: v.string(), name: v.string() });
-
-const GitReceivedSchema = v.strictObject({
+const GitRefsSchema = v.strictObject({
   capabilities: v.array(v.string()),
-  objects: v.array(
-    v.variant("kind", [
-      v.strictObject({
-        contents: v.string(),
-        id: v.string(),
-        kind: v.literal("blob"),
-      }),
-      v.strictObject({
-        contents: v.string(),
-        id: v.string(),
-        kind: v.literal("tag"),
-      }),
-      v.strictObject({
-        body: v.string(),
-        entries: v.array(
-          v.strictObject({
-            id: v.string(),
-            mode: v.union([GitModeSchema, v.literal("40000")]),
-            name: v.string(),
-          })
-        ),
-        id: v.string(),
-        kind: v.literal("tree"),
-      }),
-      v.strictObject({
-        author: GitPersonSchema,
-        authoredAt: v.number(),
-        body: v.string(),
-        committedAt: v.number(),
-        committer: GitPersonSchema,
-        id: v.string(),
-        kind: v.literal("commit"),
-        message: v.string(),
-        parents: v.array(v.string()),
-        tree: v.string(),
-      }),
-    ])
-  ),
-  updates: v.array(
-    v.strictObject({ name: v.string(), new: v.string(), old: v.string() })
+  refs: v.array(
+    v.strictObject({
+      id: v.string(),
+      name: v.string(),
+      peeled: v.optional(v.string()),
+    })
   ),
 });
 
@@ -1195,49 +1020,6 @@ function gitVersion(
     );
   }
   return { ok: true, value: { ...plan, request: fromBase64(plan.request) } };
-}
-
-function gitReceive(abi: Abi, body: Uint8Array): EngineResult<GitReceived> {
-  const result = engineCall(
-    abi,
-    abi.shelfkit_git_receive,
-    { body: toBase64(body) },
-    GitReceivedSchema
-  );
-  if (!result.ok) {
-    return result;
-  }
-  const objects = result.value.objects.map((object): GitObject => {
-    if (object.kind === "blob" || object.kind === "tag") {
-      return { ...object, contents: fromBase64(object.contents) };
-    }
-    return { ...object, body: fromBase64(object.body) };
-  });
-  return { ok: true, value: { ...result.value, objects } };
-}
-
-const GitUploadRequestSchema = v.strictObject({
-  capabilities: v.array(v.string()),
-  deepens: v.boolean(),
-  depth: v.nullable(v.number()),
-  haves: v.array(v.string()),
-  negotiation: v.picklist(["none", "round", "done"]),
-  shallows: v.array(v.string()),
-  wants: v.array(v.string()),
-});
-
-const GitBodySchema = v.strictObject({ body: v.string() });
-
-/** A call whose output is bytes: `{ "body" }`, in base64. */
-function bytesCall(
-  abi: Abi,
-  run: () => number,
-  request: GitServerInput
-): EngineResult<Uint8Array> {
-  const result = engineCall(abi, run, request, GitBodySchema);
-  return result.ok
-    ? { ok: true, value: fromBase64(result.value.body) }
-    : result;
 }
 
 function encodeGitFile(file: GitNewFile): GitFileRequest {
