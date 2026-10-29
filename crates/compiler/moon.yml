@@ -10,7 +10,10 @@ dependsOn:
 
 tasks:
   build:
+    description: "Build the library and the `shelfkit` binary, which the e2e suite runs. The binary is the output, so a cached build puts back the binary these inputs built, not whichever one the last build left in target/."
     command: "cargo build --package shelfkit-compiler"
+    outputs:
+      - "/target/debug/shelfkit"
   check:
     command: "cargo clippy --package shelfkit-compiler --all-targets -- -D warnings"
     deps:
