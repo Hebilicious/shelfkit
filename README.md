@@ -164,13 +164,26 @@ The push creates a shelf that does not exist yet. For one that exists already, b
 
 `shelfkit publish` is separate from Git: it packages each profile exactly as `shelfkit serve` does and publishes it to the deployment's registry at its `version`. A published version is immutable, so a changed profile needs a new `version` before it publishes again.
 
-A profile then installs from the deployment with APM's registry client: `registries: { shelf: { url: https://shelfkit.<you>.workers.dev/apm } }` in `apm.yml`, the dependency `{ id: <namespace>/<profile>, version: <version> }`, and `apm experimental enable registries`.
+A published profile installs with APM in two ways, which give the same files, and `shelfkit publish` prints both:
+
+- **From its Git repository**, `https://shelfkit.<you>.workers.dev/git/<shelf>/<profile>.git`, with no experimental flag. Every published version is a commit there holding exactly its archive's files, tagged `v<version>`, and `main` is the latest one published. APM resolves a version range against the tags:
+
+  ```yaml
+  dependencies:
+    apm:
+      - git: https://shelfkit.<you>.workers.dev/git/<shelf>/<profile>.git
+        ref: "^1.2.0"
+  ```
+
+  Nobody pushes to it: publishing writes it. Reading it takes what reading the package from the registry takes, so a private shelf's needs a key, which Git asks for as for the shelf's own repository.
+
+- **From the registry**, with APM's registry client, which is behind a flag: `apm experimental enable registries` once, then `registries: { shelf: { url: https://shelfkit.<you>.workers.dev/apm } }` in `apm.yml` and the dependency `{ id: <shelf>/<profile>, version: "^1.2.0" }`.
 
 Keys are for programs: the CLI, agents, CI, and APM's registry client, which need a bearer token. They are managed over GraphQL (`createKey`, `revokeKey`) and in Settings, with the registry's scopes: `read`, `read:{shelf}/{profile}`, `publish:{shelf}/{profile}`, `publish:{shelf}/*`, plus `mcp:{shelf}/{item}` for the MCP relay. A key works on the registry, GraphQL, and `/mcp` alike, and a revoked one fails on all three at once. A browser never holds a key; people sign in with passkeys.
 
 File contents no commit takes (from a push the engine refused) stay in `objects/` and are never served: `/raw` serves only objects a committed snapshot names. Removing them is a follow-up: objects are shared by hash across a deployment's shelves, so a sweep must know that no shelf references an object before it deletes it, and there is no cross-shelf query to ask. The plan is per-shelf reference records in R2 (`refs/<sha256>/<shelf>`), written at commit, which a cron sweep reads before deleting an unreferenced object older than a day.
 
-To tear a deployment down: `wrangler delete shelfkit`; `wrangler queues delete shelfkit-jobs` and `shelfkit-jobs-dlq`; `wrangler r2 bucket lock remove shelfkit-blobs --id archives-immutable` (and `--id objects-immutable` on a deployment set up before the lock moved), empty the bucket, and `wrangler r2 bucket delete shelfkit-blobs`.
+To tear a deployment down: `wrangler delete shelfkit`; `wrangler queues delete shelfkit-jobs` and `shelfkit-jobs-dlq`; `wrangler r2 bucket lock remove shelfkit-blobs --id archives-immutable`, empty the bucket, and `wrangler r2 bucket delete shelfkit-blobs`.
 
 ## Conventions
 

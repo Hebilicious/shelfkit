@@ -674,6 +674,14 @@ fn publish_puts_every_profile_to_the_registry() {
             ran.stdout
         );
     }
+    // How to install the default profile, from its Git repository and from the registry.
+    for line in [
+        "    - git: https://shelf.example.dev/git/hebilicious/default.git\n      ref: \"^1.0.0\"\n",
+        "    url: https://shelf.example.dev/apm\n",
+        "    - id: hebilicious/default\n      version: \"^1.0.0\"\n",
+    ] {
+        assert!(ran.stdout.contains(line), "{}", ran.stdout);
+    }
     let state = service.state.borrow();
     let published: Vec<&(String, String)> = state.packages.keys().collect();
     assert_eq!(

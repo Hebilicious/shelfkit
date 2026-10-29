@@ -31,6 +31,10 @@ const shelf = useShelfId();
 const route = useRoute();
 const router = useRouter();
 const profileId = computed(() => param(route.params.profile));
+/** The Git repository APM installs this profile's published versions from, with a version range as its `ref`. */
+const packageRepository = computed(
+  () => `${window.location.origin}/git/${shelf.value}/${profileId.value}.git`,
+);
 
 const profilesQuery = useProfiles(shelf);
 const index = useShelfIndex(shelf);
@@ -265,6 +269,9 @@ async function copy(text: string, way: Way): Promise<void> {
             <template v-if="target.isPrivate">
               For a private shelf, APM needs the registry in its user config and a key in the environment.
             </template>
+            APM also installs a published version from the profile's own Git repository,
+            <code data-testid="package-repository">{{ packageRepository }}</code>, with a version range as the
+            <code>ref</code> and no experimental flag.
           </p>
           <div class="tabs" role="tablist">
             <button

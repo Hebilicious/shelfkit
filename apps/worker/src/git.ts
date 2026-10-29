@@ -13,19 +13,27 @@
  * shelf; pushing needs write access, and the owner may push a shelf that does not exist yet.
  * After a push, the shelf's object indexes the new head (`ShelfIndex.syncRepository`), refusing a head the engine
  * cannot load. The browser's cookie is never read here.
+ *
+ * `/git/{shelf}/{profile}.git` is a published profile's own repository (`src/packages.ts`): every version the registry
+ * published, tagged `v{version}`, which APM installs with a version range and no experimental flag. It is cloned and
+ * fetched, never pushed: publishing writes it. Reading it needs what reading the package from the registry needs.
  */
-import { ShelfIdSchema } from "@shelfkit/schema";
+import { ProfileIdSchema, ShelfIdSchema } from "@shelfkit/schema";
 import * as v from "valibot";
 
 import { authenticateHeader, existingShelf, shelfStub } from "./auth/index.ts";
 import type { Session } from "./auth/index.ts";
 import { problem } from "./http.ts";
 import type { JobMessage } from "./jobs/messages.ts";
+import { commitVersions, packageRepository } from "./packages.ts";
 import { shelfRepository } from "./repository/index.ts";
 import type { GitExchange } from "./repository/index.ts";
 
 const ROUTE =
   /^\/git\/(?<shelf>[^/]+)\.git\/(?<rest>info\/refs|git-upload-pack|git-receive-pack)$/u;
+
+const PACKAGE_ROUTE =
+  /^\/git\/(?<shelf>[^/]+)\/(?<profile>[^/]+)\.git\/(?<rest>info\/refs|git-upload-pack|git-receive-pack)$/u;
 
 /** The request headers a Git exchange needs, passed on to the repository. */
 const FORWARDED = [
@@ -124,6 +132,10 @@ function exchangeOf(request: Request, wanted: GitRequest): GitExchange {
 }
 
 export async function gitRoute(request: Request, env: Env): Promise<Response> {
+  const published = PACKAGE_ROUTE.exec(new URL(request.url).pathname)?.groups;
+  if (published !== undefined) {
+    return await packageRoute(request, env, published);
+  }
   const wanted = gitRequest(request);
   if (wanted instanceof Response) {
     return wanted;
@@ -187,4 +199,104 @@ async function relayed(
     );
   }
   return new Response(report, { headers, status: upstream.status });
+}
+
+/** What a request to a published profile's repository asks for, once its path is read. */
+interface PackageRequest {
+  readonly shelf: string;
+  readonly profile: string;
+  readonly advertise: boolean;
+}
+
+/** Read a published profile repository's path: clone and fetch only, never a push. Or answer why not. */
+function packageRequest(
+  request: Request,
+  path: Readonly<Record<string, string | undefined>>
+): PackageRequest | Response {
+  const shelf = path.shelf ?? "";
+  const profile = path.profile ?? "";
+  const advertise = path.rest === "info/refs";
+  const service = advertise
+    ? new URL(request.url).searchParams.get("service")
+    : path.rest;
+  if (service === "git-receive-pack") {
+    return problem(
+      403,
+      "Forbidden",
+      "a published profile's repository is written by publishing the profile (`shelfkit publish`), not by a push"
+    );
+  }
+  if (
+    !v.is(ShelfIdSchema, shelf) ||
+    !v.is(ProfileIdSchema, profile) ||
+    service !== "git-upload-pack"
+  ) {
+    return problem(
+      404,
+      "Not Found",
+      "a published profile's repository is /git/{shelf}/{profile}.git, over Git's smart HTTP protocol"
+    );
+  }
+  const expected = advertise ? "GET" : "POST";
+  if (request.method !== expected) {
+    return problem(405, "Method Not Allowed", undefined, { allow: expected });
+  }
+  return { advertise, profile, shelf };
+}
+
+/** The refusal a Git client gets for the registry's: a challenge it answers with its credential helper, or the status. */
+function packageRefusal(status: number): Response {
+  if (status === 401) {
+    return challenge("this profile's repository needs a key");
+  }
+  return status === 403
+    ? problem(403, "Forbidden", "this key cannot read this profile")
+    : problem(404, "Not Found", "this shelf has published no such profile");
+}
+
+/**
+ * A published profile's repository: clone and fetch only. The registry decides who may read it, as it decides for the
+ * package's list of versions; the repository first commits every version it lacks.
+ */
+async function packageRoute(
+  request: Request,
+  env: Env,
+  path: Readonly<Record<string, string | undefined>>
+): Promise<Response> {
+  const wanted = packageRequest(request, path);
+  if (wanted instanceof Response) {
+    return wanted;
+  }
+  const { advertise, profile, shelf } = wanted;
+  const session = await authenticateHeader(request, env);
+  if (session.kind === "invalid") {
+    return challenge(
+      "the key is not valid: it is malformed, unknown, or revoked"
+    );
+  }
+  const existing = await existingShelf(env, shelf);
+  const granted =
+    existing === null
+      ? null
+      : await existing.packageVersions(session, shelf, profile);
+  if (granted === null || !granted.ok) {
+    return packageRefusal(granted?.status ?? 404);
+  }
+  const name = `${shelf}/${profile}`;
+  if (advertise) {
+    await commitVersions(env, name, granted.versions);
+  }
+  const upstream = await packageRepository(env).exchange(
+    name,
+    exchangeOf(request, { advertise, service: "git-upload-pack", shelf })
+  );
+  if (upstream === null) {
+    return packageRefusal(404);
+  }
+  const headers = new Headers({ "cache-control": "no-cache" });
+  const type = upstream.headers.get("content-type");
+  if (type !== null) {
+    headers.set("content-type", type);
+  }
+  return new Response(upstream.body, { headers, status: upstream.status });
 }
