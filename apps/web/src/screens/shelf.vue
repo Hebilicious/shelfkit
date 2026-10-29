@@ -13,6 +13,8 @@ import { KIND_GUIDES, KIND_ORDER, KINDS, kindOfSlug, scanLabel } from "../lib/vo
 import { param } from "../navigation.ts";
 
 const shelf = useShelfId();
+/** Where the shelf's repository is: Git is how a shelf's files arrive. */
+const remote = computed(() => `${window.location.origin}/git/${shelf.value}.git`);
 const route = useRoute();
 const router = useRouter();
 
@@ -189,7 +191,7 @@ const SCAN_TONE = { clean: "info", disputed: "warn", flagged: "danger", unscanne
         ? "Nothing matches."
         : kind !== null
           ? `This shelf has no ${KINDS[kind].plural.toLowerCase()} yet. Import some, or add them to the shelf repository and push it.`
-          : "This shelf is empty. Import items, or push a shelf with shelfkit push."'
+          : `This shelf is empty. Import items, or push its files: git push ${remote} main`'
     />
     <ul v-if="rows.length > 0" class="list panel inventory" data-testid="inventory">
       <li class="inventory__head row small muted">
