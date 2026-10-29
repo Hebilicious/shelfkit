@@ -52,6 +52,8 @@ moon run worker:setup  # provision a Cloudflare account and deploy
 
 `moon run :build` and friends run a task in every project that defines it. `moon query tasks` lists every task.
 
+What to test by hand, area by area, is in the manual test map, [`docs/feature-map/`](docs/feature-map/README.md).
+
 ### Local mode
 
 `moon run worker:dev` runs the Worker on Miniflare with no Cloudflare account: the Durable Objects, R2, and the queue are Miniflare's, and every Git repository (each shelf's, and each published profile's) is in Cloudflare's local Artifacts simulator, which serves it with `git http-backend`. It needs Git 2.32 or newer on `PATH`, and so do the Worker tests and the browser tests, which run the same simulator. Repositories live under `.wrangler/state` with the rest of local state, and the address of a repository's remote changes on every start.
