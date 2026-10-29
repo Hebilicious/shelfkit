@@ -508,14 +508,18 @@ describe("access to the Git route", () => {
   it("decides with the shelf's keys", async () => {
     const reader = await createKey("kit", ["read"], "reader");
     const other = await createKey("open", ["read"], "other");
-    const statuses = await Promise.all([
+    const responses = await Promise.all([
       advertise("kit", "git-upload-pack", reader.secret),
       advertise("kit", "git-receive-pack", reader.secret),
       advertise("kit", "git-upload-pack", other.secret),
       advertise("missing", "git-upload-pack", TEST_OWNER_KEY),
       advertise("kit", "git-upload-pack", "sk_not_a_key"),
     ]);
-    expect(statuses.map((response) => response.status)).toStrictEqual([
+    // Read every body: an advertisement left unread keeps the simulator's exchange open into the next test.
+    await Promise.all(
+      responses.map(async (response) => await response.arrayBuffer())
+    );
+    expect(responses.map((response) => response.status)).toStrictEqual([
       200, 403, 404, 404, 401,
     ]);
   });
