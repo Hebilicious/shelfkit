@@ -158,6 +158,18 @@ function setTargets(slug: string): void {
           "
         />
       </label>
+      <label class="field">
+        Version
+        <input
+          :value="profile.version"
+          class="mono"
+          name="version"
+          placeholder="0.1.0"
+          required
+          title="The semantic version the profile publishes as on the registry"
+          @input="set({ version: inputValue($event) })"
+        />
+      </label>
       <label class="field wide">
         Description
         <input
@@ -277,14 +289,6 @@ function setTargets(slug: string): void {
             :value='profile.compile.name ?? ""'
             placeholder="the profile id"
             @input="setCompile({ name: inputValue($event) || undefined })"
-          />
-        </label>
-        <label class="field">
-          Version
-          <input
-            :value='profile.version ?? ""'
-            placeholder="worked out from the content"
-            @input="set({ version: inputValue($event) || undefined })"
           />
         </label>
         <div class="field">

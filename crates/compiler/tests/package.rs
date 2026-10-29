@@ -3,9 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use shelfkit_compiler::engine::{Request, package_profile, plan};
-use shelfkit_compiler::package::generated_version;
 use shelfkit_compiler::yaml::Node;
-use shelfkit_core::profile::is_semver;
 use shelfkit_core::{DirSource, MemorySource};
 use shelfkit_registry::archive;
 use shelfkit_registry::host::{MemoryKeys, MemoryStore, Registry};
@@ -30,8 +28,7 @@ fn shelf(profile: &str, prompt_body: &str) -> MemorySource {
     .collect()
 }
 
-const PROFILE: &str =
-    r#"{ "id": "p", "title": "P", "items": ["hello"], "compile": { "targets": ["claude"] } }"#;
+const PROFILE: &str = r#"{ "id": "p", "title": "P", "version": "0.1.0", "items": ["hello"], "compile": { "targets": ["claude"] } }"#;
 
 #[test]
 fn the_archive_is_the_package_manifest_and_the_profiles_own_primitives() {
@@ -40,10 +37,7 @@ fn the_archive_is_the_package_manifest_and_the_profiles_own_primitives() {
     let compiled = plan(&source, &Request::default()).unwrap();
 
     assert_eq!(packaged.package, "acme/p");
-    assert_eq!(
-        packaged.version,
-        generated_version(&compiled.profile_revision)
-    );
+    assert_eq!(packaged.version, "0.1.0");
     let files = archive::read(&packaged.archive).unwrap();
     let paths: Vec<&str> = files.keys().map(String::as_str).collect();
     assert_eq!(paths, [".apm/prompts/hello.prompt.md", "apm.yml"]);
@@ -94,21 +88,13 @@ fn the_same_profile_packages_to_the_same_bytes_whatever_the_line_endings() {
 }
 
 #[test]
-fn a_generated_version_names_the_revision_and_changes_with_the_content() {
+fn a_changed_profile_keeps_its_version_until_it_is_bumped() {
     let first = package_profile(&shelf(PROFILE, "Say hello.\n"), &Request::default()).unwrap();
     let second = package_profile(&shelf(PROFILE, "Say goodbye.\n"), &Request::default()).unwrap();
-    assert!(is_semver(&first.version), "{}", first.version);
-    assert_eq!(
-        first.version,
-        format!(
-            "0.0.0+sha256.{}.format5",
-            first
-                .profile_revision
-                .as_str()
-                .trim_start_matches("sha256-")
-        )
-    );
-    assert_ne!(first.version, second.version);
+    // The version is the profile's own, whatever its content: the bytes change and the version does not, which
+    // is why the registry refuses the second publish until the profile's `version` moves.
+    assert_eq!(first.version, second.version);
+    assert_ne!(first.profile_revision, second.profile_revision);
     assert_ne!(first.digest, second.digest);
 }
 
@@ -130,6 +116,15 @@ fn a_profile_version_is_published_verbatim_and_must_be_semver() {
     assert_eq!(error.path, "profiles/p.json");
     assert!(
         error.to_string().contains("not a semantic version"),
+        "{error}"
+    );
+
+    let unversioned = r#"{ "id": "p", "title": "P", "items": ["hello"] }"#;
+    let errors = package_profile(&shelf(unversioned, "Hi.\n"), &Request::default()).unwrap_err();
+    let error = errors.iter().next().unwrap();
+    assert_eq!(error.path, "profiles/p.json");
+    assert!(
+        error.to_string().contains("a profile needs a `version`"),
         "{error}"
     );
 }

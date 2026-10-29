@@ -1,3 +1,4 @@
+import type { Profile } from "@shelfkit/schema";
 import {
   shelfCompilePlan,
   shelfItemGet,
@@ -399,6 +400,7 @@ describe("the GraphQL API", () => {
       id: "draft",
       items: ["pr-description", "drizzle"],
       title: "Draft",
+      version: "0.1.0",
     };
     const Preview = v.object({
       shelf: v.object({
@@ -432,6 +434,50 @@ describe("the GraphQL API", () => {
       "pr-description",
       "drizzle",
     ]);
+  });
+
+  it("refuses to save a profile without a version, and says which field", async () => {
+    const Saved = v.object({
+      saveProfile: v.object({
+        errors: v.array(v.object({ message: v.string(), path: v.string() })),
+        ok: v.boolean(),
+      }),
+    });
+    const save = async (
+      document: Omit<Profile, "version"> & { readonly version?: string }
+    ) =>
+      await data(
+        Saved,
+        `mutation S($document: JSON!) { saveProfile(shelf: "kit", document: $document) { ok errors { path message } } }`,
+        { document }
+      );
+    const document = {
+      bundles: [],
+      compile: {},
+      extends: [],
+      id: "unversioned",
+      items: [],
+      title: "Unversioned",
+    };
+    const missing = await save(document);
+    expect(missing.saveProfile.ok).toBeFalsy();
+    expect(
+      missing.saveProfile.errors.map((error) => error.message).join("; ")
+    ).toContain('"version"');
+    // The composer sends an emptied field as it is.
+    await expect(save({ ...document, version: "" })).resolves.toStrictEqual({
+      saveProfile: {
+        errors: [
+          {
+            message: "`version` must be a semantic version, such as `0.1.0`",
+            path: "<profile>",
+          },
+        ],
+        ok: false,
+      },
+    });
+    const stored = await stub().getProfile(owner, "kit", "unversioned");
+    expect(stored.ok).toBeFalsy();
   });
 
   it("reports conflicts by severity", async () => {

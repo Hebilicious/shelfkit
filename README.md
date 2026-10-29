@@ -62,7 +62,7 @@ apm experimental enable registries     # once, in APM's own configuration
 apm install                            # in a repository whose apm.yml declares the printed registry and id
 ```
 
-A profile publishes at its `version`, or at `0.0.0+sha256.<profile revision>` when it has none, and a version is immutable. APM sends no credentials over plain http, so it installs only from a public shelf on loopback. Without the flag, `shelfkit compile` and `apm install` take the Git and vendored path.
+A profile publishes at its `version`, which every profile must have (a semantic version such as `0.1.0`), and a version is immutable. APM sends no credentials over plain http, so it installs only from a public shelf on loopback. Without the flag, `shelfkit compile` and `apm install` take the Git and vendored path.
 
 ## Self-hosting
 
@@ -162,7 +162,7 @@ git branch -D shelf-history
 
 The push creates a shelf that does not exist yet. For one that exists already, bring its history into the branch first: `git switch shelf-history && git pull --no-rebase --allow-unrelated-histories <url> main`, resolve, and push.
 
-`shelfkit publish` is separate from Git: it packages each profile exactly as `shelfkit serve` does and publishes it to the deployment's registry at its `version`, or `0.0.0+sha256.<revision>.format<N>` without one. A published version is immutable, so a changed profile with a `version` needs a new one before it publishes again.
+`shelfkit publish` is separate from Git: it packages each profile exactly as `shelfkit serve` does and publishes it to the deployment's registry at its `version`. A published version is immutable, so a changed profile needs a new `version` before it publishes again.
 
 A profile then installs from the deployment with APM's registry client: `registries: { shelf: { url: https://shelfkit.<you>.workers.dev/apm } }` in `apm.yml`, the dependency `{ id: <namespace>/<profile>, version: <version> }`, and `apm experimental enable registries`.
 

@@ -110,6 +110,7 @@ describe("the engine", () => {
       id: "minimal",
       items: ["api-architect"],
       title: "Draft",
+      version: "0.1.0",
     };
     const result = engine.planCompile(files, { overrideProfile: draft });
     expect(result.ok).toBeTruthy();

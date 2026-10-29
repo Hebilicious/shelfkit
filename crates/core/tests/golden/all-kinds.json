@@ -126,6 +126,7 @@
       "$schema": "https://shelfkit.dev/schemas/profile.json",
       "id": "base",
       "title": "Base",
+      "version": "0.1.0",
       "items": [
         "vue-cloudflare",
         "drizzle@sha256-411dec39350689d45ba29e0cc77201ab1f94634483bd3424f3e71950b1692a27"
@@ -145,6 +146,7 @@
       "$schema": "https://shelfkit.dev/schemas/profile.json",
       "id": "full",
       "title": "Everything",
+      "version": "0.1.0",
       "items": [
         "pr-description",
         "context7",
@@ -177,6 +179,7 @@
     "minimal": {
       "id": "minimal",
       "title": "Minimal",
+      "version": "0.1.0",
       "items": [
         "pr-description"
       ],

@@ -107,13 +107,17 @@ pub struct Profile {
     pub title: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
-    /// The semver this profile publishes as on a registry. A profile's
-    /// identity is its revision; a version exists only for publishing, and
-    /// without one the registry version is generated from the revision
-    /// (`docs/PRD.md` section 13, question 1). It is not inherited through
-    /// `extends`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
+    /// The semantic version the profile publishes as on a registry. Every
+    /// profile has one, and the loader refuses a profile without it
+    /// (`docs/PRD.md` section 13, question 1). A profile's identity is still
+    /// its revision: a changed profile publishes only once its `version` is
+    /// bumped, since a published version is immutable. It is not inherited
+    /// through `extends`.
+    ///
+    /// A missing field reads as empty, so the loader reports it with the
+    /// rest of the profile's errors rather than as a parse failure.
+    #[serde(default)]
+    pub version: String,
     #[serde(default)]
     pub items: Vec<ItemRef>,
     /// Named item groups, expanded before `extends`.

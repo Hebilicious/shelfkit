@@ -133,6 +133,7 @@ async function compileAgents() {
         id: "p",
         items: ["kit"],
         title: "P",
+        version: "0.1.0",
       },
     }
   );

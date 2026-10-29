@@ -470,7 +470,7 @@ fn init_add_ls_show_and_rm_manage_a_shelf() {
     // Selected in a profile, it compiles into the vendored package.
     std::fs::write(
         shelf.join("profiles/default.json"),
-        r#"{ "id": "default", "title": "Default", "items": ["standup", "fmt"] }"#,
+        r#"{ "id": "default", "title": "Default", "version": "0.1.0", "items": ["standup", "fmt"] }"#,
     )
     .unwrap();
     let dry = shelfkit(&shelf, &NoProcesses, &["compile", "--dry-run", "--json"]);
@@ -595,7 +595,7 @@ fn add_imports_a_directorys_agents_md_and_every_doc_its_links_reach() {
     // Selecting AGENTS.md brings its docs, and its links point at their installed copies.
     std::fs::write(
         shelf.join("profiles/default.json"),
-        r#"{ "id": "default", "title": "Default", "items": ["acme-app"] }"#,
+        r#"{ "id": "default", "title": "Default", "version": "0.1.0", "items": ["acme-app"] }"#,
     )
     .unwrap();
     let dry = shelfkit(&shelf, &NoProcesses, &["compile", "--dry-run", "--json"]);
@@ -687,7 +687,7 @@ fn add_has_agents_md_require_the_doc_the_shelf_already_has_at_a_linked_path() {
     // Selecting AGENTS.md brings the shelf's doc, and its link points at that doc's installed copy.
     std::fs::write(
         shelf.join("profiles/default.json"),
-        r#"{ "id": "default", "title": "Default", "items": ["acme-app"] }"#,
+        r#"{ "id": "default", "title": "Default", "version": "0.1.0", "items": ["acme-app"] }"#,
     )
     .unwrap();
     let dry = shelfkit(&shelf, &NoProcesses, &["compile", "--dry-run", "--json"]);
@@ -940,7 +940,7 @@ fn apm_install_accepts_compiled_manifests_when_apm_is_present() {
         ),
         (
             "profiles/mixed.json".to_owned(),
-            r#"{ "id": "mixed", "title": "Mixed", "items": ["conventions", "frontend-design", "echo", "hello", "ask-first", "house-rules"],
+            r#"{ "id": "mixed", "title": "Mixed", "version": "0.1.0", "items": ["conventions", "frontend-design", "echo", "hello", "ask-first", "house-rules"],
                  "compile": { "targets": ["claude", "codex"] } }"#
                 .to_owned(),
         ),

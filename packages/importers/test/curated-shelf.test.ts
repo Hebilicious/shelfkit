@@ -224,6 +224,7 @@ function shelfFiles(items: readonly ImportedItem[]): Map<string, string> {
       id: "default",
       items: compiled,
       title: "Curated imports",
+      version: "0.1.0",
     })
   );
   return files;

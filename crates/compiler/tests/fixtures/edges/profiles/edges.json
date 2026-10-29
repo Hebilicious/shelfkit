@@ -1,5 +1,6 @@
 {
   "id": "edges",
   "title": "Edges",
+  "version": "0.1.0",
   "items": ["precise", "bom-prompt", "bom-agent"]
 }

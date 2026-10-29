@@ -1196,8 +1196,9 @@ export function buildSchema(): GraphQLSchema {
       }),
       title: t.string({ resolve: (node) => node.profile.title }),
       version: t.string({
-        nullable: true,
-        resolve: (node) => node.profile.version ?? null,
+        description:
+          "The semantic version the profile publishes as on the registry.",
+        resolve: (node) => node.profile.version,
       }),
     }),
   });

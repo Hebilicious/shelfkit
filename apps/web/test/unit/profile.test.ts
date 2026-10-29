@@ -53,12 +53,15 @@ describe("editing a profile in the composer", () => {
     expect(restoreItem(start, "b", 0)).toBe(start);
   });
 
-  it("leaves empty optional fields out of the stored document", () => {
+  it("starts a new profile at a version", () => {
+    expect(emptyProfile("p", "P").version).toBe("0.1.0");
+  });
+
+  it("leaves empty optional fields out of the stored document, and keeps the version even empty", () => {
     const profile = normalizeProfile({
       ...emptyProfile("p", "P"),
       compile: { name: "" },
       description: " ",
-      version: "",
     });
     expect(profile).toStrictEqual({
       bundles: [],
@@ -67,7 +70,10 @@ describe("editing a profile in the composer", () => {
       id: "p",
       items: [],
       title: "P",
+      version: "0.1.0",
     });
+    // The shelf refuses a profile without a version and says why; the composer does not hide the field from it.
+    expect(normalizeProfile({ ...profile, version: "" }).version).toBe("");
   });
 
   it("makes kebab-case ids from titles", () => {

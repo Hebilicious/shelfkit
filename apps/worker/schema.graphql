@@ -608,7 +608,9 @@ type Profile {
   revision: String!
   revisions: [ProfileRevision!]!
   title: String!
-  version: String
+
+  """The semantic version the profile publishes as on the registry."""
+  version: String!
 }
 
 """

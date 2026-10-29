@@ -1305,7 +1305,8 @@
         "extends",
         "id",
         "items",
-        "title"
+        "title",
+        "version"
       ],
       "type": "object"
     },

@@ -372,9 +372,10 @@ export const ProfileSchema = v.strictObject({
   id: ProfileIdSchema,
   items: v.array(ItemRefSchema),
   title: v.string(),
-  /** The semver the profile publishes as on a registry; without it, one is generated from the revision. */
-  version: v.optional(
-    v.pipe(v.string(), v.regex(SEMVER, "must be a semantic version"))
+  /** The semantic version the profile publishes as on a registry. Every profile has one. */
+  version: v.pipe(
+    v.string(),
+    v.regex(SEMVER, "`version` must be a semantic version, such as `0.1.0`")
   ),
 });
 

@@ -1,5 +1,5 @@
 {
-  "$comment": "GitHub REST API responses recorded with `gh api` from Hebilicious/shelfkit at main, for GitHubForge's test. The tree is trimmed to the shelf/ directory and two files beside it; every other response is as GitHub sent it.",
+  "$comment": "GitHub REST API responses recorded with `gh api` from Hebilicious/shelfkit at main, for GitHubForge's test. The tree is trimmed to the shelf/ directory and two files beside it; every other response is as GitHub sent it, except shelf/profiles/default.json, edited since to add the `version` every profile needs: its blob is the edited file, under its own id, and the trees above it keep their recorded ids.",
   "responses": {
     "https://api.github.com/repos/Hebilicious/shelfkit": {
       "json": {
@@ -143,9 +143,9 @@
             "path": "shelf/profiles/default.json",
             "mode": "100644",
             "type": "blob",
-            "sha": "d2d9055ba5610524e54b137ea6a4b2e906df733b",
-            "size": 459,
-            "url": "https://api.github.com/repos/Hebilicious/shelfkit/git/blobs/d2d9055ba5610524e54b137ea6a4b2e906df733b"
+            "sha": "5302d7a043902d8b1718d6a2ec3598725ca37f3b",
+            "size": 481,
+            "url": "https://api.github.com/repos/Hebilicious/shelfkit/git/blobs/5302d7a043902d8b1718d6a2ec3598725ca37f3b"
           },
           {
             "path": "shelf/shelf.json",
@@ -172,8 +172,8 @@
     "https://api.github.com/repos/Hebilicious/shelfkit/git/blobs/200116ac54843eca91307f78098baa8d7a6c2e74": {
       "base64": "ewogICJpZCI6ICJzaGVsZmtpdC1zdGFjayIsCiAgImtpbmQiOiAic3RhY2siLAogICJ0aXRsZSI6ICJUeXBlU2NyaXB0IG9uIENsb3VkZmxhcmUgV29ya2VycyB3aXRoIFJ1c3QgY29yZSIsCiAgImRlc2NyaXB0aW9uIjogIkhvdyBTaGVsZktpdCBpdHNlbGYgaXMgYnVpbHQuIiwKICAibWFya2VycyI6IHsKICAgICJmaWxlcyI6IFsid3JhbmdsZXIuanNvbmMiLCAiQ2FyZ28udG9tbCIsICIucHJvdG90b29scyJdLAogICAgImRlcGVuZGVuY2llcyI6IFsid3JhbmdsZXIiLCAidnVlIl0sCiAgICAicGFja2FnZU1hbmFnZXIiOiAicG5wbSIKICB9LAogICJjb252ZW50aW9ucyI6IFsKICAgIHsKICAgICAgImhlYWRpbmciOiAiUmVwb3NpdG9yeSIsCiAgICAgICJib2R5IjogIm1vb24gb3JjaGVzdHJhdGVzIHRhc2tzIGFuZCBwcm90byBwaW5zIGV2ZXJ5IHRvb2xjaGFpbiBmcm9tIC5wcm90b3Rvb2xzLiBEbyBub3QgYWRkIGEgdGFzayBtb29uIGRvZXMgbm90IGtub3cgYWJvdXQuIgogICAgfSwKICAgIHsKICAgICAgImhlYWRpbmciOiAiQ29yZSBsb2dpYyIsCiAgICAgICJib2R5IjogIlRoZSBzaGVsZiBmb3JtYXQsIHZhbGlkYXRpb24sIHJldmlzaW9uIGhhc2hpbmcsIGFuZCBwcm9maWxlIHJlc29sdXRpb24gbGl2ZSBpbiBSdXN0IHVuZGVyIGNyYXRlcy8uIFRoZXkgY29tcGlsZSBuYXRpdmUgZm9yIHRoZSBDTEkgYW5kIHRvIFdBU00gZm9yIHRoZSBXb3JrZXIsIHNvIHRoZSBicm93c2VyIHByZXZpZXcgYW5kIHRoZSBDTEkgY2Fubm90IGRpc2FncmVlLiIKICAgIH0sCiAgICB7CiAgICAgICJoZWFkaW5nIjogIlN0b3JhZ2UiLAogICAgICAiYm9keSI6ICJPbmUgRHVyYWJsZSBPYmplY3QgcGVyIHNoZWxmIHdpdGggaXRzIG93biBTUUxpdGUgZGF0YWJhc2UsIGFjY2Vzc2VkIHRocm91Z2ggZHJpenpsZS1vcm0vZHVyYWJsZS1zcWxpdGUuIFRoZXJlIGlzIG5vIEQxIGRhdGFiYXNlIGFuZCBubyBjcm9zcy1zaGVsZiBxdWVyeS4gQ29udGVudCBsaXZlcyBpbiBSMiBrZXllZCBieSBzaGEyNTYuIgogICAgfSwKICAgIHsKICAgICAgImhlYWRpbmciOiAiQVBNIiwKICAgICAgImJvZHkiOiAiQVBNIG93bnMgaW5zdGFsbCwgcmVzb2x1dGlvbiwgYW5kIHRoZSBsb2NrZmlsZS4gU2hlbGZLaXQgd3JpdGVzIGFwbS55bWwgYW5kIHN0b3BzLiBOZXZlciBwYXJzZSBodW1hbi1vcmllbnRlZCBhcG0gb3V0cHV0OiBvbmx5IGF1ZGl0LCBkZXBzIHdoeSwgcGFjaywgcG9saWN5IHN0YXR1cywgdGFyZ2V0cywgYW5kIGxvY2sgZXhwb3J0IGVtaXQgc3RydWN0dXJlZCBkYXRhLiIKICAgIH0sCiAgICB7CiAgICAgICJoZWFkaW5nIjogIlRhcmdldHMiLAogICAgICAiYm9keSI6ICJVc2UgQVBNJ3MgdGFyZ2V0IHNsdWdzIHZlcmJhdGltLiBFbWl0IG9ubHkgdGhlIE9wZW5BUE0gdjAuMSBjYW5vbmljYWwgcHJvZHVjZXIgc2V0IGJ5IGRlZmF1bHQ7IGFueXRoaW5nIG91dHNpZGUgaXQgaXMgYW4gZXhwbGljaXQgb3B0LWluIHRoYXQgY2hlY2sgbXVzdCByZXBvcnQuIgogICAgfQogIF0sCiAgInJlY29tbWVuZHMiOiBbInR5cGVzY3JpcHQtc3RyaWN0IiwgImNvbW1pdC1zdHlsZSJdLAogICJ0YWdzIjogWyJjbG91ZGZsYXJlIiwgInJ1c3QiLCAidHlwZXNjcmlwdCJdCn0K"
     },
-    "https://api.github.com/repos/Hebilicious/shelfkit/git/blobs/d2d9055ba5610524e54b137ea6a4b2e906df733b": {
-      "base64": "ewogICIkc2NoZW1hIjogImh0dHBzOi8vc2hlbGZraXQuZGV2L3NjaGVtYXMvcHJvZmlsZS5qc29uIiwKICAiaWQiOiAiZGVmYXVsdCIsCiAgInRpdGxlIjogIlNoZWxmS2l0IGRldmVsb3BtZW50IiwKICAiZGVzY3JpcHRpb24iOiAiVGhlIGNvbnZlbnRpb25zIHRoaXMgcmVwb3NpdG9yeSBpcyBidWlsdCB0by4iLAogICJpdGVtcyI6IFsic2hlbGZraXQtc3RhY2siLCAidHlwZXNjcmlwdC1zdHJpY3QiLCAiY29tbWl0LXN0eWxlIl0sCiAgImJ1bmRsZXMiOiBbXSwKICAiZXh0ZW5kcyI6IFtdLAogICJjb21waWxlIjogewogICAgIm5hbWUiOiAic2hlbGZraXQiLAogICAgInRhcmdldHMiOiBbImNsYXVkZSIsICJjb3BpbG90IiwgImN1cnNvciIsICJjb2RleCJdLAogICAgInBpbiI6ICJyZXZpc2lvbiIsCiAgICAib25Db25mbGljdCI6ICJmYWlsIiwKICAgICJ2ZW5kb3JBdXRob3JlZCI6IHRydWUKICB9Cn0K"
+    "https://api.github.com/repos/Hebilicious/shelfkit/git/blobs/5302d7a043902d8b1718d6a2ec3598725ca37f3b": {
+      "base64": "ewogICIkc2NoZW1hIjogImh0dHBzOi8vc2hlbGZraXQuZGV2L3NjaGVtYXMvcHJvZmlsZS5qc29uIiwKICAiaWQiOiAiZGVmYXVsdCIsCiAgInRpdGxlIjogIlNoZWxmS2l0IGRldmVsb3BtZW50IiwKICAiZGVzY3JpcHRpb24iOiAiVGhlIGNvbnZlbnRpb25zIHRoaXMgcmVwb3NpdG9yeSBpcyBidWlsdCB0by4iLAogICJ2ZXJzaW9uIjogIjAuMS4wIiwKICAiaXRlbXMiOiBbInNoZWxma2l0LXN0YWNrIiwgInR5cGVzY3JpcHQtc3RyaWN0IiwgImNvbW1pdC1zdHlsZSJdLAogICJidW5kbGVzIjogW10sCiAgImV4dGVuZHMiOiBbXSwKICAiY29tcGlsZSI6IHsKICAgICJuYW1lIjogInNoZWxma2l0IiwKICAgICJ0YXJnZXRzIjogWyJjbGF1ZGUiLCAiY29waWxvdCIsICJjdXJzb3IiLCAiY29kZXgiXSwKICAgICJwaW4iOiAicmV2aXNpb24iLAogICAgIm9uQ29uZmxpY3QiOiAiZmFpbCIsCiAgICAidmVuZG9yQXV0aG9yZWQiOiB0cnVlCiAgfQp9Cg=="
     },
     "https://api.github.com/repos/Hebilicious/shelfkit/git/blobs/56cb5e3e97c7741bb881aa507afa5540717708fc": {
       "base64": "ewogICIkc2NoZW1hIjogImh0dHBzOi8vc2hlbGZraXQuZGV2L3NjaGVtYXMvc2hlbGYuanNvbiIsCiAgIm5hbWUiOiAic2hlbGZraXQiLAogICJvd25lciI6ICJIZWJpbGljaW91cyIsCiAgImRlc2NyaXB0aW9uIjogIlNoZWxmS2l0J3Mgb3duIGFnZW50IGNvbnRleHQ6IHRoZSBjb252ZW50aW9ucyBmb3IgYnVpbGRpbmcgU2hlbGZLaXQuIiwKICAiZGVmYXVsdFByb2ZpbGUiOiAiZGVmYXVsdCIsCiAgInJlZ2lzdHJ5IjogeyAibmFtZXNwYWNlIjogImhlYmlsaWNpb3VzIiwgInB1YmxpYyI6IHRydWUgfSwKICAic291cmNlcyI6IFtdCn0K"

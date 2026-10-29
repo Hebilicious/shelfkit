@@ -1,6 +1,7 @@
 {
   "id": "self",
   "title": "Self",
+  "version": "0.1.0",
   "extends": [
     "self"
   ]

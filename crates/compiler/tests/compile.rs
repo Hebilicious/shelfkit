@@ -25,7 +25,7 @@ fn compile(source: &MemorySource) -> Result<CompiledManifest, Errors> {
 fn profile(items: &[&str], compile: &str) -> String {
     let items: Vec<String> = items.iter().map(|i| format!("\"{i}\"")).collect();
     format!(
-        r#"{{ "id": "p", "title": "P", "items": [{}], "compile": {{ {compile} }} }}"#,
+        r#"{{ "id": "p", "title": "P", "version": "0.1.0", "items": [{}], "compile": {{ {compile} }} }}"#,
         items.join(", ")
     )
 }
